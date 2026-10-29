@@ -6,7 +6,7 @@
 // of each. Debts are shown for information and posted by nobody (SPEC §4.3).
 
 import { round2, dayMonth, expectHeader, findCol, findPeriod, lastDay, num, text } from './util.ts';
-import { FormatError, type Grid, type ParseResult, type ParsedRow, type PropertyHint, type ProposedEntry } from './types.ts';
+import { FormatError, type Book, type ParseResult, type ParsedRow, type PropertyHint, type ProposedEntry } from './types.ts';
 
 const ADAPTER = 'vitaly';
 
@@ -25,7 +25,8 @@ export function vitalyHint(cell: string): PropertyHint | null {
   return { ref: first.replace(/\s+/g, ' '), building: m[1], unit: m[2], project: 'Lake city', owner: rest.join(' ') || undefined };
 }
 
-export function parseVitaly(g: Grid, fileName = ''): ParseResult {
+export function parseVitaly(book: Book, fileName = ''): ParseResult {
+  const g = book.sheets[0];
   expectHeader(g, 1, 1, /^No\.?$/i, 'No.');
   expectHeader(g, 1, 2, /REPORT FOR/i, 'REPORT FOR <MONTH>');
   const col = {
@@ -63,9 +64,9 @@ export function parseVitaly(g: Grid, fileName = ''): ParseResult {
     const date = (r: number, c: number) => dayMonth(text(g, r, c - 1), period) ?? lastDay(period);
 
     const add = (r: number, kind: string, category: string | null, amount: number, on: string, description: string,
-      entries: ProposedEntry[], issues: string[] = []) => {
+      entries: ProposedEntry[], issues: string[] = [], errors: string[] = []) => {
       rows.push({
-        ref: `R${r}`, property: hint, kind, issues,
+        ref: `R${r}`, property: hint, kind, issues, errors,
         proposed: category ? { occurred_on: on, period, category, description, entries } : null,
         fingerprint: category ? [ADAPTER, hint.ref, period, category, on, amount].join('|') : null,
         raw: { row: r, property_ref: hint.ref, owner: hint.owner, lease: lease.join(' | '), amount, description },
@@ -91,7 +92,7 @@ export function parseVitaly(g: Grid, fileName = ''): ParseResult {
         add(r, 'דמי ניהול 10%', 'mgmt_fee', feeCash, date(r, col.feeCash), 'דמי ניהול לויטאלי (מזומן)', [
           { amount: -feeCash, currency: 'UAH', account: { kind: 'manager_cash', holder: 'source' } },
           { amount: feeCash, currency: 'UAH', external: 'source' },
-        ], cash && Math.abs(feeCash - round2(cash * 0.1)) > 1 ? [`דמי הניהול אינם 10% מהשכירות (${cash})`] : []);
+        ], [], cash && Math.abs(feeCash - round2(cash * 0.1)) > 1 ? [`דמי הניהול (${feeCash}) אינם 10% מהשכירות (${cash})`] : []);
       }
       const feeCard = num(g.value(r, col.feeCard));
       if (feeCard) {

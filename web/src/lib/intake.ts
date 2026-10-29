@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ADAPTERS } from '../intake/adapters';
-import { gridFromXlsx } from '../intake/grid';
+import { bookFromXlsx } from '../intake/grid';
 import { matchProperty, type PropertyForMatch } from '../intake/match';
 import type { ParseResult, ParsedRow, ProposedTransaction } from '../intake/types';
 import { must, supabase } from './supabase';
@@ -28,7 +28,11 @@ export interface Batch {
 export interface ImportRow {
   id: string;
   row_ref: string;
-  raw: Record<string, unknown> & { row: number; property_ref: string; owner?: string; kind: string; match_note?: string; candidates?: string[] };
+  raw: Record<string, unknown> & {
+    row: number; property_ref: string; owner?: string; kind: string; match_note?: string; candidates?: string[];
+    // Discrepancies a person must look at; approval waits until `checked` is set.
+    errors?: string[]; checked?: boolean;
+  };
   proposed: ProposedTransaction | null;
   match_status: RowStatus;
   issues: string[] | null;
@@ -83,25 +87,33 @@ async function propertiesForMatch(country: Country): Promise<PropertyForMatch[]>
   }));
 }
 
-// What is already posted from this source for the same month, keyed by the row's
-// identity without the amount, to tell "already imported" from "changed since".
-async function postedForPeriod(sourceId: string, period: string) {
-  const rows = must(await supabase.from('import_rows')
-    .select('fingerprint, raw, proposed, batch:import_batches!inner(source_id), transaction:transactions!import_rows_transaction_id_fkey!inner(status)')
-    .eq('batch.source_id', sourceId).eq('transaction.status', 'posted').eq('proposed->>period', period)) as unknown as
-    { fingerprint: string | null; raw: { property_ref?: string }; proposed: ProposedTransaction }[];
-  const exact = new Set(rows.map((r) => r.fingerprint).filter(Boolean));
-  const byKey = new Map(rows.map((r) => [identity(r.raw.property_ref ?? '', r.proposed), r.proposed]));
+const POSTED = 'fingerprint, raw, proposed, batch:import_batches!inner(source_id), transaction:transactions!import_rows_transaction_id_fkey!inner(status)';
+type PostedRow = { fingerprint: string | null; raw: { property_ref?: string }; proposed: ProposedTransaction };
+
+// What this source already posted: exact fingerprints ("already imported"), and the
+// same rows of the same months without the amount ("changed since").
+async function alreadyPosted(sourceId: string, result: ParseResult) {
+  const fps = [...new Set(result.rows.map((r) => r.fingerprint).filter((f): f is string => !!f))];
+  const periods = [...new Set(result.rows.map((r) => r.proposed?.period).filter((p): p is string => !!p))];
+  const exact = new Set<string>();
+  for (let i = 0; i < fps.length; i += 40) {
+    const rows = must(await supabase.from('import_rows').select(POSTED).eq('transaction.status', 'posted')
+      .in('fingerprint', fps.slice(i, i + 40))) as unknown as PostedRow[];
+    rows.forEach((r) => exact.add(r.fingerprint!));
+  }
+  const sameMonths = periods.length ? must(await supabase.from('import_rows').select(POSTED)
+    .eq('batch.source_id', sourceId).eq('transaction.status', 'posted').in('proposed->>period', periods)) as unknown as PostedRow[] : [];
+  const byKey = new Map(sameMonths.map((r) => [identity(r.raw.property_ref ?? '', r.proposed), r.proposed]));
   return { exact, byKey };
 }
 
-const identity = (ref: string, p: ProposedTransaction) => [ref, p.category, p.occurred_on].join('|');
+const identity = (ref: string, p: ProposedTransaction) => [ref, p.category, p.occurred_on, p.period, p.description].join('|');
 const amountOf = (p: ProposedTransaction) => p.entries.map((e) => `${e.amount} ${e.currency}`).join(' / ');
 
 export async function readReport(source: Source, file: File): Promise<ParseResult> {
   const adapter = ADAPTERS[source.adapter];
   if (!adapter) throw new Error('למקור הזה עוד אין קורא קבצים');
-  return adapter.parse(await gridFromXlsx(await file.arrayBuffer()), file.name);
+  return adapter.parse(await bookFromXlsx(await file.arrayBuffer()), file.name);
 }
 
 // Parses nothing itself: takes the adapter's result, matches properties, marks
@@ -110,7 +122,7 @@ export async function createBatch(source: Source, file: File, result: ParseResul
   const [properties, refs, posted] = await Promise.all([
     propertiesForMatch(source.country_code),
     supabase.from('external_refs').select('external_key, entity_id').eq('source', source.adapter).eq('entity_type', 'property'),
-    postedForPeriod(source.id, result.period),
+    alreadyPosted(source.id, result),
   ]);
   const known = new Map((must(refs) as { external_key: string; entity_id: string }[]).map((r) => [r.external_key, r.entity_id]));
 
@@ -127,7 +139,9 @@ export async function createBatch(source: Source, file: File, result: ParseResul
   must(await supabase.from('import_batches').update({ file_path: path }).eq('id', id));
 
   const matches = new Map<string, ReturnType<typeof matchProperty>>();
-  const rows = result.rows.map((r: ParsedRow) => {
+  // An opening balance is proposed by every report but posted once (Gershon, SPEC decision 43).
+  const fresh = result.rows.filter((r) => !(r.proposed?.category === 'opening_balance' && r.fingerprint && posted.exact.has(r.fingerprint)));
+  const rows = fresh.map((r: ParsedRow) => {
     if (!matches.has(r.property.ref)) matches.set(r.property.ref, matchProperty(r.property, source.country_code, properties, known));
     const m = matches.get(r.property.ref)!;
     const issues = [...r.issues];
@@ -143,7 +157,7 @@ export async function createBatch(source: Source, file: File, result: ParseResul
     return {
       batch_id: id, row_ref: r.ref, proposed: r.proposed, fingerprint: r.fingerprint, issues,
       property_id: m.propertyId, match_status: status,
-      raw: { ...r.raw, kind: r.kind, owner: r.property.owner, match_note: m.note, candidates: m.candidates },
+      raw: { ...r.raw, kind: r.kind, owner: r.property.owner, match_note: m.note, candidates: m.candidates, errors: r.errors },
     };
   });
   for (let i = 0; i < rows.length; i += 200) must(await supabase.from('import_rows').insert(rows.slice(i, i + 200)));

@@ -10,6 +10,12 @@ export interface Grid {
   formula(r: number, c: number): string | null;
 }
 
+// A whole workbook; most reports use only the first sheet.
+export interface Book {
+  sheets: Grid[];
+  sheet(name: RegExp): Grid | undefined;
+}
+
 export interface ProposedEntry {
   amount: number;
   currency: Currency;
@@ -35,6 +41,9 @@ export interface PropertyHint {
   building?: string;
   project?: string;
   owner?: string;
+  // Romania (Itai): the street part of "Vasile_Lascar6_ap.6-L1" and the lot of a split apartment.
+  street?: string;
+  lot?: string;
 }
 
 export interface ParsedRow {
@@ -44,11 +53,14 @@ export interface ParsedRow {
   proposed: ProposedTransaction | null;   // null: information only, nothing to post
   fingerprint: string | null;
   issues: string[];
+  // Discrepancies a person must look at; the batch cannot be approved until each
+  // row with errors is marked as checked (or not posted).
+  errors: string[];
   raw: Record<string, unknown>;
 }
 
 export interface ParseResult {
-  period: string;        // YYYY-MM-01
+  period: string;        // YYYY-MM-01; for multi-month files, the latest month
   rows: ParsedRow[];
   warnings: string[];    // file-level checks, e.g. totals that do not add up
 }

@@ -1,7 +1,7 @@
 import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Paper, Select, SimpleGrid, Stack, Table, Text, Title, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { IconArrowBackUp, IconDownload, IconEyeOff } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowBackUp, IconCheck, IconDownload, IconEyeOff } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -23,7 +23,7 @@ const ROW_STATUS: Record<RowStatus, { label: string; color: string }> = {
 
 const CATEGORY_HE: Record<string, string> = {
   rent: 'שכירות', mgmt_fee: 'דמי ניהול', utilities: 'חשבונות', building_fees: 'הוצאות בניין', legal_fees: 'שכ"ט עו"ד',
-  repair: 'תיקונים', brokerage: 'תיווך', fx: 'המרת מטבע', transfer: 'העברה', other: 'אחר', tax_withheld: 'מס במקור', hotel_share: 'חלק המלון',
+  repair: 'תיקונים', brokerage: 'תיווך', fx: 'המרת מטבע', deposit: 'פיקדון', opening_balance: 'יתרת פתיחה', transfer: 'העברה', other: 'אחר', tax_withheld: 'מס במקור', hotel_share: 'חלק המלון',
 };
 
 function Amounts({ row }: { row: ImportRow }) {
@@ -63,6 +63,8 @@ export function IntakeBatch() {
       const editable = open && access.canEdit(batch.country_code);
       const count = (s: RowStatus) => rows.filter((r) => r.match_status === s).length;
       const unmatched = count('unmatched');
+      // Rows that will be posted but carry an error nobody has marked as checked.
+      const unchecked = rows.filter((r) => r.match_status === 'matched' && r.raw.errors?.length && !r.raw.checked).length;
       const byProperty = new Map((properties.data ?? []).map((p) => [p.id, p]));
 
       // Totals of what will be posted, per category and currency, never converted.
@@ -77,6 +79,12 @@ export function IntakeBatch() {
         const { error } = await supabase.from('import_rows')
           .update({ property_id: propertyId, match_status: propertyId ? 'matched' : 'unmatched' })
           .eq('batch_id', batch.id).eq('raw->>property_ref', ref).in('match_status', ['matched', 'unmatched']);
+        if (error) notifications.show({ color: 'red', message: error.message });
+        await refresh();
+      }
+
+      async function setChecked(r: ImportRow, checked: boolean) {
+        const { error } = await supabase.from('import_rows').update({ raw: { ...r.raw, checked } }).eq('id', r.id);
         if (error) notifications.show({ color: 'red', message: error.message });
         await refresh();
       }
@@ -202,7 +210,21 @@ export function IntakeBatch() {
                           <Table.Td w={100}>{date(r.proposed?.occurred_on)}</Table.Td>
                           <Table.Td>
                             <Text size="sm">{r.proposed?.description ?? String(r.raw.description ?? '')}</Text>
-                            {r.issues?.map((i) => <Text key={i} size="xs" c="orange.8">{i}</Text>)}
+                            {r.issues?.map((i) => <Text key={i} size="xs" c="dimmed">{i}</Text>)}
+                            {r.raw.errors?.map((e) => (
+                              <Group key={e} gap={4} wrap="nowrap" align="flex-start">
+                                <IconAlertTriangle size={14} color={r.raw.checked ? 'var(--mantine-color-gray-6)' : 'var(--mantine-color-red-7)'} style={{ flexShrink: 0, marginTop: 2 }} />
+                                <Text size="xs" c={r.raw.checked ? 'dimmed' : 'red.7'} td={r.raw.checked ? 'line-through' : undefined}>{e}</Text>
+                              </Group>
+                            ))}
+                            {!!r.raw.errors?.length && r.match_status === 'matched' && (r.raw.checked ? (
+                              <Group gap={4} mt={2}>
+                                <Badge size="xs" color="teal" variant="light" leftSection={<IconCheck size={10} />}>נבדק</Badge>
+                                {editable && <Button size="compact-xs" variant="subtle" color="gray" onClick={() => setChecked(r, false)}>ביטול</Button>}
+                              </Group>
+                            ) : editable && (
+                              <Button size="compact-xs" variant="light" color="red" mt={4} leftSection={<IconCheck size={12} />} onClick={() => setChecked(r, true)}>בדקתי, אפשר לרשום</Button>
+                            ))}
                           </Table.Td>
                           <Table.Td w={130}><Amounts row={r} /></Table.Td>
                           <Table.Td w={120}><Badge variant="light" color={ROW_STATUS[r.match_status].color}>{ROW_STATUS[r.match_status].label}</Badge></Table.Td>
@@ -227,14 +249,16 @@ export function IntakeBatch() {
           {open && (
             <Paper withBorder p="md" pos="sticky" bottom={0} style={{ zIndex: 5 }}>
               <Group justify="space-between">
-                <Text size="sm" c={unmatched ? 'red' : 'dimmed'}>
-                  {unmatched ? `יש ${unmatched} שורות בלי נכס. בחרו נכס או סמנו "לא לרשום".` : `${count('matched')} שורות מוכנות לרישום.`}
+                <Text size="sm" c={unmatched || unchecked ? 'red' : 'dimmed'}>
+                  {unmatched ? `יש ${unmatched} שורות בלי נכס. בחרו נכס או סמנו "לא לרשום".`
+                    : unchecked ? `יש ${unchecked} שורות עם שגיאה שעוד לא נבדקה. סמנו "בדקתי" או "לא לרשום".`
+                    : `${count('matched')} שורות מוכנות לרישום.`}
                   {' '}כל מטבע מוצג בנפרד, בלי המרה.
                 </Text>
                 <Group>
                   {editable && <Button variant="default" color="red" onClick={reject}>דחיית הדוח</Button>}
                   {access.canApprove(batch.country_code) ? (
-                    <Button onClick={approve} loading={busy} disabled={!!unmatched || !count('matched')}>אישור ורישום</Button>
+                    <Button onClick={approve} loading={busy} disabled={!!unmatched || !!unchecked || !count('matched')}>אישור ורישום</Button>
                   ) : <Text size="sm" c="dimmed">האישור דורש הרשאת כספים</Text>}
                 </Group>
               </Group>

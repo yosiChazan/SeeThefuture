@@ -1,4 +1,5 @@
-import type { Grid } from './types.ts';
+import type { Worksheet } from 'exceljs';
+import type { Book, Grid } from './types.ts';
 
 type Cell = string | number | null;
 
@@ -6,6 +7,12 @@ type Cell = string | number | null;
 export interface GridJson { sheet: string; cells: Record<string, Cell>; formulas?: Record<string, string> }
 
 const key = (r: number, c: number) => `${r},${c}`;
+
+export function bookOf(sheets: Grid[]): Book {
+  return { sheets, sheet: (name) => sheets.find((s) => name.test(s.sheet)) };
+}
+
+export const bookFromJson = (j: GridJson | GridJson[]): Book => bookOf((Array.isArray(j) ? j : [j]).map(gridFromJson));
 
 export function gridFromJson(j: GridJson): Grid {
   let rows = 0; let cols = 0;
@@ -17,13 +24,16 @@ export function gridFromJson(j: GridJson): Grid {
   };
 }
 
-// Reads the first worksheet of an .xlsx in the browser. ExcelJS is loaded only
+// Reads every worksheet of an .xlsx in the browser. ExcelJS is loaded only
 // when someone opens the intake screen.
-export async function gridFromXlsx(data: ArrayBuffer): Promise<Grid> {
+export async function bookFromXlsx(data: ArrayBuffer): Promise<Book> {
   const { default: ExcelJS } = await import('exceljs');
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(data);
-  const ws = wb.worksheets[0];
+  return bookOf(wb.worksheets.map(sheetToGrid));
+}
+
+function sheetToGrid(ws: Worksheet): Grid {
   const cells: Record<string, Cell> = {};
   const formulas: Record<string, string> = {};
   ws.eachRow({ includeEmpty: false }, (row, r) => {

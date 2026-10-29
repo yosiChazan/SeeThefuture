@@ -32,12 +32,37 @@ export function sameOwner(a: string, b: string): boolean {
   return tokens(a).some((x) => tokens(b).some((y) => distance(x, y) <= Math.max(1, Math.floor(Math.max(x.length, y.length) * 0.3))));
 }
 
+// Romania: "Vasile Lascar 6" apt 6 lot 1 ↔ building "Vasile Lascar 6", unit "6-1";
+// "Balcescu 32 34" apt 17 lot 1 ↔ "Nicolae Balcescu 32-34", "17-LOT1-BIG";
+// "Covaci 10" lot 1 ↔ "Covaci 10", "8-LOT1-SMALL". Only the owner's properties count.
+function streetMatches(hint: PropertyHint, p: PropertyForMatch): boolean {
+  const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const building = words(p.building);
+  const street = words(hint.street!);
+  if (!street.filter((w) => /\D/.test(w)).every((w) => building.some((b) => b === w || (w.length >= 5 && b.startsWith(w.slice(0, 5)))))) return false;
+  const [apt, ...rest] = p.unit_no.split('-');
+  if (hint.unit && apt !== hint.unit) return false;
+  // Lots rented together ("1+2") are booked on the first one.
+  const lot = hint.lot?.split('+')[0];
+  if (lot && !rest.some((x) => x.replace(/^lot/i, '') === lot)) return false;
+  return true;
+}
+
 // 1. a name the source used before (external_refs) wins;
 // 2. otherwise same apartment number (and project), then the owner's name decides,
 //    preferring the same building. A building that differs is matched with a note.
 export function matchProperty(hint: PropertyHint, country: string, properties: PropertyForMatch[], known: Map<string, string>): Match {
   const remembered = known.get(hint.ref);
   if (remembered) return { propertyId: remembered, candidates: [] };
+
+  if (hint.street) {
+    const mine = properties.filter((p) => p.country_code === country && (!hint.owner || p.owners.some((o) => sameOwner(o, hint.owner!))));
+    const hits = mine.filter((p) => streetMatches(hint, p));
+    if (hits.length === 1) {
+      return { propertyId: hits[0].id, candidates: [], note: hint.lot?.includes('+') ? `יחידות ${hint.lot} מושכרות יחד; נרשם על הראשונה` : undefined };
+    }
+    return { propertyId: null, candidates: (hits.length ? hits : mine).map((p) => p.id) };
+  }
 
   const inProject = properties.filter((p) => p.country_code === country && p.unit_no === hint.unit
     && (!hint.project || (p.project ?? '').toLowerCase() === hint.project.toLowerCase()));

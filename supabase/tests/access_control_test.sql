@@ -270,6 +270,25 @@ select pg_temp.check(
   'rows already posted are marked duplicate');
 reset role;
 
+-- A row with an unchecked error blocks the whole batch.
+select pg_temp.vitaly_batch('50000000-0000-0000-0000-000000000003');
+update app.import_rows set fingerprint = fingerprint || '|b3',
+  raw = raw || '{"errors": ["Need to pay 3707.06, rows add up to 3710.06"]}'
+where batch_id = '50000000-0000-0000-0000-000000000003' and row_ref = '001';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  perform app.commit_import_batch('50000000-0000-0000-0000-000000000003');
+  raise exception 'FAILED: a batch with an unchecked error was committed';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - a row with an unchecked error blocks the batch';
+end $$;
+update app.import_rows set raw = raw || '{"checked": true}'
+where batch_id = '50000000-0000-0000-0000-000000000003' and row_ref = '001';
+select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-000000000003') = 1,
+  'once checked, the row is posted (the other row is a duplicate)');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

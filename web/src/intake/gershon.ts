@@ -9,9 +9,14 @@
 // The expenses are paid from the client's dollar expense fund at Gershon: one FX
 // transaction (dollars out, hryvnia in, at the implied rate) and one transaction
 // per expense in hryvnia (SPEC §4.3). Without dollars the hryvnia fund goes negative.
+//
+// The dollars are what is left of the client's purchase money, not rent (SPEC
+// decision 43). The first report of an apartment therefore also proposes the
+// "before" amount as the fund's opening balance; its fingerprint has no month, so
+// once posted it is never proposed again.
 
 import { round2, expectHeader, findPeriod, lastDay, num, text } from './util.ts';
-import { FormatError, type Grid, type ParseResult, type ParsedRow, type PropertyHint } from './types.ts';
+import { FormatError, type Book, type ParseResult, type ParsedRow, type PropertyHint } from './types.ts';
 
 const ADAPTER = 'gershon';
 
@@ -34,7 +39,8 @@ export function parseGershonBalance(s: string): { before: number; usd: number; a
   return null;
 }
 
-export function parseGershon(g: Grid, fileName = ''): ParseResult {
+export function parseGershon(book: Book, fileName = ''): ParseResult {
+  const g = book.sheets[0];
   expectHeader(g, 1, 2, /Build\.?\s*Apt/i, 'Build. Apt.');
   expectHeader(g, 1, 3, /Owner/i, "Owner's name");
   expectHeader(g, 1, 4, /Utilities for/i, 'Utilities for <Month> <Year>');
@@ -63,18 +69,25 @@ export function parseGershon(g: Grid, fileName = ''): ParseResult {
     const fileTotal = num(g.value(r, 10));
     const balanceText = text(g, r + 1, 11) || text(g, r, 11);
     const balance = parseGershonBalance(balanceText);
-    const issues: string[] = [];
-    if (fileTotal !== null && Math.abs(fileTotal - total) > 0.01) issues.push(`סה"כ בקובץ ${fileTotal}, מחושב מהשורות ${total}`);
+    // Anything that does not add up must be looked at before the batch is approved.
+    const errors: string[] = [];
+    if (fileTotal !== null && Math.abs(fileTotal - total) > 0.01) errors.push(`סה"כ בקובץ ${fileTotal}, מחושב מהשורות ${total}`);
     const raw = { row: r, property_ref: hint.ref, owner: hint.owner, utilities, legal, total, balance_text: balanceText };
-    const add = (kind: string, p: ParsedRow['proposed'], amount: number, extra: string[] = []) => rows.push({
-      ref: `R${r}`, property: hint, kind, proposed: p, issues: [...issues, ...extra], raw,
-      fingerprint: p ? [ADAPTER, hint.ref, period, p.category, amount].join('|') : null,
+    const add = (kind: string, p: ParsedRow['proposed'], amount: number, extra: string[] = [], fingerprint?: string, extraErrors: string[] = []) => rows.push({
+      ref: `R${r}`, property: hint, kind, proposed: p, issues: extra, errors: [...errors, ...extraErrors], raw,
+      fingerprint: p ? fingerprint ?? [ADAPTER, hint.ref, period, p.category, amount].join('|') : null,
     });
 
     if (!balance) {
-      issues.push(`לא זוהתה יתרה דולרית בעמודה K ("${balanceText || 'ריק'}")`);
+      errors.push(`לא זוהתה יתרה דולרית בעמודה K ("${balanceText || 'ריק'}")`);
     } else if ('usd' in balance) {
-      if (Math.abs(round2(balance.before - balance.usd) - balance.after) > 0.01) issues.push(`חישוב היתרה בקובץ לא מסתדר: ${balanceText}`);
+      if (Math.abs(round2(balance.before - balance.usd) - balance.after) > 0.01) errors.push(`חישוב היתרה בקובץ לא מסתדר: ${balanceText}`);
+      add('יתרת פתיחה', {
+        occurred_on: period, period, category: 'opening_balance',
+        description: `יתרת פתיחה של קופת ההוצאות ${hint.ref}: כסף שנשאר מהרכישה (לא שכירות)`,
+        entries: [{ amount: balance.before, currency: 'USD', account: { kind: 'expense_pool', holder: 'source' } }],
+      }, balance.before, [], [ADAPTER, hint.ref, 'opening'].join('|'),
+      [`יתרת פתיחה $${balance.before} לפי גרשון. לוודא שזו הפעם הראשונה שהדירה נקלטת ושהסכום נכון`]);
       const rate = Math.round((total / balance.usd) * 10000) / 10000;
       add('המרת דולר לגריבנה', {
         occurred_on: on, period, category: 'fx', description: `המרה לתשלום הוצאות ${hint.ref}: $${balance.usd} → ${total} ₴`,
@@ -84,7 +97,7 @@ export function parseGershon(g: Grid, fileName = ''): ParseResult {
         ],
       }, balance.usd, [`יתרה דולרית לפי גרשון: $${balance.before} → $${balance.after}`]);
     } else if (Math.abs(balance.owes - total) > 0.01) {
-      issues.push(`גרשון כותב "צריך לשלם ${balance.owes}", אבל סך ההוצאות ${total}`);
+      errors.push(`גרשון כותב "צריך לשלם ${balance.owes}", אבל סך ההוצאות ${total}`);
     }
     const owes = balance && 'owes' in balance ? [`אין יתרה דולרית: הלקוח צריך לשלם ${balance.owes} ₴`] : [];
 

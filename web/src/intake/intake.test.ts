@@ -2,7 +2,8 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parseGershon, parseGershonBalance } from './gershon.ts';
-import { gridFromJson, gridFromXlsx, type GridJson } from './grid.ts';
+import { bookFromJson, bookFromXlsx, type GridJson } from './grid.ts';
+import { itaiHint, parseItai } from './itai.ts';
 import { matchProperty, sameOwner, type PropertyForMatch } from './match.ts';
 import { FormatError } from './types.ts';
 import { dayMonth, findPeriod, num } from './util.ts';
@@ -10,6 +11,7 @@ import { parseVitaly } from './vitaly.ts';
 
 // Fixtures are the real January 2026 reports with every owner name replaced.
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')) as GridJson;
+const fixtureBook = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')) as GridJson[];
 const sum = (xs: number[]) => Math.round(xs.reduce((a, b) => a + b, 0) * 100) / 100;
 
 test('numbers, months and day.month dates', () => {
@@ -24,7 +26,7 @@ test('numbers, months and day.month dates', () => {
 });
 
 test('Vitaly: every apartment, rent, fees and expenses, and the file totals agree', () => {
-  const r = parseVitaly(gridFromJson(fixture('vitaly_2026_01.json')), '2026_RENT_JANUARY_PLC.xlsx');
+  const r = parseVitaly(bookFromJson(fixture('vitaly_2026_01.json')), '2026_RENT_JANUARY_PLC.xlsx');
   assert.equal(r.period, '2026-01-01');
   assert.deepEqual(r.warnings, []);
   assert.equal(new Set(r.rows.map((x) => x.property.ref)).size, 10);
@@ -46,21 +48,28 @@ test('Vitaly: every apartment, rent, fees and expenses, and the file totals agre
 test('Vitaly: a changed header stops the import', () => {
   const j = fixture('vitaly_2026_01.json');
   j.cells['1,4'] = 'CASH UAH';
-  assert.throws(() => parseVitaly(gridFromJson(j)), FormatError);
+  assert.throws(() => parseVitaly(bookFromJson(j)), FormatError);
 });
 
 test('Gershon: FX from the dollar fund, then building and legal fees', () => {
-  const r = parseGershon(gridFromJson(fixture('gershon_2026_01.json')), 'Utilities_PLC_January_2026.xlsx');
+  const r = parseGershon(bookFromJson(fixture('gershon_2026_01.json')), 'Utilities_PLC_January_2026.xlsx');
   assert.equal(r.period, '2026-01-01');
   assert.deepEqual(r.warnings, []);
   assert.equal(new Set(r.rows.map((x) => x.property.ref)).size, 8);
 
   const apt50 = r.rows.filter((x) => x.property.ref === '3(50)');
-  assert.deepEqual(apt50.map((x) => x.proposed!.category), ['fx', 'building_fees', 'legal_fees']);
-  const [usd, uah] = apt50[0].proposed!.entries;
+  assert.deepEqual(apt50.map((x) => x.proposed!.category), ['opening_balance', 'fx', 'building_fees', 'legal_fees']);
+  assert.deepEqual([apt50[0].proposed!.entries[0].amount, apt50[0].fingerprint], [126.22, 'gershon|3(50)|opening'], 'purchase money left, before January');
+  assert.equal(apt50[0].errors.length, 1, 'the opening balance must be confirmed by a person');
+  const [usd, uah] = apt50[1].proposed!.entries;
   assert.deepEqual([usd.amount, usd.currency, uah.amount, uah.currency, usd.fx_rate], [-88.17, 'USD', 3791.14, 'UAH', 42.9981]);
-  assert.equal(apt50[1].proposed!.entries[0].amount, -2823.64);
-  assert.deepEqual(apt50[2].proposed!.entries.map((e) => e.amount), [-967.5, 967.5]);
+  assert.equal(apt50[2].proposed!.entries[0].amount, -2823.64);
+  assert.deepEqual(apt50[3].proposed!.entries.map((e) => e.amount), [-967.5, 967.5]);
+  assert.deepEqual(apt50.slice(1).map((x) => x.errors), [[], [], []]);
+
+  // "Need to pay 3707,06" while the rows add up to 3710.06 (3 UAH water): an error to check.
+  const apt32 = r.rows.filter((x) => x.property.ref === '4(32)');
+  assert.ok(apt32.every((x) => x.errors.some((e) => /3707\.06/.test(e) && /3710\.06/.test(e))));
 
   const apt29 = r.rows.filter((x) => x.property.ref === '3(29)');
   assert.deepEqual(apt29.map((x) => x.proposed!.category), ['building_fees', 'legal_fees'], 'no dollars: no FX');
@@ -105,8 +114,59 @@ test('xlsx reader: merged cells appear once, formulas keep their cached result',
   ws.mergeCells('B3:B6');
   ws.getCell('E3').value = 10;
   ws.getCell('G3').value = { formula: 'E3*2', result: 20 };
-  const g = await gridFromXlsx((await wb.xlsx.writeBuffer()) as ArrayBuffer);
+  wb.addWorksheet('Expenses').getCell('A1').value = 'amount paid (RON)';
+  const book = await bookFromXlsx((await wb.xlsx.writeBuffer()) as ArrayBuffer);
+  const g = book.sheets[0];
   assert.equal(g.sheet, 'СІЧЕНЬ 2026');
+  assert.equal(book.sheet(/^expenses$/i)?.value(1, 1), 'amount paid (RON)');
   assert.deepEqual([g.value(3, 2), g.value(4, 2), g.value(6, 2)], ['3(29)', null, null]);
   assert.deepEqual([g.value(3, 7), g.formula(3, 7)], [20, '=E3*2']);
+});
+
+test('Itai: names of apartments', () => {
+  assert.deepEqual(itaiHint('Vasile_Lascar6_ap.6-L1'), { ref: 'Vasile_Lascar6_ap.6-L1', street: 'Vasile Lascar 6', unit: '6', lot: '1', owner: undefined });
+  assert.deepEqual(itaiHint('Balcescu32-34_ap.17-L2'), { ref: 'Balcescu32-34_ap.17-L2', street: 'Balcescu 32 34', unit: '17', lot: '2', owner: undefined });
+  assert.deepEqual(itaiHint('Vulcanescu_10'), { ref: 'Vulcanescu_10', street: 'Vulcanescu', unit: '10', lot: undefined, owner: undefined });
+  assert.deepEqual(itaiHint('Covaci10_L1'), { ref: 'Covaci10_L1', street: 'Covaci 10', unit: '', lot: '1', owner: undefined });
+  assert.deepEqual(itaiHint('Covaci10_L1+L2')?.lot, '1+2');
+  assert.equal(itaiHint('all'), null);
+  assert.equal(itaiHint('none'), null);
+});
+
+test('Itai: 2026 receipts to the owner, expenses and reimbursements through Itai', () => {
+  const r = parseItai(bookFromJson(fixtureBook('itai_client.json')));
+  assert.equal(r.period, '2026-10-01');
+  assert.match(r.warnings[0], /לפני 01.01.2026 לא נקלטו/);
+  assert.ok(r.rows.every((x) => x.proposed!.occurred_on >= '2026-01-01'));
+  const by = (cat: string) => r.rows.filter((x) => x.proposed!.category === cat);
+  assert.ok(by('rent').length > 10);
+  assert.ok(by('rent').every((x) => x.proposed!.entries[0].account?.kind === 'client_bank' && x.proposed!.entries[0].amount > 0));
+  assert.ok(by('mgmt_fee').every((x) => x.proposed!.entries[0].account?.kind === 'manager_cash' && x.proposed!.entries[0].amount < 0));
+  const back = by('transfer');
+  assert.ok(back.length >= 1);
+  assert.ok(back.every((x) => x.proposed!.entries.reduce((s, e) => s + e.amount, 0) === 0), 'a reimbursement only moves money');
+  assert.ok(r.rows.filter((x) => x.raw.sheet === 'Incomes').every((x) => x.property.owner === 'Owner Demo'));
+  const fps = r.rows.map((x) => x.fingerprint);
+  assert.equal(new Set(fps).size, fps.length, 'fingerprints are unique');
+});
+
+test('Itai: a file without the expected sheets stops the import', () => {
+  assert.throws(() => parseItai(bookFromJson(fixtureBook('itai_client.json').slice(0, 1))), FormatError);
+});
+
+test('matching in Romania: street, apartment and lot among the owner\'s properties', () => {
+  const p = (id: string, building: string, unit_no: string, owner = 'Owner Demo'): PropertyForMatch =>
+    ({ id, unit_no, country_code: 'RO', building, project: null, owners: [owner] });
+  const props = [
+    p('v1', 'Vasile Lascar 6', '6-1'), p('v2', 'Vasile Lascar 6', '6-2'),
+    p('b1', 'Nicolae Balcescu 32-34', '17-LOT1-BIG'), p('b2', 'Nicolae Balcescu 32-34', '17-LOT2-SMALL'),
+    p('c1', 'Covaci 10', '8-LOT1-SMALL', 'Yom Tov SRL'), p('m', 'Mircea Vulcanescu', '10', 'Yom Tov SRL'),
+  ];
+  const m = (ref: string, owner: string) => matchProperty(itaiHint(ref, owner)!, 'RO', props, new Map()).propertyId;
+  assert.equal(m('Vasile_Lascar6_ap.6-L2', 'Demo Owner'), 'v2');
+  assert.equal(m('Balcescu32-34_ap.17-L1', 'Owner Demo'), 'b1');
+  assert.equal(m('Covaci10_L1', 'Yom Tov SRL'), 'c1');
+  assert.equal(m('Covaci10_L1+L2', 'Yom Tov SRL'), 'c1', 'lots rented together go on the first');
+  assert.equal(m('Vulcanescu_10', 'Yom Tov SRL'), 'm');
+  assert.equal(m('Vasile_Lascar6_ap.6-L1', 'Yom Tov SRL'), null, 'not this owner\'s property');
 });
