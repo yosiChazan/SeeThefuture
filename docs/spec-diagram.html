@@ -1,0 +1,311 @@
+<title>מפת מערכת הנכסים</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&family=Secular+One&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column, RTL, each section = heading + diagram panel + short legend */
+:root {
+  --bg: #f6f7f5;
+  --panel: #ffffff;
+  --ink: #17262b;
+  --muted: #5b6b70;
+  --line: #d6dcda;
+  --accent: #1f6f78;
+  --brass: #a8782b;
+  --chip: #e6efee;
+  --font-display: "Secular One", "Assistant", "Arial Hebrew", sans-serif;
+  --font-body: "Assistant", "Arial Hebrew", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1719; --panel: #172226; --ink: #e4ecea; --muted: #9aaaa8;
+    --line: #2b3a3e; --accent: #5fb7bf; --brass: #d8a75a; --chip: #1f3236;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1719; --panel: #172226; --ink: #e4ecea; --muted: #9aaaa8;
+  --line: #2b3a3e; --accent: #5fb7bf; --brass: #d8a75a; --chip: #1f3236;
+  color-scheme: dark;
+}
+html { direction: rtl; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 40px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-size: 13px; letter-spacing: .06em; color: var(--brass); font-weight: 700; }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: clamp(28px, 5vw, 40px); margin: 0; line-height: 1.15; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-weight: 400; font-size: 24px; margin: 0; text-wrap: balance; }
+h3 { font-size: 17px; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lead { color: var(--muted); font-size: 17px; }
+section { display: grid; gap: 14px; }
+.panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px; overflow-x: auto; min-width: 0;
+}
+.panel pre.mermaid { margin: 0; direction: ltr; text-align: center; min-width: 640px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.grid2 .panel pre.mermaid { min-width: 0; }
+.note { color: var(--muted); font-size: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { background: var(--chip); border-radius: 999px; padding: 2px 12px; font-size: 14px; }
+.mono { font-family: var(--font-mono); font-size: 13px; direction: ltr; unicode-bidi: isolate; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 13px; letter-spacing: .03em; }
+td .yes { color: var(--accent); font-weight: 700; }
+td .no { color: var(--muted); }
+ol.phases { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; counter-reset: ph -1; }
+ol.phases li { counter-increment: ph; display: grid; grid-template-columns: 44px 1fr; gap: 12px; align-items: start; }
+ol.phases li::before {
+  content: counter(ph); font-family: var(--font-display); font-size: 22px; color: var(--accent);
+  border: 1px solid var(--line); border-radius: 8px; text-align: center; line-height: 40px; background: var(--panel);
+}
+ol.phases b { display: block; }
+ol.phases span { color: var(--muted); font-size: 15px; }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">אפיון · גרסה 0.2 · 28.10.2026</div>
+  <h1>מפת מערכת הנכסים בחו"ל</h1>
+  <p class="lead">התרשימים שמסכמים את מסמך האפיון: מאיפה הנתונים מגיעים, איך הכסף זורם בכל מדינה, איך הנתונים בנויים, ומי רואה מה.</p>
+  <div class="chips">
+    <span class="chip">אוקראינה · ₴ / $</span><span class="chip">רומניה · € / lei</span>
+    <span class="chip">גאורגיה · ₾ / $</span><span class="chip">יוון · € (שלב אחרון)</span>
+    <span class="chip">יתרות פתיחה: 1.1.2026</span>
+  </div>
+</header>
+
+<section>
+  <h2>ארכיטקטורה</h2>
+  <p>הנתונים מגיעים מהמקורות בצד ימין, עוברים בדיקה ואישור, ונשמרים בבסיס נתונים אחד. ממנו ניזונים שלושה ממשקים.</p>
+  <div class="panel">
+<pre class="mermaid">
+flowchart RL
+  subgraph SRC["מקורות"]
+    M1["מייל reports@<br/>ויטאלי · גרשון · מלונות"]
+    D1["Dropbox<br/>קבצי איתי"]
+    W1["וואטסאפ<br/>ירח · ליאנה"]
+    A1["Airtable<br/>ייבוא חד-פעמי"]
+  end
+  subgraph ING["קליטה"]
+    AD["adapter לכל פורמט"]
+    FM["טופס הזנה ידני"]
+    RV{{"בדיקה ואישור<br/>הרשאת finance"}}
+  end
+  subgraph CORE["Supabase"]
+    DB[("Postgres<br/>הרשאות לפי שורה")]
+    ST[("קבצים פרטיים")]
+    FN["Edge Functions"]
+  end
+  subgraph OUT["ממשקים"]
+    OF["אפליקציית המשרד"]
+    MG["תצוגת הנהלה"]
+    PT["פורטל לקוח"]
+    EM["דוח חודשי במייל"]
+    WA["וואטסאפ דו-כיווני"]
+  end
+  M1 --> AD
+  D1 --> AD
+  W1 --> FM
+  A1 --> DB
+  AD --> RV
+  FM --> RV
+  RV --> DB
+  DB --- ST
+  DB --- FN
+  DB --> OF
+  DB --> MG
+  DB --> PT
+  FN --> EM
+  FN <--> WA
+</pre>
+  </div>
+  <p class="note">סיסמאות, קודי PIN ופרטי כרטיסים לא נכנסים למערכת. הם נשמרים ב-Bitwarden בלבד.</p>
+</section>
+
+<section>
+  <h2>זרימת הכסף לפי מדינה</h2>
+  <p>כל תיבה בתרשימים היא "מחזיק כספים". היתרה של לקוח היא סכום הכסף שלו שמוחזק אצל כל אחד מהם, בכל מטבע בנפרד.</p>
+  <div class="grid2">
+    <div class="panel">
+      <h3>אוקראינה · קייב</h3>
+<pre class="mermaid">
+flowchart TB
+  T["שוכר"] -->|"שכירות ₴"| V["ויטאלי"]
+  V -->|"10% עמלה"| VF["ויטאלי"]
+  V -->|"יתרה ₴"| GR["גרשון · קופת הכנסות ₴"]
+  C["לקוח"] -->|"הפקדה $"| GE["גרשון · קופת הוצאות $"]
+  GR -.->|"העברה פנימית"| GE
+  GE -->|"המרה ל-₴"| B["ניהול בניין · שמירה · מים"]
+  GR -.->|"העברה ללקוח<br/>לא אחיד"| C
+</pre>
+    </div>
+    <div class="panel">
+      <h3>אוקראינה · אודסה</h3>
+<pre class="mermaid">
+flowchart TB
+  T["שוכרים<br/>ארקדיה · מרכז העיר"] --> Y["ירח"]
+  Y -->|"כ-10 העברות יומיות"| GR["גרשון · קופת הכנסות ₴"]
+  GR --> AL{{"חלוקה יחסית<br/>לפי השכירות הצפויה"}}
+  AL --> A1["דירה 1"]
+  AL --> A2["דירה 2"]
+  AL --> A3["..."]
+</pre>
+    </div>
+    <div class="panel">
+      <h3>רומניה · בוקרשט</h3>
+<pre class="mermaid">
+flowchart TB
+  T["שוכר<br/>חוזה ב-€"] -->|"תשלום ב-lei"| I["איתי"]
+  T -.->|"שוכר שהוא חברה:<br/>8% מס במקור"| TX["ANAF"]
+  I -->|"העברה חודשית"| C["חשבון הלקוח<br/>ליברה ← Wise"]
+</pre>
+    </div>
+    <div class="panel">
+      <h3>גאורגיה · בטומי</h3>
+<pre class="mermaid">
+flowchart TB
+  G["אורחים"] --> H1["Alliance<br/>40% למלון"]
+  G --> L["ליאנה<br/>10%"]
+  G --> H2["Marina<br/>מאגר משותף · מקדם"]
+  H1 -->|"60%"| C["חשבון הלקוח<br/>BoG / Solo"]
+  L --> C
+  H2 -->|"אחרי 5% מס"| HB["יתרה במלון ₾"]
+  HB --> C
+</pre>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>מודל הנתונים</h2>
+  <p>הישויות המרכזיות והקשרים ביניהן. כל קשר שמשתנה לאורך זמן (בעלות, ניהול, חוזה) נשמר עם תאריכי תוקף, כדי שההיסטוריה לא תאבד.</p>
+  <div class="panel">
+<pre class="mermaid">
+erDiagram
+  PROJECT ||--o{ BUILDING : contains
+  BUILDING ||--o{ PROPERTY : contains
+  PROPERTY ||--o{ OWNERSHIP : "owned via"
+  PARTY ||--o{ OWNERSHIP : "holds share_pct"
+  PROPERTY ||--o{ MANAGEMENT_AGREEMENT : "managed by"
+  PARTY ||--o{ MANAGEMENT_AGREEMENT : "manager"
+  PROPERTY ||--o{ LEASE : "leased"
+  PARTY ||--o{ LEASE : "tenant"
+  PROPERTY ||--o{ RENT_SCHEDULE : "expected rent"
+  PARTY ||--o{ ACCOUNT : "holder"
+  PARTY ||--o{ ACCOUNT : "beneficiary"
+  TRANSACTION ||--|{ ENTRY : "has"
+  ACCOUNT ||--o{ ENTRY : "moves"
+  PROPERTY ||--o{ ENTRY : "attributed to"
+  IMPORT_BATCH ||--o{ TRANSACTION : "source of"
+  PROPERTY ||--o{ EXTERNAL_REF : "known as"
+  PROPERTY ||--o{ DEAL : "purchased in"
+  DEAL ||--o{ INSTALLMENT : "schedule"
+  PROPERTY ||--o{ UTILITY_CONTRACT : "has"
+  PROPERTY ||--o{ DOCUMENT : "files"
+  PARTY ||--o{ CONVERSATION : "whatsapp"
+  PARTY ||--o{ STATEMENT : "monthly report"
+  PROPERTY ||--o{ TASK : "linked"
+
+  PROPERTY {
+    uuid id
+    string unit_no
+    string status
+  }
+  PARTY {
+    uuid id
+    string type "person or company"
+    string roles "client tenant manager..."
+  }
+  OWNERSHIP {
+    numeric share_pct
+    date valid_from
+    date valid_to
+  }
+  ACCOUNT {
+    string kind "rent_pool expense_pool hotel_balance client_bank"
+    string currency
+  }
+  TRANSACTION {
+    date date
+    string period "YYYY-MM"
+    string category
+    string status
+  }
+  ENTRY {
+    numeric amount
+    string currency
+  }
+  LEASE {
+    date start
+    date end
+    numeric rent_amount
+    numeric withholding_tax_pct
+  }
+</pre>
+  </div>
+  <p class="note">המרת מטבע נשמרת כתנועה אחת עם שתי רשומות, אחת בכל מטבע, יחד עם השער. אין המרות שקטות.</p>
+</section>
+
+<section>
+  <h2>קליטת דוח חודשי</h2>
+  <div class="panel">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant S as Source (Vitaly / Itai / Hotel)
+  participant A as Adapter
+  participant R as Review screen
+  participant F as Finance user
+  participant L as Ledger
+  S->>A: xlsx / pdf arrives (email or Dropbox)
+  A->>A: parse + map names via external_refs
+  A->>R: draft batch: new / changed / unmatched rows
+  R->>F: notify "report waiting"
+  F->>R: fix unmatched, approve
+  R->>L: write transactions (linked to file + row)
+  L-->>F: balances updated, statement drafts ready
+</pre>
+  </div>
+</section>
+
+<section>
+  <h2>מי רואה מה</h2>
+  <div class="panel">
+    <table>
+      <thead><tr><th>תפקיד</th><th>נכסים ויתרות</th><th>הזנה ועריכה</th><th>אישור כספים ושליחת דוחות</th><th>מסמכים רגישים</th><th>ניהול משתמשים</th></tr></thead>
+      <tbody>
+        <tr><td>admin (אתה, אורי)</td><td><span class="yes">כל המדינות</span></td><td><span class="yes">כן</span></td><td><span class="yes">כן</span></td><td><span class="yes">כן</span></td><td><span class="yes">כן</span></td></tr>
+        <tr><td>הנהלה</td><td><span class="yes">כל המדינות + החברה</span></td><td><span class="no">לא</span></td><td><span class="no">לא</span></td><td><span class="no">לפי הגדרה</span></td><td><span class="no">לא</span></td></tr>
+        <tr><td>עובד · finance</td><td><span class="yes">המדינות שלו</span></td><td><span class="yes">כן</span></td><td><span class="yes">כן</span></td><td><span class="no">לפי הגדרה</span></td><td><span class="no">לא</span></td></tr>
+        <tr><td>עובד · editor</td><td><span class="yes">המדינות שלו</span></td><td><span class="yes">כן</span></td><td><span class="no">לא</span></td><td><span class="no">לפי הגדרה</span></td><td><span class="no">לא</span></td></tr>
+        <tr><td>עובד · viewer</td><td><span class="yes">המדינות שלו</span></td><td><span class="no">לא</span></td><td><span class="no">לא</span></td><td><span class="no">לא</span></td><td><span class="no">לא</span></td></tr>
+        <tr><td>לקוח</td><td><span class="yes">רק שלו</span></td><td><span class="no">לא</span></td><td><span class="no">לא</span></td><td><span class="yes">רק שלו</span></td><td><span class="no">לא</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>שלבי ביצוע</h2>
+  <ol class="phases">
+    <li><div><b>תשתית</b><span>repo, Supabase, הרשאות, מודל הנתונים, ייבוא אנשים, נכסים ובעלות מ-Airtable</span></div></li>
+    <li><div><b>אוקראינה</b><span>יתרות פתיחה ל-1.1.2026, adapters לדוחות של ויטאלי וגרשון, טופס לירח עם חלוקה יחסית</span></div></li>
+    <li><div><b>רומניה</b><span>סנכרון דרופבוקס, adapter לקובצי איתי, ייבוא 188 חוזים</span></div></li>
+    <li><div><b>גאורגיה</b><span>Alliance ו-Marina מ-PDF, טופס לליאנה, מעקב בנייה בפנורמה</span></div></li>
+    <li><div><b>הנהלה</b><span>מבט על החברה: עסקאות SEE THE FUTURE, Yom-Tov SRL, יתרות לקוחות</span></div></li>
+    <li><div><b>פורטל ודוח חודשי</b><span>דוח אחד ללקוח על כל הנכסים, נשלח אחרי אישור</span></div></li>
+    <li><div><b>וואטסאפ</b><span>מספר עסקי ותיבה משותפת, בלי מענה אוטומטי</span></div></li>
+    <li><div><b>יוון</b><span>אחרי איסוף מידע על KEROS</span></div></li>
+  </ol>
+</section>
+</div>
