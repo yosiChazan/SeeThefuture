@@ -50,7 +50,7 @@ export function Dashboard() {
     <Stack>
       <Title order={2}>שלום, {access.displayName}</Title>
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }}>
-        <Tile icon={IconFileImport} color="indigo" label="דוחות שממתינים לאישור" value={pendingBatches.data ?? '…'} hint="הקליטה תיבנה בשלב הבא" />
+        <Tile icon={IconFileImport} color="indigo" label="דוחות שממתינים לאישור" value={pendingBatches.data ?? '…'} to="/intake" />
         <Tile icon={IconCalendarDue} color="orange" label="חוזים שמסתיימים ב-60 יום" value={leases.data ? ending.length : '…'} to="/leases?view=ending" />
         <Tile icon={IconAlertTriangle} color="red" label="חוזים שחסרים בהם פרטים" value={leases.data ? incomplete : '…'} to="/leases?view=incomplete" />
         <Tile icon={IconMessages} color="teal" label="הודעות שלא נענו" value={openConversations.data ?? '…'} hint="וואטסאפ ייבנה בשלב 6" />

@@ -13,11 +13,11 @@ const NAV = [
   { to: '/properties', label: 'נכסים', icon: IconBuildingCommunity },
   { to: '/clients', label: 'לקוחות', icon: IconUsers },
   { to: '/leases', label: 'חוזי שכירות', icon: IconSignature },
+  { to: '/intake', label: 'קליטת דוחות', icon: IconFileImport },
 ];
 
 // Screens from SPEC §6.1 that wait for later stages (§9).
 const LATER = [
-  { label: 'קליטה', icon: IconFileImport },
   { label: 'רכישה ובנייה', icon: IconCrane },
   { label: 'הודעות', icon: IconMessages },
   { label: 'דוחות חודשיים', icon: IconFileText },
