@@ -13,7 +13,7 @@ interface StagingFile {
   buildings: { key: string; country: string; city: string; project?: string; name: string; address?: string }[];
   properties: { key: string; sourceId: string; aliases: string[]; externalRefs: { source: string; key: string }[]; country: string; buildingKey: string; unitNo: string; floor?: string; sqm?: number; purchaseDate?: string; status: string }[];
   ownerships: { propertyKey: string; partyKey: string; sharePct: number; shareAssumed: boolean }[];
-  leases: { propertyKey: string; tenantKey?: string; start: string; end?: string; rent: number; currency: string; deposit?: number; brokerage?: number; collectDay?: number; notes?: string }[];
+  leases: { propertyKey: string; tenantKey?: string; start?: string; end?: string; rent?: number; currency?: string; deposit?: number; brokerage?: number; collectDay?: number; notes?: string }[];
   accounts: { ownerKey: string; country: string; currency: string; iban: string; bank: string }[];
 }
 
@@ -121,8 +121,8 @@ export function buildSql(st: StagingFile): string {
     st.leases.map((l) => {
       // Romania: 8% withheld when the tenant is a company (SPEC decision 19).
       const tax = l.propertyKey.startsWith('RO|') && l.tenantKey && partyKind.get(l.tenantKey) === 'company' ? 8 : 0;
-      const end = l.end && l.end >= l.start ? l.end : undefined;
-      return [stableId('lease', `${l.propertyKey}|${l.start}|${l.tenantKey ?? ''}`), propertyId(l.propertyKey),
+      const end = l.end && (!l.start || l.end >= l.start) ? l.end : undefined;
+      return [stableId('lease', `${l.propertyKey}|${l.start ?? ''}|${l.tenantKey ?? ''}`), propertyId(l.propertyKey),
         l.tenantKey ? partyId(l.tenantKey) : null, l.start, end, l.rent, l.currency,
         l.deposit, l.deposit !== undefined ? l.currency : null, l.brokerage, l.brokerage !== undefined ? l.currency : null,
         l.collectDay && l.collectDay <= 31 ? l.collectDay : null, tax,

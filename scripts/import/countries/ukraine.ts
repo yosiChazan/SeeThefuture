@@ -81,10 +81,11 @@ export function importUkraine(dir: string, s: Staging) {
     const rent = parseAmount(r.Amount);
     const currency = parseCurrency(r.Currency);
     const label = `${cleanName(r.Property)} ${r['Start date']}`;
-    if (!propertyKey) { s.issue(C, 'warning', 'lease-unmatched', `${label}: property not found`); continue; }
-    if (!start || rent === undefined || !currency) { s.issue(C, 'warning', 'lease-incomplete', `${label}: missing start, amount or currency`); continue; }
     if (r.Status !== 'מושכר' && /לא מושכר/.test(r.Name)) { s.count(C, 'vacancy periods (skipped)'); continue; }
-    if (rent > 1_000_000) s.issue(C, 'warning', 'lease-amount', `${label}: amount ${r.Amount} looks like two numbers joined`);
+    if (!propertyKey) { s.issue(C, 'warning', 'lease-unmatched', `${label}: property not found`); continue; }
+    if (!start && rent === undefined) { s.issue(C, 'info', 'empty-row', `${label}: lease with no start or amount, skipped`); continue; }
+    if (!start || rent === undefined || !currency) s.issue(C, 'info', 'lease-incomplete', `${label}: no start, amount or currency; imported with the field empty`);
+    if (rent !== undefined && rent > 1_000_000) s.issue(C, 'warning', 'lease-amount', `${label}: amount ${r.Amount} looks like two numbers joined`);
     s.leases.push({
       propertyKey, start, end: parseDate(r['End date']), rent, currency,
       deposit: parseAmount(r.Guaranty), brokerage: parseAmount(r['Brokerage fee']),

@@ -36,3 +36,15 @@ test('Romanian company tenants get 8% withholding; duplicate rows are written on
   assert.match(leaseInsert, /'EUR', null, null, null, null, null, 8, /);
   assert.ok(sql.startsWith('-- Generated') && sql.trimEnd().endsWith('commit;'));
 });
+
+test('a lease without start or rent is written with those fields empty and keeps its end date', () => {
+  const sql = buildSql({
+    parties: [{ key: 'owner', name: 'Owner', kind: 'person', roles: ['client'], emails: [], phones: [], spellings: ['Owner'] }],
+    buildings: [{ key: 'b', country: 'GE', city: 'Batumi', name: 'Alliance' }],
+    properties: [{ key: 'GE|b|1505', sourceId: 'p', aliases: [], externalRefs: [], country: 'GE', buildingKey: 'b', unitNo: '1505', status: 'short_term' }],
+    ownerships: [{ propertyKey: 'GE|b|1505', partyKey: 'owner', sharePct: 100, shareAssumed: false }],
+    leases: [{ propertyKey: 'GE|b|1505', end: '2027-01-31', currency: 'USD' }],
+    accounts: [],
+  });
+  assert.match(sql, /, null, null, '2027-01-31', null, 'USD', /);
+});

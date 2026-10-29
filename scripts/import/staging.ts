@@ -61,10 +61,10 @@ export interface Ownership {
 export interface Lease {
   propertyKey: string;
   tenantKey?: string;
-  start: string;
+  start?: string;            // empty in Airtable: imported empty (SPEC decision 35)
   end?: string;
-  rent: number;
-  currency: Currency;
+  rent?: number;
+  currency?: Currency;
   deposit?: number;
   brokerage?: number;
   collectDay?: number;
@@ -97,7 +97,7 @@ export class Staging {
   accounts: BankAccount[] = [];
   issues: Issue[] = [];
   counts: Record<string, Record<string, number>> = {};
-  private fix: Corrections;
+  readonly fix: Corrections;
   private aliasByKey: Map<string, string>;
 
   constructor(fix: Corrections = defaultCorrections) {

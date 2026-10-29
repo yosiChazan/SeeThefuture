@@ -8,6 +8,8 @@ const fix: Corrections = {
   allowMissingUnit: ['No-number'],
   mergeProperties: [{ keep: 'Row 68', merge: 'Row 48' }],
   externalRefs: [{ property: 'Row 68', source: 'hotel', key: '3607' }],
+  leaseUnits: [],
+  leaseStarts: [],
   partyAliases: { 'Ayala Ravina': 'Ayala Malka Ravina', 'Golo&Sheinberger': 'G & S' },
   companies: ['G & S'],
   internal: ['Uri Golovenzitz'],

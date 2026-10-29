@@ -70,19 +70,24 @@ export function importRomania(dir: string, s: Staging) {
   for (const r of readCsv(join(dir, 'Lease Agreement-all.csv'))) {
     s.count(C, 'leases (rows)');
     // A lease can link several records ("3 - ... Apt 6 (1) ...,55 - ... Apt 6 (2) ...")
-    // when one tenant rents both halves of a split apartment.
-    const linked = r.Property.split(/,(?=\s*"?\d+ - )/).map(cleanName).filter(Boolean);
+    // when one tenant rents both halves of a split apartment. A whole name that
+    // matches wins: "53 - Boteanu 3A, 32 - LOT 3" is one record.
+    const linked = byName.has(cleanName(r.Property)) ? [cleanName(r.Property)]
+      : r.Property.split(/,(?=\s*"?\d+ - )/).map(cleanName).filter(Boolean);
     const matched = linked.map((n) => byName.get(n)).filter((k): k is string => !!k);
     const propertyKey = matched[0];
-    const start = parseDate(r['Start Date']);
     const rent = parseAmount(r['Monthly Price - Euro']);
+    const startFix = s.fix.leaseStarts.find((f) => f.property === linked[0] && f.start === parseDate(r['Start Date']) && f.rent === rent);
+    const start = startFix?.newStart ?? parseDate(r['Start Date']);
     const label = `${linked[0] ?? '(no property)'} ${r['Start Date']}`;
     if (!propertyKey) { s.issue(C, 'warning', 'lease-unmatched', `${label}: property not found`); continue; }
-    if (!start || rent === undefined) { s.issue(C, 'warning', 'lease-incomplete', `${label}: missing start or monthly price`); continue; }
+    const tenantName = r['Tenant Name'] || r['Apt Tenant'];
+    if (!start && rent === undefined && !cleanName(tenantName)) { s.issue(C, 'info', 'empty-row', `${label}: lease with no start, price or tenant, skipped`); continue; }
+    if (!start || rent === undefined) s.issue(C, 'info', 'lease-incomplete', `${label}: no start or monthly price; imported with the field empty`);
     if (matched.length > 1) {
       s.issue(C, 'info', 'lease-multi-unit', `${label}: one lease for ${matched.length} units; attached to the first`);
     }
-    const [tenant, ...coTenants] = splitNames(r['Tenant Name'] || r['Apt Tenant']);
+    const [tenant, ...coTenants] = splitNames(tenantName);
     s.leases.push({
       propertyKey, start, end: parseDate(r['End date']), rent, currency: 'EUR',
       tenantKey: tenant ? s.party(tenant, C, { role: 'tenant' }) : undefined,
