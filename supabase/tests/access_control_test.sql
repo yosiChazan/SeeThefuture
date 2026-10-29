@@ -55,9 +55,11 @@ insert into app.accounts (id, holder_party_id, beneficiary_party_id, country_cod
 
 -- Helpers ---------------------------------------------------------------
 
-create function pg_temp.as_user(u text) returns void language plpgsql as $$
+-- Signed in with password and TOTP (aal2) unless told otherwise.
+create function pg_temp.as_user(u text, aal text default 'aal2') returns void language plpgsql as $$
 begin
   perform set_config('request.jwt.claim.sub', u, false);
+  perform set_config('request.jwt.claims', json_build_object('sub', u, 'aal', aal)::text, false);
   execute 'set role authenticated';
 end $$;
 
@@ -182,6 +184,26 @@ reset role;
 
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
 select pg_temp.check((select count(*) from app.charges) = 0, 'client does not see charges of other properties');
+reset role;
+
+-- Two-factor sign-in -----------------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'aal1');
+select pg_temp.check((select count(*) from app.properties) = 0, 'admin without the TOTP code sees no properties');
+select pg_temp.check((select count(*) from app.profiles) = 0, 'admin without the TOTP code cannot read profiles');
+reset role;
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'aal1');
+select pg_temp.check((select count(*) from app.properties) = 0, 'RO editor without the TOTP code sees nothing');
+do $$ begin
+  update app.properties set notes = 'x' where country_code = 'RO';
+  if found then raise exception 'FAILED: RO editor without the TOTP code updated a property'; end if;
+  raise notice 'ok - RO editor without the TOTP code cannot update';
+end $$;
+reset role;
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d', 'aal1');
+select pg_temp.check((select count(*) from app.properties) = 1, 'client with a one-time code (aal1) still sees own property');
 reset role;
 
 -- Audit -----------------------------------------------------------------

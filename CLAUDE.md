@@ -31,6 +31,8 @@ open questions (§11). Record every new decision there.
 - Time-bound relations (ownership, management, leases, expected rent) are closed with
   `valid_to`, never deleted.
 - Card numbers, CVV, PIN and bank passwords are never stored. They belong in Bitwarden.
+- Staff see nothing until they complete TOTP (`aal2`); clients are exempt. Every new table
+  in `app` gets the restrictive `require_mfa` policy (see migration 6).
 
 ## Commands
 
