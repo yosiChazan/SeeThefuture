@@ -37,6 +37,12 @@ export function findPeriod(...texts: string[]): string | null {
   return null;
 }
 
+// "2026-06-01" → "2026-05-01"
+export function prevMonth(period: string): string {
+  const [y, m] = period.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12-01` : `${y}-${String(m - 1).padStart(2, '0')}-01`;
+}
+
 export function lastDay(period: string): string {
   const [y, m] = period.split('-').map(Number);
   return `${period.slice(0, 8)}${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;

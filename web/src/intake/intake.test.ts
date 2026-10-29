@@ -170,3 +170,20 @@ test('matching in Romania: street, apartment and lot among the owner\'s properti
   assert.equal(m('Vulcanescu_10', 'Yom Tov SRL'), 'm');
   assert.equal(m('Vasile_Lascar6_ap.6-L1', 'Yom Tov SRL'), null, 'not this owner\'s property');
 });
+
+test('Vitaly June: "EXPENSES JUNE" header, totals agree, an old date is an error to check', () => {
+  const r = parseVitaly(bookFromJson(fixture('vitaly_2026_06.json')), '2026_RENT_JUNE_PLC.xlsx');
+  assert.equal(r.period, '2026-06-01');
+  assert.deepEqual(r.warnings, []);
+  assert.equal(new Set(r.rows.map((x) => x.property.ref)).size, 10);
+  const of = (cat: string) => r.rows.filter((x) => x.proposed?.category === cat);
+  assert.equal(sum(of('rent').map((x) => x.proposed!.entries[0].amount)), 242300);
+  assert.equal(sum(of('mgmt_fee').map((x) => x.proposed!.entries[1].amount)), 24230);
+  assert.equal(sum(r.rows.filter((x) => x.kind === 'הוצאה').map((x) => -x.proposed!.entries[0].amount)), 11990);
+
+  const stale = r.rows.filter((x) => x.errors.length);
+  assert.deepEqual(stale.map((x) => [x.property.ref, x.proposed!.occurred_on]), [['PLC 11(4), APT. 42', '2026-01-22']]);
+  assert.equal(r.rows.find((x) => x.property.ref === 'PLC 11(4), APT. 36')?.property.unit, '36', '"  PLC 11(4), APT.36 " with spaces');
+  const apt35 = r.rows.filter((x) => x.property.ref === 'PLC 17(2), APT. 35');
+  assert.equal(apt35.filter((x) => !x.proposed).length, 3, 'three debts shown for information');
+});
