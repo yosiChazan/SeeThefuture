@@ -5,7 +5,7 @@
 // one expense per row. Rent arrives in cash or to a card account; Vitaly keeps 10%
 // of each. Debts are shown for information and posted by nobody (SPEC §4.3).
 
-import { round2, dayMonth, expectHeader, findCol, findPeriod, lastDay, num, text } from './util.ts';
+import { round2, dayMonth, expectHeader, findCol, findPeriod, lastDay, num, prevMonth, text } from './util.ts';
 import { FormatError, type Book, type ParseResult, type ParsedRow, type PropertyHint, type ProposedEntry } from './types.ts';
 
 const ADAPTER = 'vitaly';
@@ -20,9 +20,11 @@ function expenseCategory(s: string): string {
 // "PLC 17(2), APT. 12" → building 2, apartment 12 in Lake City.
 export function vitalyHint(cell: string): PropertyHint | null {
   const [first, ...rest] = cell.split('\n').map((s) => s.trim()).filter(Boolean);
-  const m = first?.match(/PLC\s*\d+\s*\((\d+)\)\s*,?\s*APT\.?\s*(\d+)/i);
+  const m = first?.match(/PLC\s*(\d+)\s*\((\d+)\)\s*,?\s*APT\.?\s*(\d+)/i);
   if (!m) return null;
-  return { ref: first.replace(/\s+/g, ' '), building: m[1], unit: m[2], project: 'Lake city', owner: rest.join(' ') || undefined };
+  // One spelling for every month ("APT.36" in June, "APT. 36" in January), so the
+  // name remembered in external_refs keeps matching.
+  return { ref: `PLC ${m[1]}(${m[2]}), APT. ${m[3]}`, building: m[2], unit: m[3], project: 'Lake city', owner: rest.join(' ') || undefined };
 }
 
 export function parseVitaly(book: Book, fileName = ''): ParseResult {
@@ -32,10 +34,11 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
   const col = {
     cash: findCol(g, 1, /^CASH$/i, 'CASH'),
     card: findCol(g, 1, /^CARD ACCOUNT/i, 'CARD ACCOUNT'),
-    expenses: findCol(g, 1, /^EXPENSES FOR/i, 'EXPENSES FOR <MONTH>'),
+    // "EXPENSES FOR JANUARY" in January, "EXPENSES JUNE" in June.
+    expenses: findCol(g, 1, /^EXPENSES\b/i, 'EXPENSES <MONTH>'),
     feeCash: findCol(g, 1, /10\s*% FOR MANAGEMENT FROM CASH/i, '10% FOR MANAGEMENT FROM CASH'),
     feeCard: findCol(g, 1, /10\s*% FOR MANAGEMENT FROM CARD/i, '10% FOR MANAGEMENT FROM CARD ACCOUNT'),
-    other: findCol(g, 1, /OTHER EXPAN?NSES/i, 'OTHER EXPENSES'),
+    other: findCol(g, 1, /OTHER EXP[AE]NSES/i, 'OTHER EXPENSES'),  // spelled "EXPANSES" in January
     debtFee: findCol(g, 1, /DEBT FOR MANAGEMENT/i, 'DEBT FOR MANAGEMENT'),
     debtOther: findCol(g, 1, /DEBT FOR OTHER/i, 'DEBT FOR OTHER EXPENSES'),
   };
@@ -62,6 +65,8 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
     const lease: string[] = [];
     for (let r = start + 1; r <= stop; r++) if (text(g, r, 2)) lease.push(text(g, r, 2));
     const date = (r: number, c: number) => dayMonth(text(g, r, c - 1), period) ?? lastDay(period);
+    // A date before the previous month is usually a copy of an old row ("22.01." in June).
+    const stale = (on: string) => on < prevMonth(period) ? [`התאריך ${on.split('-').reverse().join('.')} רחוק מחודש הדוח. לבדוק מול ויטאלי`] : [];
 
     const add = (r: number, kind: string, category: string | null, amount: number, on: string, description: string,
       entries: ProposedEntry[], issues: string[] = [], errors: string[] = []) => {
@@ -78,13 +83,13 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
       if (cash) {
         sums.cash += cash;
         add(r, 'שכירות במזומן', 'rent', cash, date(r, col.cash), `שכירות ${hint.ref}`,
-          [{ amount: cash, currency: 'UAH', account: { kind: 'manager_cash', holder: 'source' } }]);
+          [{ amount: cash, currency: 'UAH', account: { kind: 'manager_cash', holder: 'source' } }], [], stale(date(r, col.cash)));
       }
       const card = num(g.value(r, col.card));
       if (card) {
         sums.card += card;
         add(r, 'שכירות לכרטיס', 'rent', card, date(r, col.card), `שכירות לכרטיס ${hint.ref}`,
-          [{ amount: card, currency: 'UAH', account: { kind: 'legacy_card', holder: 'beneficiary' } }]);
+          [{ amount: card, currency: 'UAH', account: { kind: 'legacy_card', holder: 'beneficiary' } }], [], stale(date(r, col.card)));
       }
       const feeCash = num(g.value(r, col.feeCash));
       if (feeCash) {
