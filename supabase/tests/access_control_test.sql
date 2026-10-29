@@ -164,6 +164,26 @@ do $$ begin
 end $$;
 reset role;
 
+-- Charges ----------------------------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+insert into app.charges (property_id, period, kind, amount, currency)
+values ('30000000-0000-0000-0000-000000000002', '2026-01-01', 'electricity', 180, 'RON');
+do $$ begin
+  begin
+    insert into app.charges (property_id, period, kind, amount, currency)
+    values ('30000000-0000-0000-0000-000000000001', '2026-01-01', 'rent', 22500, 'UAH');
+    raise exception 'FAILED: RO editor added a UA charge';
+  exception when insufficient_privilege then raise notice 'ok - RO editor cannot add UA charges';
+  end;
+end $$;
+select pg_temp.check((select count(*) from app.charges) = 1, 'RO editor sees Romanian charges');
+reset role;
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select pg_temp.check((select count(*) from app.charges) = 0, 'client does not see charges of other properties');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
