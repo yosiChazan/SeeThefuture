@@ -206,6 +206,70 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000d', 'aal1');
 select pg_temp.check((select count(*) from app.properties) = 1, 'client with a one-time code (aal1) still sees own property');
 reset role;
 
+-- Intake commit -----------------------------------------------------------
+
+-- A UA property owned half and half; one Vitaly batch with rent and his fee.
+insert into app.properties (id, building_id, unit_no, status) values
+  ('30000000-0000-0000-0000-000000000004', '22000000-0000-0000-0000-000000000001', '30', 'rented');
+insert into app.ownerships (property_id, party_id, share_pct, valid_from) values
+  ('30000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000001', 50, '2023-01-01'),
+  ('30000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000002', 50, '2023-01-01');
+
+create function pg_temp.vitaly_batch(p_id uuid) returns void language sql as $$
+  insert into app.import_batches (id, source_id, country_code, status)
+  select p_id, s.id, 'UA', 'in_review' from app.import_sources s where s.adapter = 'vitaly_rent_xlsx';
+  insert into app.import_rows (batch_id, row_ref, raw, property_id, match_status, fingerprint, proposed) values
+    (p_id, '001', '{"property_ref": "PLC 17(2), APT. 30"}', '30000000-0000-0000-0000-000000000004', 'matched',
+     'vitaly|30|2026-01|rent|20001',
+     '{"occurred_on": "2026-01-08", "period": "2026-01-01", "category": "rent", "description": "Rent",
+       "entries": [{"amount": 20000.01, "currency": "UAH", "account": {"kind": "manager_cash", "holder": "source"}}]}'),
+    (p_id, '002', '{}', '30000000-0000-0000-0000-000000000004', 'matched',
+     'vitaly|30|2026-01|mgmt_fee|2000',
+     '{"occurred_on": "2026-01-31", "period": "2026-01-01", "category": "mgmt_fee", "description": "10%",
+       "entries": [{"amount": -2000, "currency": "UAH", "account": {"kind": "manager_cash", "holder": "source"}},
+                   {"amount": 2000, "currency": "UAH", "external": "source"}]}'),
+    (p_id, '003', '{}', null, 'ignored', null, null);
+$$;
+select pg_temp.vitaly_batch('50000000-0000-0000-0000-000000000001');
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  perform app.commit_import_batch('50000000-0000-0000-0000-000000000001');
+  raise exception 'FAILED: RO editor committed a UA batch';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - RO editor cannot commit a UA batch';
+end $$;
+reset role;
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-000000000001') = 2,
+  'UA finance commits the matched rows and skips the ignored one');
+select pg_temp.check(
+  (select array_agg(balance order by balance)::text from app.account_balances
+   where kind = 'manager_cash' and holder_party_id = 'a0000000-0000-4000-8000-000000000001') = '{9000.00,9000.01}',
+  'rent and fee are split between co-owners by share, remainder to the last owner');
+select pg_temp.check(
+  (select status from app.import_batches where id = '50000000-0000-0000-0000-000000000001') = 'committed',
+  'batch is marked committed');
+select pg_temp.check(
+  (select count(*) from app.transactions where import_batch_id = '50000000-0000-0000-0000-000000000001' and status = 'posted') = 2,
+  'committed rows become posted transactions linked to the batch');
+reset role;
+
+select pg_temp.check(
+  exists (select 1 from app.external_refs where source = 'vitaly_rent_xlsx' and external_key = 'PLC 17(2), APT. 30'),
+  'commit remembers the source''s name for the property');
+
+select pg_temp.vitaly_batch('50000000-0000-0000-0000-000000000002');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-000000000002') = 0,
+  'the same report again posts nothing');
+select pg_temp.check(
+  (select count(*) from app.import_rows where batch_id = '50000000-0000-0000-0000-000000000002' and match_status = 'duplicate') = 2,
+  'rows already posted are marked duplicate');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

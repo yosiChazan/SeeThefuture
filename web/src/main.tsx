@@ -3,6 +3,7 @@ import '@mantine/dates/styles.css';
 import '@mantine/notifications/styles.css';
 import { Badge, DirectionProvider, MantineProvider, createTheme } from '@mantine/core';
 import { DatesProvider } from '@mantine/dates';
+import { ModalsProvider } from '@mantine/modals';
 import { Notifications } from '@mantine/notifications';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import 'dayjs/locale/he';
@@ -30,7 +31,9 @@ createRoot(document.getElementById('root')!).render(
         <DatesProvider settings={{ locale: 'he', firstDayOfWeek: 0 }}>
           <Notifications position="top-left" />
           <QueryClientProvider client={queryClient}>
-            <App />
+            <ModalsProvider>
+              <App />
+            </ModalsProvider>
           </QueryClientProvider>
         </DatesProvider>
       </MantineProvider>

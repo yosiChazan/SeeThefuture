@@ -52,7 +52,13 @@ cd web && npm install
 cp .env.example .env   # project URL + publishable key; on Cloudflare Pages set the same two variables
 npm run dev        # http://localhost:5173
 npm run build      # typecheck + production build into web/dist
+npm test           # report adapters against anonymized fixtures of real reports
 ```
+
+Report adapters live in `web/src/intake/` (one file per manager's format, pure functions over
+a `Grid`). Their fixtures in `web/src/intake/fixtures/` are real reports with every person's
+name replaced; keep it that way. A layout change in a report must make an adapter throw
+`FormatError`, never import wrong numbers.
 
 `web/.env.example` holds the project URL and the publishable key (safe in the browser). Never
 put a secret key there. A user sees the app only after an admin gives them a row in

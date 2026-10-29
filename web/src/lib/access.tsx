@@ -14,6 +14,7 @@ export interface Access {
   countries: Country[];
   canRead: (c: Country) => boolean;
   canEdit: (c: Country) => boolean;
+  canApprove: (c: Country) => boolean;
 }
 
 const AccessContext = createContext<Access | null>(null);
@@ -32,6 +33,7 @@ export function useAccessQuery(userId: string) {
       const all: Country[] = ['UA', 'RO', 'GE', 'GR'];
       const canRead = (c: Country) => profile.is_admin || profile.is_management || (level.get(c) ?? 0) >= 1;
       const canEdit = (c: Country) => profile.is_admin || (level.get(c) ?? 0) >= 2;
+      const canApprove = (c: Country) => profile.is_admin || (level.get(c) ?? 0) >= 3;
       return {
         displayName: profile.display_name,
         isAdmin: profile.is_admin,
@@ -40,6 +42,7 @@ export function useAccessQuery(userId: string) {
         countries: all.filter(canRead),
         canRead,
         canEdit,
+        canApprove,
       };
     },
   });
