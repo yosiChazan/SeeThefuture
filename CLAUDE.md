@@ -11,7 +11,7 @@ open questions (§11). Record every new decision there.
 ## Stack
 
 - Supabase: Postgres + RLS, Auth, Storage, Edge Functions (TypeScript/Deno)
-- Frontend: React + Vite + TypeScript, Hebrew RTL (not started yet)
+- Frontend: React + Vite + TypeScript + Mantine, Hebrew RTL, in `web/`
 - All tables live in the `app` schema. Expose it in the Supabase API settings.
 
 ## Layout
@@ -20,6 +20,7 @@ open questions (§11). Record every new decision there.
 - `supabase/tests/` – policy tests; `supabase_stub.sql` imitates Supabase locally
 - `scripts/test-db.sh` – applies all migrations to a throwaway Postgres and runs the tests
 - `docs/` – spec and diagrams
+- `web/` – office app (static SPA; talks to Supabase with the publishable key, RLS decides what each user sees)
 
 ## Rules that the schema enforces
 
@@ -41,6 +42,19 @@ node scripts/import/report.ts <airtable-dir> <out>    # dry-run import: staging.
 `<airtable-dir>` holds `ukraine/`, `romania/`, `georgia/` with the Airtable CSV exports.
 Exports contain client personal data: keep them and the report outside the repo.
 Manual data decisions go in `scripts/import/corrections.ts`.
+
+### Office app
+
+```bash
+cd web && npm install
+cp .env.example .env   # project URL + publishable key; on Cloudflare Pages set the same two variables
+npm run dev        # http://localhost:5173
+npm run build      # typecheck + production build into web/dist
+```
+
+`web/.env.example` holds the project URL and the publishable key (safe in the browser). Never
+put a secret key there. A user sees the app only after an admin gives them a row in
+`app.profiles` (and `app.user_country_roles` for staff); signing up alone gives nothing.
 
 ### Loading into Supabase
 
