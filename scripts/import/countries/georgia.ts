@@ -28,7 +28,9 @@ export function importGeorgia(dir: string, s: Staging) {
     s.count(C, 'persons');
   }
 
-  const byName = new Map<string, string>();
+  // Airtable names are "Owner - Project", so an owner with two units in one
+  // project has two records with the same name. null marks such a name.
+  const byName = new Map<string, string | null>();
   for (const r of readCsv(join(dir, 'Property-Grid view.csv'))) {
     const sourceId = cleanName(r.ID);
     const projectName = cleanName(r.BUILDING);
@@ -63,7 +65,7 @@ export function importGeorgia(dir: string, s: Staging) {
       status: project.status,
     }, owners);
     if (!key) continue;
-    byName.set(sourceId, key);
+    byName.set(sourceId, byName.has(sourceId) ? null : key);
     s.count(C, 'properties');
   }
 
@@ -72,6 +74,10 @@ export function importGeorgia(dir: string, s: Staging) {
     const label = `${cleanName(r.Property)} ${r['start date']}`;
     if (r.Status !== 'מושכר') { s.count(C, 'vacancy periods (skipped)'); continue; }
     const propertyKey = byName.get(cleanName(r.Property));
+    if (propertyKey === null) {
+      s.issue(C, 'warning', 'lease-ambiguous', `${label}: owner has several units in this project; link the lease by hand`);
+      continue;
+    }
     const start = parseDate(r['start date']);
     const rent = parseAmount(r['סכום חודשי']);
     if (!propertyKey) { s.issue(C, 'warning', 'lease-unmatched', `${label}: property not found`); continue; }

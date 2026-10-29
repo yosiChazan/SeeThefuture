@@ -40,3 +40,19 @@ node scripts/import/report.ts <airtable-dir> <out>    # dry-run import: staging.
 
 `<airtable-dir>` holds `ukraine/`, `romania/`, `georgia/` with the Airtable CSV exports.
 Exports contain client personal data: keep them and the report outside the repo.
+Manual data decisions go in `scripts/import/corrections.ts`.
+
+### Loading into Supabase
+
+Needs `SUPABASE_ACCESS_TOKEN` in the environment (a personal access token; never paste it
+in chat). `NODE_USE_ENV_PROXY=1` makes Node's fetch use the sandbox proxy.
+
+```bash
+NODE_USE_ENV_PROXY=1 node scripts/supabase-sql.ts migrate          # apply new migrations
+node scripts/import/report.ts <airtable-dir> <out>                  # review <out>/import-report.html
+node scripts/import/load.ts <out>/staging.json <out>/load.sql       # idempotent SQL
+NODE_USE_ENV_PROXY=1 node scripts/supabase-sql.ts run <out>/load.sql
+scripts/test-db.sh <out>/load.sql                                   # same load on a local Postgres first
+```
+
+After the first migration, add `app` to Exposed schemas in the Supabase API settings.

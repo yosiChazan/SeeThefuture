@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Apply all migrations to a throwaway local Postgres and run the policy tests.
-# Usage: scripts/test-db.sh
+# Usage: scripts/test-db.sh              run the policy tests
+#        scripts/test-db.sh a.sql b.sql  instead run these files after the migrations
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,4 +33,11 @@ for f in "$ROOT"/supabase/migrations/*.sql; do
   echo "applying $(basename "$f")"
   "${PSQL[@]}" -f "$f"
 done
-"${PSQL[@]}" -f "$ROOT/supabase/tests/access_control_test.sql"
+if [ "$#" -gt 0 ]; then
+  for f in "$@"; do
+    echo "running $f"
+    "${PSQL[@]}" -f "$f"
+  done
+else
+  "${PSQL[@]}" -f "$ROOT/supabase/tests/access_control_test.sql"
+fi
