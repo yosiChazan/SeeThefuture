@@ -6,7 +6,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --test scripts/import/lib/*.test.ts && scripts/test-db.sh",
+    "test": "node --test scripts/import/*.test.ts scripts/import/lib/*.test.ts && scripts/test-db.sh",
     "import:report": "node scripts/import/report.ts"
   },
   "devDependencies": {

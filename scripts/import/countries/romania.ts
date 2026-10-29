@@ -41,22 +41,11 @@ export function importRomania(dir: string, s: Staging) {
     const sourceId = cleanName(r.ID);
     if (!cleanName(r.Address)) continue;
     s.count(C, 'properties (rows)');
-    const { street, floor, unitNo } = parseRomanianAddress(r.Address);
-    if (!unitNo) { s.issue(C, 'error', 'missing-unit', `${sourceId}: no "Apt" number in address`); continue; }
+    const { street, floor, unitNo: parsedUnit } = parseRomanianAddress(r.Address);
+    const unitNo = s.unitFor(C, sourceId, parsedUnit);
+    if (!unitNo) continue;
     const buildingName = cleanName(r.Building) || street;
     const buildingKey = s.building({ country: C, city: 'Bucharest', name: buildingName, address: street });
-    const key = `RO|${buildingKey}|${unitNo}`;
-    if (s.properties.has(key)) {
-      s.issue(C, 'error', 'duplicate-property', `${sourceId}: same building and apartment as ${s.properties.get(key)!.sourceId}`);
-      continue;
-    }
-    s.properties.set(key, {
-      key, sourceId, country: C, buildingKey, unitNo, floor,
-      sqm: parseAmount(r.SQM), purchaseDate: parseDate(r['Purchase Date']),
-      status: 'vacant', yomTovLandShare: !!r['LAND 1% YOM TOV'],
-    });
-    byName.set(sourceId, key);
-    s.count(C, 'properties');
 
     const owners: string[] = [];
     for (const n of splitNames(r.Owners)) {
@@ -68,8 +57,14 @@ export function importRomania(dir: string, s: Staging) {
       }
       owners.push(/yom tov/i.test(n) ? yomTov : s.party(n, C, { role: 'client' })!);
     }
-    if (!owners.length) s.issue(C, 'error', 'no-owner', `${sourceId}: no owner left after removing tenants`);
-    s.own(key, owners, C);
+    const key = s.addProperty({
+      sourceId, country: C, buildingKey, unitNo, floor,
+      sqm: parseAmount(r.SQM), purchaseDate: parseDate(r['Purchase Date']),
+      status: 'vacant', yomTovLandShare: !!r['LAND 1% YOM TOV'],
+    }, owners);
+    if (!key) continue;
+    byName.set(sourceId, key);
+    s.count(C, 'properties');
   }
 
   for (const r of readCsv(join(dir, 'Lease Agreement-all.csv'))) {

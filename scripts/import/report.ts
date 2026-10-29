@@ -22,6 +22,7 @@ function main() {
   importUkraine(join(dir, 'ukraine'), s);
   importGeorgia(join(dir, 'georgia'), s);
   importRomania(join(dir, 'romania'), s);
+  s.finalizeOwnerships();
 
   // A property is rented when a lease covers today, unless it is sold, hotel-run or unbuilt.
   const today = new Date().toISOString().slice(0, 10);

@@ -44,9 +44,9 @@ export function importGeorgia(dir: string, s: Staging) {
     // already carry the full number.
     const apt = cleanName(r['מספר דירה']).replace(/^0+(?=\d)/, '');
     const floorNo = cleanName(r['קומה']).replace(/^0+(?=\d)/, '');
-    if (!apt) { s.issue(C, 'error', 'missing-unit', `${sourceId}: no apartment number`); continue; }
     const hotelNumbering = project.status === 'short_term' && /^\d{1,2}$/.test(apt) && /^\d+$/.test(floorNo);
-    const unitNo = hotelNumbering ? `${floorNo}${apt.padStart(2, '0')}` : apt;
+    const unitNo = s.unitFor(C, sourceId, hotelNumbering ? `${floorNo}${apt.padStart(2, '0')}` : apt || undefined);
+    if (!unitNo) continue;
 
     const address = cleanName(r['כתובת']);
     const buildingKey = s.building({
@@ -54,22 +54,17 @@ export function importGeorgia(dir: string, s: Staging) {
       name: projectName === 'Tbilisi' ? (address || 'Tbilisi') : projectName,
       address: /^https?:/.test(address) ? undefined : address || undefined,
     });
-    const key = `GE|${buildingKey}|${unitNo}`;
-    if (s.properties.has(key)) {
-      s.issue(C, 'error', 'duplicate-property', `${sourceId}: same project and apartment as ${s.properties.get(key)!.sourceId}`);
-      continue;
-    }
     if (/טרם נקנ/.test(r.Notes)) s.issue(C, 'warning', 'not-purchased', `${sourceId}: notes say "not purchased yet"`);
-    s.properties.set(key, {
-      key, sourceId, country: C, buildingKey, unitNo,
+    const owners = splitNames(r.OWNER).map((n) => s.party(n, C, { role: 'client' })).filter((k): k is string => !!k);
+    const key = s.addProperty({
+      sourceId, country: C, buildingKey, unitNo,
       floor: floorNo || undefined,
       sqm: parseAmount(r['גודל מ"ר']), purchaseDate: parseDate(r['תאריך רכישה (ראשוני)']),
       status: project.status,
-    });
+    }, owners);
+    if (!key) continue;
     byName.set(sourceId, key);
     s.count(C, 'properties');
-    const owners = splitNames(r.OWNER).map((n) => s.party(n, C, { role: 'client' })).filter((k): k is string => !!k);
-    s.own(key, owners, C);
   }
 
   for (const r of readCsv(join(dir, 'lease agreament-all.csv'))) {

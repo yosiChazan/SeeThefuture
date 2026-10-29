@@ -44,11 +44,8 @@ export function importUkraine(dir: string, s: Staging) {
       s.issue(C, 'error', 'unknown-area', `${sourceId}: Area "${r.Area}" is not Kyiv / Arcadia / Odessa center`);
       continue;
     }
-    const unitNo = cleanName(r['Apartment number']);
-    if (!unitNo) {
-      s.issue(C, 'error', 'missing-unit', `${sourceId}: no apartment number`);
-      continue;
-    }
+    const unitNo = s.unitFor(C, sourceId, cleanName(r['Apartment number']) || undefined);
+    if (!unitNo) continue;
 
     // Kyiv rows name a building ("2.4 Lake city"); Odessa rows only have an address.
     const buildingId = cleanName(r.Building);
@@ -66,27 +63,15 @@ export function importUkraine(dir: string, s: Staging) {
     }
     const buildingKey = s.building({ country: C, city: area.city, project, name: buildingName, address: cleanName(r.address) || undefined });
 
-    const key = `UA|${buildingKey}|${unitNo}`;
-    if (s.properties.has(key)) {
-      s.issue(C, 'error', 'duplicate-property', `${sourceId}: same building and apartment as ${s.properties.get(key)!.sourceId}`);
-      continue;
-    }
-    s.properties.set(key, {
-      key, sourceId, country: C, buildingKey, unitNo,
+    const owners = splitNames(r.Owner).map((n) => s.party(n, C, { role: 'client' })).filter((k): k is string => !!k);
+    const key = s.addProperty({
+      sourceId, country: C, buildingKey, unitNo,
       floor: cleanName(r.floor) || undefined, sqm: parseAmount(r.Sqm),
       purchaseDate: parseDate(r['Purchase date']), status: 'vacant',
-    });
+    }, owners);
+    if (!key) continue;
     byName.set(sourceId, key);
     s.count(C, 'properties');
-
-    const owners = splitNames(r.Owner).flatMap((n) => {
-      if (n.includes('&')) {
-        s.issue(C, 'warning', 'owner-is-group', `${sourceId}: owner "${n}" looks like a partnership; split into people or a company`);
-      }
-      return [s.party(n, C, { role: 'client' })];
-    }).filter((k): k is string => !!k);
-    if (!owners.length) s.issue(C, 'error', 'no-owner', `${sourceId}: no owner`);
-    s.own(key, owners, C);
   }
 
   for (const r of readCsv(join(dir, 'Lease Agreament-all contract.csv'))) {
