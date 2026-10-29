@@ -34,5 +34,9 @@ open questions (§11). Record every new decision there.
 ## Commands
 
 ```bash
-scripts/test-db.sh
+npm test                                              # importer unit tests + database policy tests
+node scripts/import/report.ts <airtable-dir> <out>    # dry-run import: staging.json + cleanup report
 ```
+
+`<airtable-dir>` holds `ukraine/`, `romania/`, `georgia/` with the Airtable CSV exports.
+Exports contain client personal data: keep them and the report outside the repo.

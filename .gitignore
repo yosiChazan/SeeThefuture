@@ -8,3 +8,4 @@ supabase/.branches/
 # Never commit Airtable exports or client data
 *.csv
 data/
+import-out/
