@@ -13,6 +13,11 @@ export interface Corrections {
   externalRefs: { property: string; source: string; key: string }[];
   // Spelling → canonical name. Merges the parties.
   partyAliases: Record<string, string>;
+  // Georgia: leases of an owner with several units in one project. The nth
+  // Airtable row with this property and start date goes to units[n].
+  leaseUnits: { property: string; start: string; units: string[]; rent?: number }[];
+  // A lease row whose start date is wrong in Airtable, found by property, start and rent.
+  leaseStarts: { property: string; start: string; rent: number; newStart: string }[];
   // Canonical names that are companies, and our own people and companies.
   companies: string[];
   internal: string[];
@@ -37,6 +42,17 @@ export const corrections: Corrections = {
   externalRefs: [
     // Airtable: floor 30, apt 23. The hotel's own serial number is 3607.
     { property: 'MOSHE ISRAEL ICKOVITCH - Alliance - Meroit Card yard', source: 'alliance_statement', key: '3607' },
+  ],
+  leaseUnits: [
+    // Notes: "דירה 1505", rent 350 in winter and 450 in June–August; Airtable has "$350450".
+    { property: 'Menachem Kleinman - Alliance - Meroit Card yard', start: '2024-04-08', units: ['1505'], rent: 350 },
+    // Two identical rows, one per unit; same terms, so the order does not matter.
+    { property: 'SHIMON YOCHNAN TZWEBNER - Alliance - Meroit Card yard', start: '2025-10-01', units: ['3519', '3505'] },
+  ],
+  leaseStarts: [
+    // The extension was entered as a copy of the lease with the same start date.
+    // Notes: from 01.08.2026 extended to 31.07.2027, rent 420 → 450 EUR (29.10.2026).
+    { property: '19 - Ion Brezoianu 38A, 4th floor, Apt 10 CHAIM DAVID GROSMAN', start: '2025-07-21', rent: 450, newStart: '2026-08-01' },
   ],
   partyAliases: {
     'Ayala Ravina': 'Ayala Malka Ravina',

@@ -31,6 +31,7 @@ export function importGeorgia(dir: string, s: Staging) {
   // Airtable names are "Owner - Project", so an owner with two units in one
   // project has two records with the same name. null marks such a name.
   const byName = new Map<string, string | null>();
+  const byUnit = new Map<string, string>();
   for (const r of readCsv(join(dir, 'Property-Grid view.csv'))) {
     const sourceId = cleanName(r.ID);
     const projectName = cleanName(r.BUILDING);
@@ -66,22 +67,33 @@ export function importGeorgia(dir: string, s: Staging) {
     }, owners);
     if (!key) continue;
     byName.set(sourceId, byName.has(sourceId) ? null : key);
+    byUnit.set(`${sourceId}|${unitNo}`, key);
     s.count(C, 'properties');
   }
 
+  const seenLeaseUnits = new Map<string, number>();
   for (const r of readCsv(join(dir, 'lease agreament-all.csv'))) {
     s.count(C, 'leases (rows)');
     const label = `${cleanName(r.Property)} ${r['start date']}`;
     if (r.Status !== 'מושכר') { s.count(C, 'vacancy periods (skipped)'); continue; }
-    const propertyKey = byName.get(cleanName(r.Property));
-    if (propertyKey === null) {
-      s.issue(C, 'warning', 'lease-ambiguous', `${label}: owner has several units in this project; link the lease by hand`);
-      continue;
-    }
     const start = parseDate(r['start date']);
-    const rent = parseAmount(r['סכום חודשי']);
+    let rent = parseAmount(r['סכום חודשי']);
+    let propertyKey = byName.get(cleanName(r.Property));
+    if (propertyKey === null) {
+      const fix = s.fix.leaseUnits.find((u) => u.property === cleanName(r.Property) && u.start === start);
+      const n = seenLeaseUnits.get(label) ?? 0;
+      seenLeaseUnits.set(label, n + 1);
+      const unit = fix?.units[n];
+      propertyKey = unit ? byUnit.get(`${cleanName(r.Property)}|${unit}`) : undefined;
+      if (!propertyKey) {
+        s.issue(C, 'warning', 'lease-ambiguous', `${label}: owner has several units in this project; link the lease by hand`);
+        continue;
+      }
+      if (fix?.rent !== undefined) rent = fix.rent;
+      s.issue(C, 'info', 'lease-unit-assigned', `${label}: linked to unit ${unit} (corrections)`);
+    }
     if (!propertyKey) { s.issue(C, 'warning', 'lease-unmatched', `${label}: property not found`); continue; }
-    if (!start || rent === undefined) { s.issue(C, 'warning', 'lease-incomplete', `${label}: missing start or amount`); continue; }
+    if (!start || rent === undefined) s.issue(C, 'info', 'lease-incomplete', `${label}: no start or amount; imported with the field empty`);
     const tenant = cleanName(r['שוכר']);
     s.leases.push({
       propertyKey, start, end: parseDate(r['end date']), rent, currency: 'USD',
