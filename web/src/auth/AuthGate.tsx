@@ -54,9 +54,12 @@ function WithAccess({ userId, children }: { userId: string; children: ReactNode 
 function Frame({ children }: { children: ReactNode }) {
   return (
     <Center mih="100vh" bg="gray.0" p="md">
-      <Paper withBorder shadow="sm" p="xl" radius="md" w={400} maw="100%">
-        <Text c="dimmed" size="sm" mb="xs">See the Future · משרד</Text>
-        {children}
+      <Paper withBorder shadow="sm" radius="md" w={400} maw="100%" style={{ overflow: 'hidden' }}>
+        <Image src="/logo-full.jpg" alt="See the Future LTD" />
+        <Stack p="xl" gap={0}>
+          <Text c="dimmed" size="sm" mb="xs">משרד</Text>
+          {children}
+        </Stack>
       </Paper>
     </Center>
   );

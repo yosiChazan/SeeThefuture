@@ -1,4 +1,4 @@
-import { AppShell, Badge, Burger, Group, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
+import { AppShell, Badge, Burger, Group, Image, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBuildingCommunity, IconCrane, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSignature, IconUsers,
@@ -35,6 +35,7 @@ export function Layout() {
         <Group h="100%" px="md" justify="space-between">
           <Group gap="sm">
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
+            <Image src="/logo-mark.png" w={32} h={32} alt="" />
             <Text fw={700}>See the Future</Text>
             <Text c="dimmed" size="sm" visibleFrom="xs">משרד</Text>
           </Group>
