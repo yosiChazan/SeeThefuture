@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Paper, Select, SimpleGrid, Stack, Table, Text, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Modal, Paper, Select, SimpleGrid, Stack, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle, IconArrowBackUp, IconCheck, IconDownload, IconEyeOff } from '@tabler/icons-react';
@@ -12,7 +12,8 @@ import { batchNotes, useBatch, type ImportRow, type RowStatus } from '../lib/int
 import { useProperties } from '../lib/queries';
 import { supabase } from '../lib/supabase';
 import type { Currency } from '../lib/types';
-import { BATCH_STATUS, monthLabel } from './Intake';
+import dayjs from 'dayjs';
+import { batchStatus, monthLabel } from './Intake';
 
 const ROW_STATUS: Record<RowStatus, { label: string; color: string }> = {
   matched: { label: 'יירשם', color: 'teal' },
@@ -23,7 +24,7 @@ const ROW_STATUS: Record<RowStatus, { label: string; color: string }> = {
 
 const CATEGORY_HE: Record<string, string> = {
   rent: 'שכירות', mgmt_fee: 'דמי ניהול', utilities: 'חשבונות', building_fees: 'הוצאות בניין', legal_fees: 'שכ"ט עו"ד',
-  repair: 'תיקונים', brokerage: 'תיווך', fx: 'המרת מטבע', deposit: 'פיקדון', opening_balance: 'יתרת פתיחה', transfer: 'העברה', other: 'אחר', tax_withheld: 'מס במקור', hotel_share: 'חלק המלון',
+  repair: 'תיקונים', brokerage: 'תיווך', fx: 'המרת מטבע', deposit: 'פיקדון', opening_balance: 'יתרת פתיחה', vat: 'מע"מ', transfer: 'העברה', other: 'אחר', tax_withheld: 'מס במקור', hotel_share: 'חלק המלון',
 };
 
 function Amounts({ row }: { row: ImportRow }) {
@@ -48,6 +49,8 @@ export function IntakeBatch() {
   const access = useAccess();
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  const [reason, setReason] = useState('');
   const refresh = () => qc.invalidateQueries({ queryKey: ['import-batch', id] });
 
   const groups = useMemo(() => {
@@ -62,6 +65,9 @@ export function IntakeBatch() {
       const open = batch.status === 'in_review' || batch.status === 'parsed';
       const editable = open && access.canEdit(batch.country_code);
       const count = (s: RowStatus) => rows.filter((r) => r.match_status === s).length;
+      // "Will be posted" while in review; "posted" once approved; "cancelled" once voided.
+      const status = (s: RowStatus) => (s === 'matched' && batch.voided_at ? { label: 'בוטל', color: 'red' }
+        : s === 'matched' && batch.status === 'committed' ? { label: 'נרשם', color: 'teal' } : ROW_STATUS[s]);
       const unmatched = count('unmatched');
       // Rows that will be posted but carry an error nobody has marked as checked.
       const unchecked = rows.filter((r) => r.match_status === 'matched' && r.raw.errors?.length && !r.raw.checked).length;
@@ -115,6 +121,16 @@ export function IntakeBatch() {
         },
       });
 
+      async function voidBatch() {
+        setBusy(true);
+        const { data, error } = await supabase.rpc('void_import_batch', { p_batch: batch.id, p_reason: reason.trim() });
+        setBusy(false);
+        if (error) { notifications.show({ color: 'red', title: 'הביטול נכשל, שום דבר לא השתנה', message: error.message }); return; }
+        notifications.show({ color: 'teal', message: `בוטלו ${data} תנועות. אפשר לקלוט את הדוח מחדש` });
+        setVoiding(false); setReason('');
+        await qc.invalidateQueries();
+      }
+
       const reject = () => modals.openConfirmModal({
         title: 'דחיית הדוח',
         children: <Text size="sm">הדוח יסומן כנדחה ושום דבר ממנו לא יירשם. אפשר לקלוט אותו שוב אחר כך.</Text>,
@@ -143,7 +159,7 @@ export function IntakeBatch() {
               <Title order={2}>{batch.source.name} · {monthLabel(notes?.period)}</Title>
               <Group gap="xs">
                 <CountryBadge code={batch.country_code} />
-                <Badge variant="light" color={BATCH_STATUS[batch.status].color}>{BATCH_STATUS[batch.status].label}</Badge>
+                <Badge variant="light" color={batchStatus(batch).color}>{batchStatus(batch).label}</Badge>
                 {notes?.file_name && <Text size="sm" c="dimmed" dir="ltr">{notes.file_name}</Text>}
               </Group>
             </Stack>
@@ -159,7 +175,7 @@ export function IntakeBatch() {
           <SimpleGrid cols={{ base: 2, sm: 4 }}>
             {(['matched', 'unmatched', 'duplicate', 'ignored'] as RowStatus[]).map((s) => (
               <Paper key={s} withBorder p="sm">
-                <Text size="xs" c="dimmed">{ROW_STATUS[s].label}</Text>
+                <Text size="xs" c="dimmed">{status(s).label}</Text>
                 <Text fz={24} fw={700} c={s === 'unmatched' && count(s) ? 'red' : undefined}>{count(s)}</Text>
               </Paper>
             ))}
@@ -167,7 +183,7 @@ export function IntakeBatch() {
 
           {totals.size > 0 && (
             <Paper withBorder p="sm">
-              <Text size="sm" fw={500} mb={4}>{batch.status === 'committed' ? 'מה נרשם' : 'מה יירשם'}</Text>
+              <Text size="sm" fw={500} mb={4}>{batch.voided_at ? 'מה בוטל' : batch.status === 'committed' ? 'מה נרשם' : 'מה יירשם'}</Text>
               <Group gap="lg">
                 {[...totals.entries()].map(([k, v]) => {
                   const [cat, cur] = k.split('|');
@@ -227,7 +243,7 @@ export function IntakeBatch() {
                             ))}
                           </Table.Td>
                           <Table.Td w={130}><Amounts row={r} /></Table.Td>
-                          <Table.Td w={120}><Badge variant="light" color={ROW_STATUS[r.match_status].color}>{ROW_STATUS[r.match_status].label}</Badge></Table.Td>
+                          <Table.Td w={120}><Badge variant="light" color={status(r.match_status).color}>{status(r.match_status).label}</Badge></Table.Td>
                           <Table.Td w={40}>
                             {editable && r.proposed && r.match_status !== 'duplicate' && (
                               <Tooltip label={r.match_status === 'ignored' ? 'להחזיר לרישום' : 'לא לרשום את השורה'}>
@@ -245,6 +261,30 @@ export function IntakeBatch() {
               </Paper>
             );
           })}
+
+          {batch.voided_at && (
+            <Alert color="red" title={`הדוח בוטל ב-${dayjs(batch.voided_at).format('DD.MM.YYYY HH:mm')}`}>
+              <Text size="sm">סיבה: {batch.void_reason}</Text>
+              <Text size="sm">התנועות שלו נשארות במערכת מסומנות כמבוטלות, ולא נכללות ביתרות.</Text>
+            </Alert>
+          )}
+
+          {batch.status === 'committed' && access.canApprove(batch.country_code) && (
+            <Group justify="flex-end">
+              <Button variant="default" color="red" onClick={() => setVoiding(true)}>ביטול הדוח שנרשם</Button>
+            </Group>
+          )}
+          <Modal opened={voiding} onClose={() => setVoiding(false)} title="ביטול דוח שנרשם">
+            <Stack>
+              <Text size="sm">כל התנועות של הדוח יסומנו כמבוטלות ויצאו מהיתרות. שום דבר לא נמחק, ואחר כך אפשר לקלוט את הדוח מחדש.</Text>
+              <Textarea label="סיבת הביטול" required autosize minRows={2} value={reason} onChange={(e) => setReason(e.currentTarget.value)}
+                placeholder='למשל: "חסר מע״מ על ההחזרים לאיתי"' />
+              <Group justify="flex-end">
+                <Button variant="default" onClick={() => setVoiding(false)}>חזרה</Button>
+                <Button color="red" onClick={voidBatch} loading={busy} disabled={!reason.trim()}>ביטול הדוח</Button>
+              </Group>
+            </Stack>
+          </Modal>
 
           {open && (
             <Paper withBorder p="md" pos="sticky" bottom={0} style={{ zIndex: 5 }}>

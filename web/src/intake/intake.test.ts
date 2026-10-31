@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parseGershon, parseGershonBalance } from './gershon.ts';
 import { bookFromJson, bookFromXlsx, type GridJson } from './grid.ts';
-import { itaiHint, parseItai } from './itai.ts';
+import { itaiHint, itaiVat, parseItai } from './itai.ts';
 import { matchProperty, sameOwner, type PropertyForMatch } from './match.ts';
 import { FormatError } from './types.ts';
 import { dayMonth, findPeriod, num } from './util.ts';
@@ -186,4 +186,26 @@ test('Vitaly June: "EXPENSES JUNE" header, totals agree, an old date is an error
   assert.equal(r.rows.find((x) => x.property.ref === 'PLC 11(4), APT. 36')?.property.unit, '36', '"  PLC 11(4), APT.36 " with spaces');
   const apt35 = r.rows.filter((x) => x.property.ref === 'PLC 17(2), APT. 35');
   assert.equal(apt35.filter((x) => !x.proposed).length, 3, 'three debts shown for information');
+});
+
+test('Itai VAT: by the period invoiced, else by the payment date', () => {
+  assert.equal(itaiVat('2025-10-16', 'apr. - jun.2025 management fee + expenses'), 0.19);
+  assert.equal(itaiVat('2025-07-08', 'apr. - jun.2025 management fee'), 0.19);
+  assert.equal(itaiVat('2026-01-29', 'oct. - dec.2025 management fee'), 0.21);
+  assert.equal(itaiVat('2025-03-20', ''), 0.19);
+  assert.equal(itaiVat(null, ''), 0.21);
+});
+
+test('Itai: opening balance, VAT on repayments, and the result agrees with the Totals sheet', () => {
+  const r = parseItai(bookFromJson(fixtureBook('itai_client.json')));
+  const open = r.rows.filter((x) => x.proposed!.category === 'opening_balance');
+  assert.equal(open.length, 1);
+  assert.equal(open[0].proposed!.entries[0].amount, -3228.38, 'owed to Itai on 1.1.2026');
+  assert.equal(open[0].fingerprint, 'itai|Owner Demo|opening');
+  assert.equal(open[0].errors.length, 1, 'to be confirmed by a person');
+  const vat = r.rows.filter((x) => x.proposed!.category === 'vat');
+  assert.equal(vat.length, r.rows.filter((x) => x.proposed!.category === 'transfer').length, 'one VAT row per repayment');
+  const itai = r.rows.flatMap((x) => x.proposed!.entries).filter((e) => e.account?.kind === 'manager_cash').reduce((s, e) => s + e.amount, 0);
+  assert.ok(Math.abs(itai) < 0.02, `balance with Itai ends at ${itai}, as in Totals (0)`);
+  assert.ok(!r.warnings.some((w) => /Totals/.test(w)));
 });
