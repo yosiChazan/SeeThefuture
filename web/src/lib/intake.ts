@@ -20,6 +20,8 @@ export interface Batch {
   received_at: string;
   status: BatchStatus;
   reviewed_at: string | null;
+  voided_at: string | null;
+  void_reason: string | null;
   notes: string | null;
   source: Source;
   rows: { count: number }[];
@@ -51,7 +53,7 @@ export function useSources() {
   });
 }
 
-const BATCH_COLS = 'id, country_code, file_path, received_at, status, reviewed_at, notes, source:import_sources(id, name, adapter, country_code, active), rows:import_rows(count)';
+const BATCH_COLS = 'id, country_code, file_path, received_at, status, reviewed_at, voided_at, void_reason, notes, source:import_sources(id, name, adapter, country_code, active), rows:import_rows(count)';
 
 export function useBatches() {
   return useQuery({

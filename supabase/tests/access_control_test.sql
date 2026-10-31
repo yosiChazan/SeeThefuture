@@ -289,6 +289,42 @@ select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-0000000000
   'once checked, the row is posted (the other row is a duplicate)');
 reset role;
 
+-- Cancelling an approved batch ---------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  perform app.void_import_batch('50000000-0000-0000-0000-000000000001', 'wrong file');
+  raise exception 'FAILED: RO editor cancelled a UA batch';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - RO editor cannot cancel a UA batch';
+end $$;
+reset role;
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check(app.void_import_batch('50000000-0000-0000-0000-000000000001', 'VAT was missing') = 2,
+  'UA finance cancels an approved batch: its transactions become void');
+select pg_temp.check(
+  (select status from app.import_batches where id = '50000000-0000-0000-0000-000000000001') = 'rejected'
+  and (select void_reason from app.import_batches where id = '50000000-0000-0000-0000-000000000001') = 'VAT was missing',
+  'the batch is marked cancelled with the reason');
+select pg_temp.check(
+  (select coalesce(sum(balance), 0) from app.account_balances
+   where kind = 'manager_cash' and holder_party_id = 'a0000000-0000-4000-8000-000000000001') = 20000.01,
+  'void transactions drop out of the balances (only batch 3''s rent is left)');
+select pg_temp.check(
+  (select count(*) from app.entries e join app.transactions t on t.id = e.transaction_id
+   where t.import_batch_id = '50000000-0000-0000-0000-000000000001') = 5,
+  'nothing is deleted (rent split between two owners, fee split plus Vitaly''s side)');
+reset role;
+
+-- The same report can now be imported again.
+select pg_temp.vitaly_batch('50000000-0000-0000-0000-000000000004');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-000000000004') = 2,
+  'after cancelling, the corrected report posts again');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

@@ -17,6 +17,10 @@ export const BATCH_STATUS: Record<BatchStatus, { label: string; color: string }>
   rejected: { label: 'נדחה', color: 'red' },
 };
 
+// A rejected batch that had been approved was cancelled: its transactions are void.
+export const batchStatus = (b: { status: BatchStatus; voided_at: string | null }) =>
+  b.voided_at ? { label: 'בוטל', color: 'red' } : BATCH_STATUS[b.status];
+
 export const monthLabel = (period?: string) => (period ? dayjs(period).locale('he').format('MMMM YYYY') : '—');
 
 function NewReport({ onClose }: { onClose: () => void }) {
@@ -106,7 +110,7 @@ export function Intake() {
                       <Table.Td><CountryBadge code={b.country_code} /></Table.Td>
                       <Table.Td>{monthLabel(batchNotes(b)?.period)}</Table.Td>
                       <Table.Td>{b.rows[0]?.count ?? 0}</Table.Td>
-                      <Table.Td><Badge variant="light" color={BATCH_STATUS[b.status].color}>{BATCH_STATUS[b.status].label}</Badge></Table.Td>
+                      <Table.Td><Badge variant="light" color={batchStatus(b).color}>{batchStatus(b).label}</Badge></Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>
