@@ -59,7 +59,7 @@ export function PropertyCard() {
                   <Table.Tr key={o.id} c={isCurrentOwnership(o) ? undefined : 'dimmed'}>
                     <Table.Td><Anchor component={Link} to={`/clients/${o.party.id}`} size="sm">{o.party.display_name}</Anchor></Table.Td>
                     <Table.Td>{Number(o.share_pct)}%</Table.Td>
-                    <Table.Td>{date(o.valid_from)}</Table.Td>
+                    <Table.Td>{o.notes?.includes('Start date unknown') ? <Text size="sm" c="dimmed">לא ידוע</Text> : date(o.valid_from)}</Table.Td>
                     <Table.Td>{o.valid_to ? date(o.valid_to) : <Badge size="xs" variant="light" color="teal">נוכחי</Badge>}</Table.Td>
                     <Table.Td><Text size="xs" c="dimmed">{o.notes}</Text></Table.Td>
                   </Table.Tr>

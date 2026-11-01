@@ -111,9 +111,9 @@ export function buildSql(st: StagingFile): string {
   const purchase = new Map(st.properties.map((p) => [p.key, p.purchaseDate]));
   out.push(insert('ownerships', ['id', 'property_id', 'party_id', 'share_pct', 'valid_from', 'notes'],
     st.ownerships.map((o) => [stableId('ownership', `${o.propertyKey}|${o.partyKey}`), propertyId(o.propertyKey), partyId(o.partyKey),
-      o.sharePct, purchase.get(o.propertyKey) ?? '2026-01-01',
+      o.sharePct, purchase.get(o.propertyKey) ?? '2000-01-01',  // unknown start: before any report (SPEC decision 60)
       [o.shareAssumed ? 'Share assumed equal (Airtable has no split).' : '',
-        purchase.get(o.propertyKey) ? '' : 'Start date unknown; set to the opening date.'].filter(Boolean).join(' ')])));
+        purchase.get(o.propertyKey) ? '' : 'Start date unknown.'].filter(Boolean).join(' ')])));
 
   out.push(insert('leases',
     ['id', 'property_id', 'tenant_party_id', 'start_date', 'end_date', 'rent_amount', 'rent_currency',
