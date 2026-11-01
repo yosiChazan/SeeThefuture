@@ -1,11 +1,12 @@
 import { Alert, Anchor, Badge, Button, FileInput, Group, List, Modal, Paper, Select, Stack, Table, Text, Title } from '@mantine/core';
-import { IconBrandDropbox, IconFileSpreadsheet, IconPlus } from '@tabler/icons-react';
+import { IconBrandDropbox, IconFileSpreadsheet, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CountryBadge, QueryState } from '../components/common';
 import { DropboxPull } from '../components/DropboxPull';
+import { DeletePending } from '../components/DeletePending';
 import { ADAPTERS } from '../intake/adapters';
 import type { ParseResult } from '../intake/types';
 import { useAccess } from '../lib/access';
@@ -89,6 +90,7 @@ export function Intake() {
   const batches = useBatches();
   const [adding, setAdding] = useState(false);
   const [pulling, setPulling] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const sources = useSources();
   const canAdd = access.countries.some((c) => access.canEdit(c));
   // The Dropbox connection is readable by admins only (SPEC decision 53).
@@ -98,6 +100,9 @@ export function Intake() {
       <Group justify="space-between">
         <Title order={2}>קליטת דוחות</Title>
         <Group>
+          {canAdd && batches.data?.some((b) => b.status === 'in_review' || b.status === 'parsed') && (
+            <Button variant="default" color="red" leftSection={<IconTrash size={16} />} onClick={() => setDeleting(true)}>מחיקת דוחות ממתינים</Button>
+          )}
           {access.isAdmin && itai && <Button variant="default" leftSection={<IconBrandDropbox size={16} />} onClick={() => setPulling(true)}>משיכה מהדרופבוקס</Button>}
           {canAdd && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>דוח חדש</Button>}
         </Group>
@@ -130,6 +135,7 @@ export function Intake() {
       )}</QueryState>
       {adding && <NewReport onClose={() => setAdding(false)} />}
       {pulling && itai && <DropboxPull source={itai} onClose={() => setPulling(false)} />}
+      {deleting && batches.data && <DeletePending batches={batches.data} onClose={() => setDeleting(false)} />}
     </Stack>
   );
 }

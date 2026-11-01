@@ -409,6 +409,26 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 select pg_temp.check((select refresh_token from app.integrations where name = 'dropbox') = 'secret-token', 'an admin reads it');
 reset role;
 
+-- Deleting pending reports --------------------------------------------------
+
+insert into app.import_batches (id, source_id, country_code, status)
+select '50000000-0000-0000-0000-000000000007', s.id, 'UA', 'in_review' from app.import_sources s where s.adapter = 'vitaly_rent_xlsx';
+insert into app.import_rows (batch_id, row_ref, raw, match_status) values ('50000000-0000-0000-0000-000000000007', '1', '{}', 'ignored');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+delete from app.import_batches where id = '50000000-0000-0000-0000-000000000007';
+reset role;
+select pg_temp.check((select count(*) from app.import_batches where id = '50000000-0000-0000-0000-000000000007') = 1,
+  'RO editor cannot delete a UA report');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+delete from app.import_batches where id = '50000000-0000-0000-0000-000000000007';
+delete from app.import_batches where id = '50000000-0000-0000-0000-000000000004';
+reset role;
+select pg_temp.check((select count(*) from app.import_batches where id = '50000000-0000-0000-0000-000000000007') = 0
+  and (select count(*) from app.import_rows where batch_id = '50000000-0000-0000-0000-000000000007') = 0,
+  'a pending report is deleted with its rows');
+select pg_temp.check((select count(*) from app.import_batches where id = '50000000-0000-0000-0000-000000000004') = 1,
+  'an approved report cannot be deleted');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
