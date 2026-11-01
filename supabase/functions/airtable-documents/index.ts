@@ -1,53 +1,46 @@
 // Copies people's documents from Airtable into the private "documents" bucket and
 // records each one in app.documents (SPEC decision 64).
 //
-// Called by scripts/import/documents.ts (through pg_net, since the sandbox cannot reach
-// *.supabase.co) with the attachment URLs it read from the Airtable API. The URLs are
-// short-lived signed links: the Airtable token never reaches this function.
-// Protected by the IMPORT_SECRET function secret; runs with the service role.
+// Works from the queue app.document_imports, which scripts/import/documents.ts fills
+// with Airtable's short-lived signed links (the Airtable token never reaches here).
+// The function takes no input: a call only copies the next few queued files, so it
+// needs no secret. It runs with the service role. Answers with counts only.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-interface Item {
-  url: string;           // Airtable's signed attachment URL
-  att_id: string;        // Airtable attachment id: makes the file path stable
-  file_name: string;
-  content_type?: string;
-  country: string;       // UA, RO, GE
-  party_id: string;
-  doc_type: string;      // id_card, passport, poa, attachment
-}
+interface Row { att_id: string; url: string | null; file_name: string; content_type: string | null; country_code: string; party_id: string; doc_type: string }
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { db: { schema: 'app' } });
 const safe = (s: string) => s.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
 
-async function copy(it: Item): Promise<string> {
-  if (!/^[A-Z]{2}$/.test(it.country) || !/^[0-9a-f-]{36}$/.test(it.party_id) || !/^att\w+$/.test(it.att_id)) return 'bad item';
-  const path = `${it.country}/party/${it.party_id}/${it.att_id}_${safe(it.file_name)}`;
+async function copy(r: Row): Promise<string> {
+  const path = `${r.country_code}/party/${r.party_id}/${r.att_id}_${safe(r.file_name)}`;
   const seen = await db.from('documents').select('id').eq('storage_path', path).maybeSingle();
-  if (seen.error) return `error: ${seen.error.message}`;
-  if (seen.data) return 'exists';
-  const host = new URL(it.url).hostname;
-  if (!/(^|\.)airtable(usercontent)?\.com$/.test(host)) return 'bad url';
-  const res = await fetch(it.url);
-  if (!res.ok) return `download ${res.status}`;
+  if (seen.error) throw new Error(seen.error.message);
+  if (seen.data) return 'done';
+  if (!r.url || !/(^|\.)airtable(usercontent)?\.com$/.test(new URL(r.url).hostname)) throw new Error('bad url');
+  const res = await fetch(r.url);
+  if (!res.ok) throw new Error(`download ${res.status}`);
   const body = new Uint8Array(await res.arrayBuffer());
-  const up = await db.storage.from('documents').upload(path, body, { contentType: it.content_type || res.headers.get('content-type') || undefined, upsert: true });
-  if (up.error) return `upload: ${up.error.message}`;
+  const up = await db.storage.from('documents').upload(path, body, { contentType: r.content_type || res.headers.get('content-type') || undefined, upsert: true });
+  if (up.error) throw new Error(`upload: ${up.error.message}`);
   const ins = await db.from('documents').insert({
-    entity_type: 'party', entity_id: it.party_id, country_code: it.country, doc_type: it.doc_type,
-    storage_path: path, sensitive: true, file_name: it.file_name, source: `airtable:${it.att_id}`,
+    entity_type: 'party', entity_id: r.party_id, country_code: r.country_code, doc_type: r.doc_type,
+    storage_path: path, sensitive: true, file_name: r.file_name, source: `airtable:${r.att_id}`,
   });
-  return ins.error ? `record: ${ins.error.message}` : 'copied';
+  if (ins.error) throw new Error(`record: ${ins.error.message}`);
+  return 'done';
 }
 
-Deno.serve(async (req) => {
-  const secret = Deno.env.get('IMPORT_SECRET');
-  if (!secret || req.headers.get('x-import-secret') !== secret) return new Response('forbidden', { status: 403 });
-  const { items } = await req.json() as { items: Item[] };
-  const results: Record<string, string> = {};
-  for (const it of items.slice(0, 10)) {
-    try { results[it.att_id] = await copy(it); } catch (e) { results[it.att_id] = `error: ${(e as Error).message}`; }
+Deno.serve(async () => {
+  const claimed = await db.rpc('claim_document_imports', { n: 4 });
+  if (claimed.error) return Response.json({ error: claimed.error.message }, { status: 500 });
+  const tally: Record<string, number> = {};
+  for (const r of claimed.data as Row[]) {
+    let status = 'done'; let result: string | null = null;
+    try { await copy(r); } catch (e) { status = 'failed'; result = (e as Error).message.slice(0, 300); }
+    await db.from('document_imports').update({ status, result, url: null, updated_at: new Date().toISOString() }).eq('att_id', r.att_id);
+    tally[status] = (tally[status] ?? 0) + 1;
   }
-  return Response.json(results);
+  return Response.json(tally);
 });

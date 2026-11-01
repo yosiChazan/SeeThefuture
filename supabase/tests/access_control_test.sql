@@ -526,6 +526,24 @@ do $$ begin
 exception when unique_violation then raise notice 'ok - a file is recorded once (re-running the import adds nothing)';
 end $$;
 
+-- The document import queue is out of reach of every signed-in user.
+insert into app.document_imports (att_id, url, file_name, country_code, party_id, doc_type) values
+  ('attQ1', 'https://v5.airtableusercontent.com/x', 'poa.pdf', 'UA', '10000000-0000-0000-0000-000000000001', 'poa');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  perform 1 from app.document_imports;
+  raise exception 'FAILED: an admin read the import queue';
+exception when insufficient_privilege then raise notice 'ok - nobody signed in reads the import queue (it holds signed links)';
+end $$;
+do $$ begin
+  perform app.claim_document_imports(5);
+  raise exception 'FAILED: a signed-in user claimed queue rows';
+exception when insufficient_privilege then raise notice 'ok - only the service role takes rows from the queue';
+end $$;
+reset role;
+select pg_temp.check((select count(*) from app.claim_document_imports(5)) = 1, 'a call takes the pending row');
+select pg_temp.check((select count(*) from app.claim_document_imports(5)) = 0, 'a row being copied is not taken twice');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
