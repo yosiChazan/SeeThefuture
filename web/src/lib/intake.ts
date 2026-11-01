@@ -124,13 +124,15 @@ async function alreadyPosted(sourceId: string, result: ParseResult) {
   const byKey = new Map<string, PostedRow[]>();
   for (const r of earlier) {
     if (r.fingerprint && inFile.has(r.fingerprint)) continue;
-    const k = identity(r.raw.property_ref ?? '', r.proposed);
+    const k = identity(r.raw.property_ref ?? '', r.proposed, (r.raw as Record<string, unknown>).source_text);
     byKey.set(k, [...(byKey.get(k) ?? []), r]);
   }
   return { exact, byKey };
 }
 
-const identity = (ref: string, p: ProposedTransaction) => [ref, p.category, p.occurred_on, p.period, p.description].join('|');
+// The source's own text when the adapter keeps it (Itai), so a translated description
+// still matches the row it describes.
+const identity = (ref: string, p: ProposedTransaction, source?: unknown) => [ref, p.category, p.occurred_on, p.period, typeof source === 'string' ? source : p.description].join('|');
 const amountOf = (p: ProposedTransaction) => p.entries.map((e) => `${e.amount} ${e.currency}`).join(' / ');
 
 export async function readReport(source: Source, file: File): Promise<ParseResult> {
@@ -175,7 +177,7 @@ export async function createBatch(source: Source, file: File, result: ParseResul
     if (r.proposed && r.fingerprint && posted.exact.has(r.fingerprint)) status = 'duplicate';
     else if (r.proposed) {
       // The same row as in the earlier version, with a different amount: replace it.
-      const before = posted.byKey.get(identity(r.property.ref, r.proposed))?.shift();
+      const before = posted.byKey.get(identity(r.property.ref, r.proposed, r.raw.source_text))?.shift();
       if (before) {
         replaces = before.transaction.id;
         errors.push(`השורה השתנתה מהגרסה הקודמת: היה ${amountOf(before.proposed)}, עכשיו ${amountOf(r.proposed)}. באישור, התנועה הקודמת תבוטל והחדשה תירשם`);
