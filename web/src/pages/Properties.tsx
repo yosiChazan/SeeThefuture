@@ -13,7 +13,13 @@ export function Properties() {
   const city = params.get('city');
   const search = params.get('q') ?? '';
   const q = useProperties();
-  const update = (k: string, v: string | null) => setParams((p) => { if (v) p.set(k, v); else p.delete(k); return p; }, { replace: true });
+  // One call per change: two setParams calls in a row each start from the same URL,
+  // so the second undid the first (choosing a country and clearing the city).
+  const update = (changes: Record<string, string | null>) => setParams((prev) => {
+    const p = new URLSearchParams(prev);
+    for (const [k, v] of Object.entries(changes)) if (v) p.set(k, v); else p.delete(k);
+    return p;
+  }, { replace: true });
 
   const cities = useMemo(() => [...new Set((q.data ?? []).filter((p) => country === 'all' || p.country_code === country)
     .map((p) => p.building.city.name_he))].sort(), [q.data, country]);
@@ -33,10 +39,10 @@ export function Properties() {
     <Stack>
       <Title order={2}>נכסים</Title>
       <Group>
-        <CountryFilter value={country} onChange={(v) => { update('country', v); update('city', null); }} />
-        <Select placeholder="עיר" data={cities} value={city} onChange={(v) => update('city', v)} clearable w={150} />
-        <Select placeholder="סטטוס" data={Object.entries(STATUS_HE).map(([value, label]) => ({ value, label }))} value={status} onChange={(v) => update('status', v)} clearable w={170} />
-        <TextInput placeholder="חיפוש בניין, דירה או בעלים" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => update('q', e.currentTarget.value)} w={260} />
+        <CountryFilter value={country} onChange={(v) => update({ country: v, city: null })} />
+        <Select placeholder="עיר" data={cities} value={city} onChange={(v) => update({ city: v })} clearable w={150} />
+        <Select placeholder="סטטוס" data={Object.entries(STATUS_HE).map(([value, label]) => ({ value, label }))} value={status} onChange={(v) => update({ status: v })} clearable w={170} />
+        <TextInput placeholder="חיפוש בניין, דירה או בעלים" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => update({ q: e.currentTarget.value })} w={260} />
       </Group>
       <QueryState q={q}>{() => (
         <Paper withBorder p="sm">

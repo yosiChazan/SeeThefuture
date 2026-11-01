@@ -5,7 +5,8 @@ The company is not a property manager: local managers run the apartments and sen
 reports; this system collects those reports, keeps a ledger per client, and shows it
 to the office, management and clients.
 
-**Read `docs/SPEC.md` first.** It is the source of truth: domain, decisions (§10) and
+**Read `docs/HANDOFF.md` first** (current state, how to work here, what is pending; the user
+speaks Hebrew, answer in Hebrew), **then `docs/SPEC.md`.** SPEC is the source of truth: domain, decisions (§10) and
 open questions (§11). Record every new decision there.
 
 ## Stack
