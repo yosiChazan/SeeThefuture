@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { parseGershon, parseGershonBalance } from './gershon.ts';
 import { bookFromJson, bookFromXlsx, type GridJson } from './grid.ts';
 import { itaiHint, itaiVat, parseItai } from './itai.ts';
-import { matchProperty, sameOwner, type PropertyForMatch } from './match.ts';
+import { matchProperty, sameOwner, sameTenant, type PropertyForMatch } from './match.ts';
 import { FormatError } from './types.ts';
 import { dayMonth, findPeriod, num } from './util.ts';
 import { parseVitaly } from './vitaly.ts';
@@ -217,4 +217,30 @@ test('Itai: a balance that does not match Totals is a warning', () => {
   const res = parseItai(bookFromJson(book));
   assert.match(res.warnings[0], /נוסחת האיזון לא מתאימה/);
   assert.equal(res.checks?.length ?? 0, 0);
+});
+
+test('Itai leases: both header languages, no personal ID columns, notes kept', () => {
+  const r = parseItai(bookFromJson(fixtureBook('itai_client.json')));
+  const ls = r.leases!;
+  assert.equal(ls.length, 6);
+  assert.deepEqual(ls.map((l) => l.property.ref), ['Vasile_Lascar6_ap.6-L1', 'Vasile_Lascar6_ap.6-L2', 'Balcescu32-34_ap.17-L1', 'Balcescu32-34_ap.17-L2', 'Balcescu32-34_ap.17-L1', 'Vasile_Lascar6_ap.6-L2']);
+  const first = ls[0];
+  assert.deepEqual([first.start, first.end, first.rent, first.deposit, first.currency], ['2020-07-09', '2027-07-08', 425, null, 'EUR']);
+  assert.match(first.errors[0], /פיקדון לא ידוע/);
+  assert.match(first.notes, /prolonged for one year/);
+  assert.equal(ls[3].contract, 'חוזה 2 מ-16.01.2025');
+  assert.ok(ls.every((l) => !JSON.stringify(l).includes('"X"')), 'the ID columns are not read');
+
+  // English headers, as in the second owner's file.
+  const book = fixtureBook('itai_client.json');
+  const inc = book[0].cells;
+  Object.assign(inc, { '1,5': 'Ctr. date', '1,6': 'Entry date', '1,7': 'Deposit (EUR)', '1,8': 'Rent', '1,9': 'End date' });
+  assert.equal(parseItai(bookFromJson(book)).leases!.length, 6);
+});
+
+test('tenants: two matching words, so two tenants with one surname stay apart', () => {
+  assert.ok(sameTenant('Ionescu Dan', 'Dan Ionescu'));
+  assert.ok(sameTenant('Delta Games SRL', 'DELTA GAMES SRL'));
+  assert.ok(!sameTenant('Popa Valentina', 'Popa Roberta'));
+  assert.ok(sameTenant('EDEN', 'Eden'), 'a one-word name needs one word');
 });

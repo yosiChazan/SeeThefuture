@@ -48,6 +48,16 @@ function streetMatches(hint: PropertyHint, p: PropertyForMatch): boolean {
   return true;
 }
 
+// Tenants: two names are the same person when at least two of their words match
+// (one, if a name has a single word). "Popa Valentina" and "Popa Roberta" share only
+// the surname and are two tenants of the same house.
+export function sameTenant(a: string, b: string): boolean {
+  const ta = tokens(a); const tb = tokens(b);
+  const close = (x: string, y: string) => distance(x, y) <= Math.max(1, Math.floor(Math.max(x.length, y.length) * 0.3));
+  const hits = ta.filter((x) => tb.some((y) => close(x, y))).length;
+  return hits >= Math.min(2, ta.length, tb.length) && hits > 0;
+}
+
 // 1. a name the source used before (external_refs) wins;
 // 2. otherwise same apartment number (and project), then the owner's name decides,
 //    preferring the same building. A building that differs is matched with a note.

@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { ADAPTERS } from '../intake/adapters';
 import { bookFromXlsx } from '../intake/grid';
-import { matchProperty, type PropertyForMatch } from '../intake/match';
-import type { ParseResult, ParsedRow, ProposedTransaction } from '../intake/types';
+import { matchProperty, sameTenant, type PropertyForMatch } from '../intake/match';
+import type { ParseResult, ParsedLease, ParsedRow, ProposedTransaction } from '../intake/types';
 import { must, supabase } from './supabase';
 import type { Country } from './types';
 
@@ -36,6 +36,8 @@ export interface ImportRow {
     errors?: string[]; checked?: boolean;
     // Updated reports: the transaction this row replaces, or voids because the row is gone.
     replaces?: string; voids?: string;
+    // A lease to add, or to update when lease_id is set (SPEC decision 51).
+    lease?: { tenant: string; start: string | null; end: string | null; rent: number | null; deposit: number | null; currency: string; notes: string; withholding?: number; lease_id?: string };
   };
   proposed: ProposedTransaction | null;
   match_status: RowStatus;
@@ -200,6 +202,58 @@ export async function createBatch(source: Source, file: File, result: ParseResul
       },
     });
   }
+  const leases = new Map<string, ExistingLease[]>();
+  for (const l of result.leases ?? []) {
+    if (!matches.has(l.property.ref)) matches.set(l.property.ref, matchProperty(l.property, source.country_code, properties, known));
+    rows.push(await leaseRow(id, l, matches.get(l.property.ref)!, leases));
+  }
   for (let i = 0; i < rows.length; i += 200) must(await supabase.from('import_rows').insert(rows.slice(i, i + 200)));
   return id;
+}
+
+type ExistingLease = { id: string; start_date: string | null; end_date: string | null; rent_amount: number | null; deposit_amount: number | null; tenant: { display_name: string } | null };
+const days = (a: string, b: string) => Math.abs(new Date(a).getTime() - new Date(b).getTime()) / 86_400_000;
+const d = (s: string | null) => (s ? s.split('-').reverse().join('.') : '—');
+
+// Compares a lease from the report with the leases of the same tenant on the property.
+// Same lease: the one starting within a month, or a later one (Airtable recorded each
+// extension as its own lease). Identical terms: nothing to do. Otherwise the change is
+// an error to check, so a person sees it before the lease is touched.
+async function leaseRow(batchId: string, l: ParsedLease, m: ReturnType<typeof matchProperty>, leaseCache: Map<string, ExistingLease[]>) {
+  const errors = [...l.errors];
+  const issues = [l.contract, l.notes].filter(Boolean);
+  let status: RowStatus = m.propertyId ? 'matched' : 'unmatched';
+  let leaseId: string | undefined;
+  if (m.propertyId) {
+    if (!leaseCache.has(m.propertyId)) {
+      leaseCache.set(m.propertyId, must(await supabase.from('leases')
+        .select('id, start_date, end_date, rent_amount, deposit_amount, tenant:parties(display_name)').eq('property_id', m.propertyId)) as unknown as ExistingLease[]);
+    }
+    const mine = leaseCache.get(m.propertyId)!.filter((x) => x.tenant && sameTenant(x.tenant.display_name, l.tenant));
+    const near = l.start ? mine.filter((x) => x.start_date && days(x.start_date, l.start!) <= 31) : [];
+    const later = l.start ? mine.filter((x) => x.start_date && x.start_date > l.start!) : [];
+    const target = (near.length ? near : later).sort((a, b) => (b.start_date ?? '').localeCompare(a.start_date ?? ''))[0];
+    if (target) {
+      const changes = [
+        l.end && l.end !== target.end_date ? `סיום ${d(target.end_date)} → ${d(l.end)}` : '',
+        l.rent !== null && Number(target.rent_amount) !== l.rent ? `שכירות ${target.rent_amount ?? '—'} → ${l.rent} €` : '',
+        l.deposit !== null && Number(target.deposit_amount) !== l.deposit ? `פיקדון ${target.deposit_amount ?? '—'} → ${l.deposit} €` : '',
+      ].filter(Boolean);
+      if (!changes.length) status = 'duplicate';
+      else { leaseId = target.id; errors.push(`החוזה שבמערכת השתנה: ${changes.join('; ')}. באישור, החוזה יעודכן`); }
+    }
+  }
+  const withholding = /\b(srl|sa|pfa|ii)\b/i.test(l.tenant) ? 8 : 0;   // Romania: 8% when the tenant is a company
+  return {
+    batch_id: batchId, row_ref: `lease:${l.ref}`, proposed: null, fingerprint: null, issues, property_id: m.propertyId, match_status: status,
+    raw: {
+      row: 0, property_ref: l.property.ref, kind: leaseId ? 'עדכון חוזה' : 'חוזה שכירות', owner: l.property.owner,
+      match_note: m.note, candidates: m.candidates, errors,
+      description: `${l.tenant} · ${d(l.start)}–${d(l.end)} · ${l.rent ?? '—'} € · פיקדון ${l.deposit ?? '—'} €`,
+      lease: {
+        tenant: l.tenant, start: l.start, end: l.end, rent: l.rent, deposit: l.deposit, currency: l.currency,
+        notes: [l.contract, l.notes].filter(Boolean).join(' · '), withholding, ...(leaseId ? { lease_id: leaseId } : {}),
+      },
+    },
+  } satisfies Omit<ImportRow, 'id' | 'transaction_id'> & { batch_id: string; fingerprint: string | null };
 }

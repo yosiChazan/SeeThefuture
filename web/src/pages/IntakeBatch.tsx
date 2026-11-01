@@ -70,6 +70,11 @@ export function IntakeBatch() {
         if (r.match_status !== 'matched' || batch.voided_at) return status(r.match_status);
         if (r.raw.voids) return batch.status === 'committed' ? { label: 'בוטל', color: 'red' } : { label: 'יבוטל', color: 'red' };
         if (r.raw.replaces) return batch.status === 'committed' ? { label: 'הוחלף', color: 'teal' } : { label: 'מחליף', color: 'orange' };
+        if (r.raw.lease) {
+          const update = !!r.raw.lease.lease_id;
+          return batch.status === 'committed' ? { label: update ? 'החוזה עודכן' : 'החוזה נוסף', color: 'teal' }
+            : { label: update ? 'יעדכן חוזה' : 'חוזה חדש', color: 'blue' };
+        }
         return status(r.match_status);
       };
       const unmatched = count('unmatched');
@@ -214,7 +219,7 @@ export function IntakeBatch() {
             if (!rs.length) return null;
             const first = rs[0];
             const prop = first.property_id ? byProperty.get(first.property_id) : undefined;
-            const postable = rs.some((r) => r.proposed && r.match_status !== 'duplicate');
+            const postable = rs.some((r) => (r.proposed || r.raw.lease) && r.match_status !== 'duplicate');
             return (
               <Paper key={ref} withBorder p="sm">
                 <Group justify="space-between" mb="xs" wrap="wrap">
@@ -239,7 +244,7 @@ export function IntakeBatch() {
                         <Table.Tr key={r.id} opacity={r.match_status === 'ignored' || r.match_status === 'duplicate' ? 0.6 : 1}>
                           <Table.Td w={150}>
                             <Text size="sm">{r.raw.kind}</Text>
-                            <Text size="xs" c="dimmed">{r.proposed ? CATEGORY_HE[r.proposed.category] ?? r.proposed.category : 'לידיעה'}</Text>
+                            <Text size="xs" c="dimmed">{r.proposed ? CATEGORY_HE[r.proposed.category] ?? r.proposed.category : r.raw.lease ? 'חוזה' : r.raw.voids ? 'ביטול' : 'לידיעה'}</Text>
                           </Table.Td>
                           <Table.Td w={100}>{date(r.proposed?.occurred_on)}</Table.Td>
                           <Table.Td>
@@ -263,7 +268,7 @@ export function IntakeBatch() {
                           <Table.Td w={130}><Amounts row={r} /></Table.Td>
                           <Table.Td w={120}><Badge variant="light" color={rowStatus(r).color}>{rowStatus(r).label}</Badge></Table.Td>
                           <Table.Td w={40}>
-                            {editable && (r.proposed || r.raw.voids) && r.match_status !== 'duplicate' && (
+                            {editable && (r.proposed || r.raw.voids || r.raw.lease) && r.match_status !== 'duplicate' && (
                               <Tooltip label={r.match_status === 'ignored' ? 'להחזיר לרישום' : 'לא לרשום את השורה'}>
                                 <ActionIcon variant="subtle" color="gray" onClick={() => toggle(r)} aria-label="החלפת מצב">
                                   {r.match_status === 'ignored' ? <IconArrowBackUp size={16} /> : <IconEyeOff size={16} />}
