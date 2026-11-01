@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CountryBadge, QueryState } from '../components/common';
 import { useAccess } from '../lib/access';
-import { date, money, owners, propertyTitle } from '../lib/format';
+import { CATEGORY_HE, date, money, owners, propertyTitle } from '../lib/format';
 import { batchNotes, useBatch, type ImportRow, type RowStatus } from '../lib/intake';
 import { useProperties } from '../lib/queries';
 import { supabase } from '../lib/supabase';
@@ -22,10 +22,6 @@ const ROW_STATUS: Record<RowStatus, { label: string; color: string }> = {
   ignored: { label: 'לא יירשם', color: 'gray' },
 };
 
-const CATEGORY_HE: Record<string, string> = {
-  rent: 'שכירות', mgmt_fee: 'דמי ניהול', utilities: 'חשבונות', building_fees: 'הוצאות בניין', legal_fees: 'שכ"ט עו"ד',
-  repair: 'תיקונים', brokerage: 'תיווך', fx: 'המרת מטבע', deposit: 'פיקדון', opening_balance: 'יתרת פתיחה', vat: 'מע"מ', transfer: 'העברה', other: 'אחר', tax_withheld: 'מס במקור', hotel_share: 'חלק המלון',
-};
 
 function Amounts({ row }: { row: ImportRow }) {
   // The money that moves in the client's accounts; the manager's side is implied.
@@ -165,6 +161,12 @@ export function IntakeBatch() {
             </Stack>
             {batch.file_path && <Button variant="default" leftSection={<IconDownload size={16} />} onClick={download}>הקובץ המקורי</Button>}
           </Group>
+
+          {!!notes?.checks?.length && (
+            <Alert color="teal" title="בדיקות שעברו">
+              <List size="sm">{notes.checks.map((c) => <List.Item key={c}>{c}</List.Item>)}</List>
+            </Alert>
+          )}
 
           {!!notes?.warnings.length && (
             <Alert color="orange" title="בדיקות על הקובץ כולו">

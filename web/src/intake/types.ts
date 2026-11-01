@@ -63,6 +63,7 @@ export interface ParseResult {
   period: string;        // YYYY-MM-01; for multi-month files, the latest month
   rows: ParsedRow[];
   warnings: string[];    // file-level checks, e.g. totals that do not add up
+  checks?: string[];     // file-level checks that passed, shown to the reviewer
 }
 
 // The file is not in the format the adapter knows. Nothing is imported.

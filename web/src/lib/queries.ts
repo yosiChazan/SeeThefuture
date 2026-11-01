@@ -103,15 +103,25 @@ export interface EntryRow {
   currency: string;
   memo: string | null;
   account_id: string | null;
-  transaction: { occurred_on: string; category: string; description: string | null; status: string };
+  transaction: { id: string; occurred_on: string; category: string; description: string | null; status: string };
 }
 
+// Every posted entry of the accounts, oldest first. The API returns at most 1,000
+// rows per request, so it is read in pages.
 export function useAccountEntries(accountIds: string[]) {
   return useQuery({
     queryKey: ['entries', accountIds],
     enabled: accountIds.length > 0,
-    queryFn: async () => must(await supabase.from('entries')
-      .select('id, amount, currency, memo, account_id, transaction:transactions(occurred_on, category, description, status)')
-      .in('account_id', accountIds).limit(200)) as unknown as EntryRow[],
+    queryFn: async () => {
+      const out: EntryRow[] = [];
+      for (let from = 0; ; from += 1000) {
+        const page = must(await supabase.from('entries')
+          .select('id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, category, description, status)')
+          .in('account_id', accountIds).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as EntryRow[];
+        out.push(...page);
+        if (page.length < 1000) break;
+      }
+      return out.sort((a, b) => a.transaction.occurred_on.localeCompare(b.transaction.occurred_on) || a.transaction.id.localeCompare(b.transaction.id));
+    },
   });
 }

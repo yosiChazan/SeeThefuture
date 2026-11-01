@@ -11,7 +11,7 @@ export type BatchStatus = 'parsed' | 'in_review' | 'committed' | 'rejected';
 export type RowStatus = 'matched' | 'unmatched' | 'duplicate' | 'ignored';
 
 // Stored in import_batches.notes: what the adapter found about the file as a whole.
-export interface BatchNotes { period: string; file_name: string; warnings: string[] }
+export interface BatchNotes { period: string; file_name: string; warnings: string[]; checks?: string[] }
 
 export interface Batch {
   id: string;
@@ -131,7 +131,7 @@ export async function createBatch(source: Source, file: File, result: ParseResul
   const id = crypto.randomUUID();
   must(await supabase.from('import_batches').insert({
     id, source_id: source.id, country_code: source.country_code, status: 'in_review',
-    notes: JSON.stringify({ period: result.period, file_name: file.name, warnings: result.warnings } satisfies BatchNotes),
+    notes: JSON.stringify({ period: result.period, file_name: file.name, warnings: result.warnings, checks: result.checks ?? [] } satisfies BatchNotes),
   }));
 
   const safeName = file.name.normalize('NFKD').replace(/[^\w.-]+/g, '_');
