@@ -59,7 +59,7 @@
 - **כרטיס חוזה (החלטה 68):** `/leases/:id` (`LeaseCard`), עם מסמכי החוזה דרך `EntityDocuments` (רכיב כללי
   למסמכים של רשומה אחת; מתאים גם לנכס).
 - **פרטי נכסים (החלטה 70):** `scripts/import/property_details.ts` (אוקראינה וגאורגיה; `--run --no-files` בלי קבצים).
-  משותף לסקריפטים: `scripts/import/lib/remote.ts` (Airtable, SQL, תור ההעתקה). רומניה מחכה לקובץ הבחירות של יוסי.
+  משותף לסקריפטים: `scripts/import/lib/remote.ts` (Airtable, SQL, תור ההעתקה). רומניה: `scripts/import/romania_details.ts <choices.json>` (החלטה 71).
 - **הגדרות (admin):** חיבור לדרופבוקס ומשיכת הקבצים של איתי; איפוס הדוחות של איתי (סיבה + קוד במייל
   + TOTP + הקלדת "איפוס").
 
