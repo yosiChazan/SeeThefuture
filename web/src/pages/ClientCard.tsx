@@ -1,13 +1,16 @@
 import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
-import { IconPencil } from '@tabler/icons-react';
+import { IconPencil, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ClientDocuments } from '../components/ClientDocuments';
 import { ClientForm } from '../components/ClientForm';
+import { PropertyForm } from '../components/PropertyForm';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { AccountLedger } from '../components/AccountLedger';
 import { ACCOUNT_KIND_HE, COUNTRY_HE, amountLabel, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
-import { useAccountEntries, useClient, useClientAccounts, useClientProperties } from '../lib/queries';
+import { useAccountEntries, useClient, useClientAccounts, useClientProperties, useIdentity } from '../lib/queries';
+import { validIsraeliId } from '../lib/idnumber';
 
 export function ClientCard() {
   const { id } = useParams();
@@ -19,6 +22,9 @@ export function ClientCard() {
   // Any editor may change a client's details (the parties table is not per country).
   const canEdit = access.isAdmin || access.countries.some((x) => access.canEdit(x));
   const [editing, setEditing] = useState(false);
+  const identity = useIdentity(id!, access.canViewSensitive);
+  const [addingProperty, setAddingProperty] = useState(false);
+  const canAddProperty = access.countries.some((x) => access.canEdit(x));
 
   return (
     <QueryState q={client}>{(c) => (
@@ -34,13 +40,22 @@ export function ClientCard() {
           </Group>
           {canEdit && <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>עריכה</Button>}
         </Group>
-        {editing && <ClientForm client={c} opened onClose={() => setEditing(false)} />}
+        {editing && <ClientForm client={c} idNumber={identity.data?.id_number ?? null} opened onClose={() => setEditing(false)} />}
 
         <Paper withBorder p="md">
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             <div><Text size="xs" c="dimmed">שם בדוחות</Text><Text size="sm" dir="ltr" ta="right">{c.legal_name ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">טלפון</Text><Text size="sm" dir="ltr" ta="right">{c.phone ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">מייל</Text><Text size="sm" dir="ltr" ta="right">{c.email ?? '—'}</Text></div>
+            {access.canViewSensitive && (
+              <div><Text size="xs" c="dimmed">תעודת זהות</Text>
+                <Group gap={6}>
+                  <Text size="sm" dir="ltr">{identity.data?.id_number ?? '—'}</Text>
+                  {identity.data && !validIsraeliId(identity.data.id_number) && <Badge size="xs" color="orange" variant="light">לא מספר ישראלי תקין</Badge>}
+                  {identity.data?.source?.startsWith('ocr:') && <Badge size="xs" variant="light" color="gray">זוהה ממסמך</Badge>}
+                </Group>
+              </div>
+            )}
             <div><Text size="xs" c="dimmed">מספר מס</Text><Text size="sm">{c.tax_id ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">כתובת</Text><Text size="sm">{c.address ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">הגיע דרך</Text><Text size="sm">{c.referred_by?.display_name ?? '—'}</Text></div>
@@ -49,7 +64,11 @@ export function ClientCard() {
         </Paper>
 
         <Paper withBorder p="md">
-          <Title order={4} mb="sm">נכסים</Title>
+          <Group justify="space-between" mb="sm">
+            <Title order={4}>נכסים</Title>
+            {canAddProperty && <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={() => setAddingProperty(true)}>נכס חדש</Button>}
+          </Group>
+          {addingProperty && <PropertyForm ownerId={c.id} onClose={() => setAddingProperty(false)} />}
           <QueryState q={properties}>{(ps) => ps.length ? (
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing="xs">
@@ -106,6 +125,8 @@ export function ClientCard() {
             </Table.ScrollContainer>
           ) : <Text c="dimmed" size="sm">אין חשבונות</Text>}</QueryState>
         </Paper>
+
+        <ClientDocuments partyId={c.id} countries={[...new Set((properties.data ?? []).map((p) => p.country_code))]} />
 
         <Paper withBorder p="md">
           <Title order={4} mb="sm">תנועות</Title>

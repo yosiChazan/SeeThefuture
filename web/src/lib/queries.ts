@@ -146,3 +146,18 @@ export function usePropertyEntries(propertyId: string) {
     },
   });
 }
+
+// A client's ID number, for staff with the sensitive flag (SPEC decision 66).
+export interface Identity { party_id: string; id_number: string; source: string | null; updated_at: string }
+export function useIdentity(partyId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['identity', partyId],
+    enabled,
+    queryFn: async () => must(await supabase.from('party_identity').select('party_id, id_number, source, updated_at').eq('party_id', partyId).maybeSingle()) as Identity | null,
+  });
+}
+
+export async function saveIdentity(partyId: string, idNumber: string | null, source: string) {
+  if (!idNumber) return must(await supabase.from('party_identity').delete().eq('party_id', partyId));
+  return must(await supabase.from('party_identity').upsert({ party_id: partyId, id_number: idNumber, source, updated_at: new Date().toISOString() }));
+}

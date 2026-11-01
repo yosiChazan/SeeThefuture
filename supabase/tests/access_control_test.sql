@@ -519,6 +519,95 @@ select pg_temp.check(
   'no account is opened for Yarach');
 reset role;
 
+-- Party documents: sensitive files need the per-country flag -----------------
+
+insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive, file_name, source) values
+  ('party', '10000000-0000-0000-0000-000000000001', 'UA', 'passport', 'UA/party/10000000-0000-0000-0000-000000000001/att1_passport.pdf', true, 'passport.pdf', 'airtable:att1');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.documents) = 0, 'UA finance without the sensitive flag sees no sensitive document');
+reset role;
+update app.user_country_roles set can_view_sensitive = true where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.documents) = 1, 'with the UA sensitive flag the document is visible');
+reset role;
+update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.documents) = 0, 'RO staff do not see UA documents');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.documents) = 0, 'management without the flag does not see sensitive documents');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d', 'aal1');
+select pg_temp.check((select count(*) from app.documents) = 1, 'a client sees their own documents');
+reset role;
+do $$ begin
+  insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive)
+  values ('party', '10000000-0000-0000-0000-000000000001', 'UA', 'passport', 'UA/party/10000000-0000-0000-0000-000000000001/att1_passport.pdf', true);
+  raise exception 'FAILED: the same file was recorded twice';
+exception when unique_violation then raise notice 'ok - a file is recorded once (re-running the import adds nothing)';
+end $$;
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive)
+  values ('party', '10000000-0000-0000-0000-000000000001', 'UA', 'passport', 'UA/party/x/upload.pdf', true);
+  raise exception 'FAILED: an editor without the sensitive flag added a sensitive document';
+exception when insufficient_privilege then raise notice 'ok - adding a sensitive document needs the sensitive flag';
+end $$;
+reset role;
+update app.user_country_roles set can_view_sensitive = true where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive)
+values ('party', '10000000-0000-0000-0000-000000000001', 'UA', 'passport', 'UA/party/x/upload.pdf', true);
+select pg_temp.check(true, 'with the flag, an editor adds a sensitive document');
+delete from app.documents where storage_path = 'UA/party/x/upload.pdf';
+reset role;
+update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
+
+-- ID numbers: sensitive, like the documents.
+insert into app.party_identity (party_id, id_number, source) values ('10000000-0000-0000-0000-000000000001', '000000018', 'manual');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.party_identity) = 0, 'staff without the sensitive flag do not see ID numbers');
+do $$ begin
+  insert into app.party_identity (party_id, id_number) values ('10000000-0000-0000-0000-000000000002', '000000026');
+  raise exception 'FAILED: staff without the sensitive flag wrote an ID number';
+exception when insufficient_privilege then raise notice 'ok - writing an ID number needs the sensitive flag';
+end $$;
+reset role;
+update app.user_country_roles set can_view_sensitive = true where user_id = '00000000-0000-0000-0000-00000000000c';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.party_identity) = 1, 'with the flag, staff see ID numbers');
+insert into app.party_identity (party_id, id_number) values ('10000000-0000-0000-0000-000000000002', '000000026');
+select pg_temp.check(true, 'with the flag, an editor writes an ID number');
+reset role;
+update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.party_identity) = 0, 'management without the flag does not see ID numbers');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d', 'aal1');
+select pg_temp.check((select array_agg(id_number)::text from app.party_identity) = '{000000018}', 'a client sees only their own ID number');
+reset role;
+select pg_temp.check(
+  (select count(*) from app.audit_log where table_name = 'party_identity') >= 2, 'ID number changes are audited');
+
+-- The document import queue is out of reach of every signed-in user.
+insert into app.document_imports (att_id, url, file_name, country_code, party_id, doc_type) values
+  ('attQ1', 'https://v5.airtableusercontent.com/x', 'poa.pdf', 'UA', '10000000-0000-0000-0000-000000000001', 'poa');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  perform 1 from app.document_imports;
+  raise exception 'FAILED: an admin read the import queue';
+exception when insufficient_privilege then raise notice 'ok - nobody signed in reads the import queue (it holds signed links)';
+end $$;
+do $$ begin
+  perform app.claim_document_imports(5);
+  raise exception 'FAILED: a signed-in user claimed queue rows';
+exception when insufficient_privilege then raise notice 'ok - only the service role takes rows from the queue';
+end $$;
+reset role;
+select pg_temp.check((select count(*) from app.claim_document_imports(5)) = 1, 'a call takes the pending row');
+select pg_temp.check((select count(*) from app.claim_document_imports(5)) = 0, 'a row being copied is not taken twice');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

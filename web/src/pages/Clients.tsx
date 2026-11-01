@@ -1,6 +1,8 @@
-import { Anchor, Group, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
-import { IconSearch } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { Anchor, Button, Group, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { IconPlus, IconSearch } from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
+import { ClientForm } from '../components/ClientForm';
+import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CountryBadge, CountryFilter, QueryState } from '../components/common';
 import { useClients, type ClientRow } from '../lib/queries';
@@ -15,6 +17,9 @@ export function Clients() {
   const country = params.get('country') ?? 'all';
   const search = params.get('q') ?? '';
   const q = useClients();
+  const access = useAccess();
+  const canAdd = access.isAdmin || access.countries.some((x) => access.canEdit(x));
+  const [adding, setAdding] = useState(false);
   const update = (k: string, v: string) => setParams((p) => { p.set(k, v); return p; }, { replace: true });
 
   const rows = useMemo(() => {
@@ -27,7 +32,11 @@ export function Clients() {
 
   return (
     <Stack>
-      <Title order={2}>לקוחות</Title>
+      <Group justify="space-between">
+        <Title order={2}>לקוחות</Title>
+        {canAdd && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>לקוח חדש</Button>}
+      </Group>
+      {adding && <ClientForm opened onClose={() => setAdding(false)} />}
       <Group>
         <CountryFilter value={country} onChange={(v) => update('country', v)} />
         <TextInput placeholder="חיפוש שם, מייל או טלפון" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => update('q', e.currentTarget.value)} w={260} />
