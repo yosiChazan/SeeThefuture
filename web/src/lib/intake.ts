@@ -81,15 +81,16 @@ export function useBatch(id: string) {
 
 async function propertiesForMatch(country: Country): Promise<PropertyForMatch[]> {
   const rows = must(await supabase.from('properties')
-    .select('id, unit_no, country_code, building:buildings(name, project:projects(name)), ownerships(valid_to, party:parties(display_name))')
+    .select('id, unit_no, country_code, building:buildings(name, project:projects(name)), ownerships(valid_to, party:parties(display_name, legal_name))')
     .eq('country_code', country)) as unknown as {
       id: string; unit_no: string; country_code: string;
       building: { name: string; project: { name: string } | null };
-      ownerships: { valid_to: string | null; party: { display_name: string } }[];
+      ownerships: { valid_to: string | null; party: { display_name: string; legal_name: string | null } }[];
     }[];
   return rows.map((p) => ({
     id: p.id, unit_no: p.unit_no, country_code: p.country_code, building: p.building.name, project: p.building.project?.name ?? null,
-    owners: p.ownerships.filter((o) => !o.valid_to).map((o) => o.party.display_name),
+    // Reports name owners in Latin letters: the name as in the reports counts too (SPEC decision 62).
+    owners: p.ownerships.filter((o) => !o.valid_to).flatMap((o) => [o.party.display_name, o.party.legal_name ?? ''].filter(Boolean)),
   }));
 }
 

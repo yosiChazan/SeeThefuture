@@ -42,6 +42,7 @@ export function useLeases() {
 export interface ClientRow {
   id: string;
   display_name: string;
+  legal_name: string | null;
   kind: 'person' | 'company';
   email: string | null;
   phone: string | null;
@@ -52,7 +53,7 @@ export interface ClientRow {
   ownerships: { valid_to: string | null; property: { id: string; country_code: Country } | null }[];
 }
 
-const CLIENT_COLS = `id, display_name, kind, email, phone, tax_id, address, notes,
+const CLIENT_COLS = `id, display_name, legal_name, kind, email, phone, tax_id, address, notes,
   referred_by:parties!referred_by_party_id(id, display_name),
   ownerships(valid_to, property:properties(id, country_code)), party_roles!inner(role)`;
 

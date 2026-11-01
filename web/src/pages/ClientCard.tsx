@@ -1,5 +1,9 @@
-import { Anchor, Badge, Breadcrumbs, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
+import { IconPencil } from '@tabler/icons-react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ClientForm } from '../components/ClientForm';
+import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { AccountLedger } from '../components/AccountLedger';
 import { ACCOUNT_KIND_HE, COUNTRY_HE, amountLabel, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
@@ -11,6 +15,10 @@ export function ClientCard() {
   const properties = useClientProperties(id!);
   const accounts = useClientAccounts(id!);
   const entries = useAccountEntries((accounts.data ?? []).map((a) => a.id));
+  const access = useAccess();
+  // Any editor may change a client's details (the parties table is not per country).
+  const canEdit = access.isAdmin || access.countries.some((x) => access.canEdit(x));
+  const [editing, setEditing] = useState(false);
 
   return (
     <QueryState q={client}>{(c) => (
@@ -20,12 +28,17 @@ export function ClientCard() {
           <Text size="sm">{c.display_name}</Text>
         </Breadcrumbs>
         <Group justify="space-between">
-          <Title order={2}>{c.display_name}</Title>
-          {c.kind === 'company' && <Badge variant="light">חברה</Badge>}
+          <Group gap="xs">
+            <Title order={2}>{c.display_name}</Title>
+            {c.kind === 'company' && <Badge variant="light">חברה</Badge>}
+          </Group>
+          {canEdit && <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>עריכה</Button>}
         </Group>
+        {editing && <ClientForm client={c} opened onClose={() => setEditing(false)} />}
 
         <Paper withBorder p="md">
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
+            <div><Text size="xs" c="dimmed">שם בדוחות</Text><Text size="sm" dir="ltr" ta="right">{c.legal_name ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">טלפון</Text><Text size="sm" dir="ltr" ta="right">{c.phone ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">מייל</Text><Text size="sm" dir="ltr" ta="right">{c.email ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">מספר מס</Text><Text size="sm">{c.tax_id ?? '—'}</Text></div>
