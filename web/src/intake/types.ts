@@ -23,7 +23,8 @@ export interface ProposedEntry {
   memo?: string;
   fx_rate?: number;
   // "source": the manager holding the money; "beneficiary": the owner's own account.
-  account?: { kind: 'manager_cash' | 'rent_pool' | 'expense_pool' | 'legacy_card' | 'client_bank' | 'hotel_balance' | 'deposit_held'; holder: 'source' | 'beneficiary' };
+  // A party id names a holder other than the source (Yarach's transfers reach Gershon).
+  account?: { kind: 'manager_cash' | 'rent_pool' | 'expense_pool' | 'legacy_card' | 'client_bank' | 'hotel_balance' | 'deposit_held'; holder: 'source' | 'beneficiary' | (string & {}) };
   external?: 'source';
 }
 
@@ -45,6 +46,8 @@ export interface PropertyHint {
   // Romania (Itai): the street part of "Vasile_Lascar6_ap.6-L1" and the lot of a split apartment.
   street?: string;
   lot?: string;
+  // Manual forms pick the property itself: no matching needed.
+  id?: string;
 }
 
 export interface ParsedRow {

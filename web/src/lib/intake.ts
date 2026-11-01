@@ -6,12 +6,13 @@ import type { ParseResult, ParsedLease, ParsedRow, ProposedTransaction } from '.
 import { must, supabase } from './supabase';
 import type { Country } from './types';
 
-export interface Source { id: string; name: string; adapter: string; country_code: Country; active: boolean }
+export interface Source { id: string; name: string; adapter: string; country_code: Country; active: boolean; holder_party_id: string | null }
 export type BatchStatus = 'parsed' | 'in_review' | 'committed' | 'rejected';
 export type RowStatus = 'matched' | 'unmatched' | 'duplicate' | 'ignored';
 
 // Stored in import_batches.notes: what the adapter found about the file as a whole.
-export interface BatchNotes { period: string; file_name: string; warnings: string[]; checks?: string[] }
+// `form`: what was typed in a manual form, so the next version of the month starts from it.
+export interface BatchNotes { period: string; file_name: string; warnings: string[]; checks?: string[]; form?: unknown; files?: string[] }
 
 export interface Batch {
   id: string;
@@ -53,11 +54,11 @@ export const batchNotes = (b: Pick<Batch, 'notes'>): BatchNotes | null => {
 export function useSources() {
   return useQuery({
     queryKey: ['import-sources'],
-    queryFn: async () => must(await supabase.from('import_sources').select('id, name, adapter, country_code, active').eq('active', true).order('name')) as Source[],
+    queryFn: async () => must(await supabase.from('import_sources').select('id, name, adapter, country_code, active, holder_party_id').eq('active', true).order('name')) as Source[],
   });
 }
 
-const BATCH_COLS = 'id, country_code, file_path, received_at, status, reviewed_at, voided_at, void_reason, notes, source:import_sources(id, name, adapter, country_code, active), rows:import_rows(count)';
+const BATCH_COLS = 'id, country_code, file_path, received_at, status, reviewed_at, voided_at, void_reason, notes, source:import_sources(id, name, adapter, country_code, active, holder_party_id), rows:import_rows(count)';
 
 export function useBatches() {
   return useQuery({
@@ -142,9 +143,13 @@ export async function readReport(source: Source, file: File): Promise<ParseResul
   return adapter.parse(await bookFromXlsx(await file.arrayBuffer()), file.name);
 }
 
+const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '_');
+
 // Parses nothing itself: takes the adapter's result, matches properties, marks
-// duplicates and changes, stores the original file and writes the batch for review.
-export async function createBatch(source: Source, file: File, result: ParseResult): Promise<string> {
+// duplicates and changes, stores the original file (or a manual form's screenshots)
+// and writes the batch for review.
+export async function createBatch(source: Source, input: File | File[], result: ParseResult, form?: unknown): Promise<string> {
+  const files = Array.isArray(input) ? input : [input];
   const [properties, refs, posted] = await Promise.all([
     propertiesForMatch(source.country_code),
     supabase.from('external_refs').select('external_key, entity_id').eq('source', source.adapter).eq('entity_type', 'property'),
@@ -153,23 +158,31 @@ export async function createBatch(source: Source, file: File, result: ParseResul
   const known = new Map((must(refs) as { external_key: string; entity_id: string }[]).map((r) => [r.external_key, r.entity_id]));
 
   const id = crypto.randomUUID();
+  const folder = `${source.country_code}/${id}`;
+  const paths = files.map((f, i) => `${folder}/${files.length > 1 ? `${i + 1}_` : ''}${safeName(f.name)}`);
   must(await supabase.from('import_batches').insert({
     id, source_id: source.id, country_code: source.country_code, status: 'in_review', scope: result.scope ?? null,
-    notes: JSON.stringify({ period: result.period, file_name: file.name, warnings: result.warnings, checks: result.checks ?? [] } satisfies BatchNotes),
+    notes: JSON.stringify({
+      period: result.period, file_name: form ? 'טופס ידני' : files[0]?.name ?? '', warnings: result.warnings, checks: result.checks ?? [],
+      ...(form ? { form } : {}), ...(files.length > 1 || form ? { files: paths } : {}),
+    } satisfies BatchNotes),
   }));
 
-  const safeName = file.name.normalize('NFKD').replace(/[^\w.-]+/g, '_');
-  const path = `${source.country_code}/${id}/${safeName}`;
-  const up = await supabase.storage.from('imports').upload(path, file, { contentType: file.type || undefined });
-  if (up.error) throw new Error(`שמירת הקובץ נכשלה: ${up.error.message}`);
-  must(await supabase.from('import_batches').update({ file_path: path }).eq('id', id));
+  for (const [i, f] of files.entries()) {
+    const up = await supabase.storage.from('imports').upload(paths[i], f, { contentType: f.type || undefined });
+    if (up.error) throw new Error(`שמירת הקובץ ${f.name} נכשלה: ${up.error.message}`);
+  }
+  if (paths.length) must(await supabase.from('import_batches').update({ file_path: paths[0] }).eq('id', id));
 
   const matches = new Map<string, ReturnType<typeof matchProperty>>();
   // An opening balance is proposed by every report but posted once (Gershon, SPEC decision 43).
   const fresh = result.rows.filter((r) => !(r.proposed?.category === 'opening_balance' && r.fingerprint && posted.exact.has(r.fingerprint)));
   type NewRow = Omit<ImportRow, 'id' | 'transaction_id'> & { batch_id: string; fingerprint: string | null };
   const rows = fresh.map((r: ParsedRow): NewRow => {
-    if (!matches.has(r.property.ref)) matches.set(r.property.ref, matchProperty(r.property, source.country_code, properties, known));
+    // A manual form names the property itself.
+    if (!matches.has(r.property.ref)) {
+      matches.set(r.property.ref, r.property.id ? { propertyId: r.property.id, candidates: [] } : matchProperty(r.property, source.country_code, properties, known));
+    }
     const m = matches.get(r.property.ref)!;
     const issues = [...r.issues];
     let status: RowStatus = !r.proposed ? 'ignored' : m.propertyId ? 'matched' : 'unmatched';
@@ -263,4 +276,15 @@ async function leaseRow(batchId: string, l: ParsedLease, m: ReturnType<typeof ma
       },
     },
   } satisfies Omit<ImportRow, 'id' | 'transaction_id'> & { batch_id: string; fingerprint: string | null };
+}
+
+// Every stored file of a batch: the original file, or all the screenshots of a form.
+export const batchFiles = (b: Pick<Batch, 'notes' | 'file_path'>) => batchNotes(b)?.files ?? (b.file_path ? [b.file_path] : []);
+
+// The form of the latest open or posted version of this month, to start the next one from.
+export async function latestForm<T>(source: Source, scope: string): Promise<T | null> {
+  const rows = must(await supabase.from('import_batches').select('notes, status, voided_at')
+    .eq('source_id', source.id).eq('scope', scope).neq('status', 'rejected').order('received_at', { ascending: false }).limit(1)) as { notes: string | null }[];
+  const n = rows[0] ? batchNotes(rows[0]) : null;
+  return (n?.form as T | undefined) ?? null;
 }

@@ -7,9 +7,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { CountryBadge, QueryState } from '../components/common';
 import { DropboxPull } from '../components/DropboxPull';
 import { DeletePending } from '../components/DeletePending';
+import { ManualReport } from '../components/ManualReport';
 import { ADAPTERS } from '../intake/adapters';
 import type { ParseResult } from '../intake/types';
 import { useAccess } from '../lib/access';
+import { MANUAL } from '../lib/manual';
 import { batchNotes, createBatch, readReport, useBatches, useSources, type BatchStatus, type Source } from '../lib/intake';
 
 export const BATCH_STATUS: Record<BatchStatus, { label: string; color: string }> = {
@@ -58,11 +60,13 @@ function NewReport({ onClose }: { onClose: () => void }) {
   }
 
   const properties = preview ? new Set(preview.rows.map((r) => r.property.ref)).size : 0;
+  // Managers who report over WhatsApp get a form instead of a file (SPEC decision 63).
+  if (source && MANUAL[source.adapter]) return <ManualReport source={source} onClose={onClose} />;
   return (
     <Modal opened onClose={onClose} title="קליטת דוח" size="lg">
       <Stack>
         <Select label="מקור" placeholder="בחרו את המנהל ואת סוג הדוח" value={sourceId} onChange={(v) => { setSourceId(v); setFile(null); setPreview(null); setError(null); }}
-          data={usable.map((s) => ({ value: s.id, label: s.name, disabled: !ADAPTERS[s.adapter] }))}
+          data={usable.map((s) => ({ value: s.id, label: s.name, disabled: !ADAPTERS[s.adapter] && !MANUAL[s.adapter] }))}
           renderOption={({ option }) => <Group justify="space-between" w="100%"><span>{option.label}</span>{option.disabled && <Badge size="xs" variant="light" color="gray">בקרוב</Badge>}</Group>} />
         {source && (
           <FileInput label="קובץ" placeholder={`למשל ${ADAPTERS[source.adapter].example}`} accept={ADAPTERS[source.adapter].accept}
