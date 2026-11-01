@@ -2,6 +2,7 @@ import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Ta
 import { IconPencil } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ClientDocuments } from '../components/ClientDocuments';
 import { ClientForm } from '../components/ClientForm';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
@@ -106,6 +107,8 @@ export function ClientCard() {
             </Table.ScrollContainer>
           ) : <Text c="dimmed" size="sm">אין חשבונות</Text>}</QueryState>
         </Paper>
+
+        <ClientDocuments partyId={c.id} />
 
         <Paper withBorder p="md">
           <Title order={4} mb="sm">תנועות</Title>

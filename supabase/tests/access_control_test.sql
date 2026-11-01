@@ -498,6 +498,34 @@ exception when others then
 end $$;
 reset role;
 
+-- Party documents: sensitive files need the per-country flag -----------------
+
+insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive, file_name, source) values
+  ('party', '10000000-0000-0000-0000-000000000001', 'UA', 'passport', 'UA/party/10000000-0000-0000-0000-000000000001/att1_passport.pdf', true, 'passport.pdf', 'airtable:att1');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.documents) = 0, 'UA finance without the sensitive flag sees no sensitive document');
+reset role;
+update app.user_country_roles set can_view_sensitive = true where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.documents) = 1, 'with the UA sensitive flag the document is visible');
+reset role;
+update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.documents) = 0, 'RO staff do not see UA documents');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.documents) = 0, 'management without the flag does not see sensitive documents');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d', 'aal1');
+select pg_temp.check((select count(*) from app.documents) = 1, 'a client sees their own documents');
+reset role;
+do $$ begin
+  insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive)
+  values ('party', '10000000-0000-0000-0000-000000000001', 'UA', 'passport', 'UA/party/10000000-0000-0000-0000-000000000001/att1_passport.pdf', true);
+  raise exception 'FAILED: the same file was recorded twice';
+exception when unique_violation then raise notice 'ok - a file is recorded once (re-running the import adds nothing)';
+end $$;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

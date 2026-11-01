@@ -42,6 +42,9 @@
 - **Adapters** (`web/src/intake/`): ויטאלי (קייב PLC, שכירות חודשית), גרשון (הוצאות + יתרות דולר),
   איתי (רומניה, קובץ לכל לקוח, שני מודלים: חוזה ישיר / חוזה eden, מע"מ, נוסחת איזון מול Totals,
   תרגום לעברית). שינוי מבנה בקובץ זורק `FormatError`, לעולם לא מייבא מספרים שגויים.
+- **מסמכים של אנשים (החלטה 64):** צילומי ת"ז, דרכונים, ייפויי כוח וקבצים מצורפים מ-Airtable, בכרטיס
+  הלקוח (רגישים בלבד). העתקה: `scripts/import/documents.ts` (בלי `--run`: ספירה בלבד) דרך פונקציית Edge
+  `supabase/functions/airtable-documents`, שהמסד קורא לה ב-`pg_net`. סוד הפונקציה: `IMPORT_SECRET`.
 - **הגדרות (admin):** חיבור לדרופבוקס ומשיכת הקבצים של איתי; איפוס הדוחות של איתי (סיבה + קוד במייל
   + TOTP + הקלדת "איפוס").
 
@@ -55,6 +58,9 @@
   `SUPABASE_ACCESS_TOKEN=sbp_dummy NODE_USE_ENV_PROXY=1 node scripts/supabase-sql.ts migrate`
   (ה-proxy של סביבת Claude מזריק את הטוקן האמיתי; `run <file.sql>` מריץ שאילתה).
 - **מגבלות סביבת Claude:**
+  - **Airtable:** `AIRTABLE_TOKEN` מוגדר בסביבה (קריאה), ו-`api.airtable.com` פתוח. קובצי Airtable
+    (`*.airtableusercontent.com`) חסומים, ולכן קבצים עוברים דרך פונקציית Edge.
+  - פעולות על הייצור (מיגרציה, פריסת פונקציה, הרצת ייבוא) דורשות אישור מפורש של יוסי בשיחה.
   - הכתובת `*.supabase.co` חסומה מהסביבה: אי אפשר לפתוח את האתר מול הנתונים האמיתיים, רק לבנות.
     שאילתות עוברות דרך ה-Management API (הסקריפט למעלה).
   - `gh pr create` לא עובד (GraphQL חסום): פותחים PR עם `gh api repos/yosiChazan/SeeThefuture/pulls -f base=main -f head=<branch> ...`.
