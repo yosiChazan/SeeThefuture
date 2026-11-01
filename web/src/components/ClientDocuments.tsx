@@ -1,4 +1,6 @@
-import { Anchor, Badge, Group, Paper, Select, Stack, Table, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, FileInput, Group, Modal, Paper, Select, Stack, Table, Text, Title } from '@mantine/core';
+import { IconUpload } from '@tabler/icons-react';
+import { useState } from 'react';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAccess } from '../lib/access';
@@ -46,11 +48,79 @@ function DocTable({ docs, canMove, onOpen, onMove }: { docs: Doc[]; canMove: (d:
   );
 }
 
-// A person's documents. Row-level security shows sensitive ones only to staff with the
-// country's sensitive-documents flag; every opening is logged.
-export function ClientDocuments({ partyId }: { partyId: string }) {
+const UPLOAD_TYPES = [
+  { value: 'passport', label: 'דרכון' }, { value: 'id_card', label: 'תעודת זהות וספח' },
+  { value: 'poa', label: 'ייפוי כוח' }, { value: 'attachment', label: 'מסמך אחר' },
+];
+const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
+
+// Adds documents to a person (SPEC decision 65). Every document is sensitive (decision 64),
+// so only staff with the country's sensitive-documents flag can add one. The row is
+// written first, so a file never sits in storage without a row that guards it.
+function UploadDocuments({ partyId, countries, onClose }: { partyId: string; countries: Country[]; onClose: () => void }) {
   const access = useAccess();
   const qc = useQueryClient();
+  const editable = (['UA', 'RO', 'GE', 'GR'] as Country[]).filter((c) => access.canEdit(c));
+  const [country, setCountry] = useState<Country | null>(countries.find((c) => editable.includes(c)) ?? (editable.length === 1 ? editable[0] : null));
+  const [type, setType] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    if (!country || !type || !files.length) return;
+    setBusy(true); setError(null);
+    let failed = false;
+    for (const f of files) {
+      const id = crypto.randomUUID();
+      const path = `${country}/party/${partyId}/${id}_${safeName(f.name)}`;
+      const row = await supabase.from('documents').insert({
+        id, entity_type: 'party', entity_id: partyId, country_code: country, doc_type: type,
+        storage_path: path, sensitive: true, file_name: f.name, source: 'upload',
+      });
+      if (row.error) {
+        failed = true;
+        setError(row.error.code === '42501' ? `אין לך הרשאה להוסיף מסמכים רגישים ב${COUNTRY_HE[country]}. מנהל המערכת נותן אותה` : row.error.message);
+        break;
+      }
+      const up = await supabase.storage.from('documents').upload(path, f, { contentType: f.type || undefined });
+      if (up.error) {
+        await supabase.from('documents').delete().eq('id', id);
+        failed = true;
+        setError(`${f.name}: ${up.error.message}`);
+        break;
+      }
+    }
+    await qc.invalidateQueries({ queryKey: ['documents', partyId] });
+    setBusy(false);
+    if (!failed) onClose();
+  }
+
+  return (
+    <Modal opened onClose={onClose} title="הוספת מסמכים">
+      <Stack>
+        <Select label="סוג המסמך" required data={UPLOAD_TYPES} value={type} onChange={setType} />
+        <Select label="מדינה" required description="מי שרואה את המדינה הזו, עם הרשאה למסמכים רגישים, יראה את המסמך"
+          data={editable.map((c) => ({ value: c, label: COUNTRY_HE[c] }))} value={country} onChange={(x) => setCountry(x as Country)} />
+        <FileInput label="קבצים" required multiple accept="image/*,application/pdf" value={files} onChange={setFiles}
+          leftSection={<IconUpload size={16} />} placeholder="אפשר לבחור כמה קבצים" clearable />
+        {error && <Alert color="red">{error}</Alert>}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>ביטול</Button>
+          <Button onClick={save} loading={busy} disabled={!country || !type || !files.length}>הוספה</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+// A person's documents. Row-level security shows sensitive ones only to staff with the
+// country's sensitive-documents flag; every opening is logged.
+export function ClientDocuments({ partyId, countries = [] }: { partyId: string; countries?: Country[] }) {
+  const access = useAccess();
+  const qc = useQueryClient();
+  const [uploading, setUploading] = useState(false);
+  const canUpload = access.countries.some((c) => access.canEdit(c));
   const docs = useQuery({
     queryKey: ['documents', partyId],
     queryFn: async () => must(await supabase.from('documents')
@@ -74,7 +144,11 @@ export function ClientDocuments({ partyId }: { partyId: string }) {
 
   return (
     <Paper withBorder p="md">
-      <Title order={4} mb={4}>מסמכים</Title>
+      <Group justify="space-between" mb={4}>
+        <Title order={4}>מסמכים</Title>
+        {canUpload && <Button size="xs" variant="light" leftSection={<IconUpload size={14} />} onClick={() => setUploading(true)}>הוספת מסמכים</Button>}
+      </Group>
+      {uploading && <UploadDocuments partyId={partyId} countries={countries} onClose={() => setUploading(false)} />}
       <Text size="xs" c="dimmed" mb="sm">מסמכים רגישים מוצגים רק למי שיש לו הרשאה למסמכים רגישים במדינה. כל פתיחה נרשמת.</Text>
       <QueryState q={docs}>{(ds) => ds.length ? (
         <Stack>

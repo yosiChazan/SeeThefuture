@@ -1,9 +1,10 @@
 import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
-import { IconPencil } from '@tabler/icons-react';
+import { IconPencil, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ClientDocuments } from '../components/ClientDocuments';
 import { ClientForm } from '../components/ClientForm';
+import { PropertyForm } from '../components/PropertyForm';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { AccountLedger } from '../components/AccountLedger';
@@ -20,6 +21,8 @@ export function ClientCard() {
   // Any editor may change a client's details (the parties table is not per country).
   const canEdit = access.isAdmin || access.countries.some((x) => access.canEdit(x));
   const [editing, setEditing] = useState(false);
+  const [addingProperty, setAddingProperty] = useState(false);
+  const canAddProperty = access.countries.some((x) => access.canEdit(x));
 
   return (
     <QueryState q={client}>{(c) => (
@@ -50,7 +53,11 @@ export function ClientCard() {
         </Paper>
 
         <Paper withBorder p="md">
-          <Title order={4} mb="sm">נכסים</Title>
+          <Group justify="space-between" mb="sm">
+            <Title order={4}>נכסים</Title>
+            {canAddProperty && <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={() => setAddingProperty(true)}>נכס חדש</Button>}
+          </Group>
+          {addingProperty && <PropertyForm ownerId={c.id} onClose={() => setAddingProperty(false)} />}
           <QueryState q={properties}>{(ps) => ps.length ? (
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing="xs">
@@ -108,7 +115,7 @@ export function ClientCard() {
           ) : <Text c="dimmed" size="sm">אין חשבונות</Text>}</QueryState>
         </Paper>
 
-        <ClientDocuments partyId={c.id} />
+        <ClientDocuments partyId={c.id} countries={[...new Set((properties.data ?? []).map((p) => p.country_code))]} />
 
         <Paper withBorder p="md">
           <Title order={4} mb="sm">תנועות</Title>
