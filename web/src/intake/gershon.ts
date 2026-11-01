@@ -122,5 +122,5 @@ export function parseGershon(book: Book, fileName = ''): ParseResult {
     if (u !== null && Math.abs(u - sumUtilities) > 0.5) warnings.push(`סה"כ הוצאות בניין: בקובץ ${u}, נקרא מהשורות ${round2(sumUtilities)}`);
     if (l !== null && Math.abs(l - sumLegal) > 0.5) warnings.push(`סה"כ שכ"ט: בקובץ ${l}, נקרא מהשורות ${round2(sumLegal)}`);
   }
-  return { period, rows, warnings };
+  return { period, rows, warnings, scope: period.slice(0, 7) };
 }

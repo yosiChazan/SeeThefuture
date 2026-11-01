@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Modal, Paper, Select, SimpleGrid, Stack, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Modal, Paper, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle, IconArrowBackUp, IconCheck, IconDownload, IconEyeOff } from '@tabler/icons-react';
@@ -46,6 +46,7 @@ export function IntakeBatch() {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [voiding, setVoiding] = useState(false);
+  const [showPosted, setShowPosted] = useState(false);
   const [reason, setReason] = useState('');
   const refresh = () => qc.invalidateQueries({ queryKey: ['import-batch', id] });
 
@@ -64,6 +65,13 @@ export function IntakeBatch() {
       // "Will be posted" while in review; "posted" once approved; "cancelled" once voided.
       const status = (s: RowStatus) => (s === 'matched' && batch.voided_at ? { label: 'בוטל', color: 'red' }
         : s === 'matched' && batch.status === 'committed' ? { label: 'נרשם', color: 'teal' } : ROW_STATUS[s]);
+      // Rows of an updated report: one that replaces a posted transaction, one that voids it.
+      const rowStatus = (r: ImportRow) => {
+        if (r.match_status !== 'matched' || batch.voided_at) return status(r.match_status);
+        if (r.raw.voids) return batch.status === 'committed' ? { label: 'בוטל', color: 'red' } : { label: 'יבוטל', color: 'red' };
+        if (r.raw.replaces) return batch.status === 'committed' ? { label: 'הוחלף', color: 'teal' } : { label: 'מחליף', color: 'orange' };
+        return status(r.match_status);
+      };
       const unmatched = count('unmatched');
       // Rows that will be posted but carry an error nobody has marked as checked.
       const unchecked = rows.filter((r) => r.match_status === 'matched' && r.raw.errors?.length && !r.raw.checked).length;
@@ -71,9 +79,9 @@ export function IntakeBatch() {
 
       // Totals of what will be posted, per category and currency, never converted.
       const totals = new Map<string, number>();
-      for (const r of rows) if (r.match_status === 'matched') for (const e of r.proposed!.entries) {
+      for (const r of rows) if (r.match_status === 'matched' && r.proposed) for (const e of r.proposed.entries) {
         if (!e.account) continue;
-        const k = `${r.proposed!.category}|${e.currency}`;
+        const k = `${r.proposed.category}|${e.currency}`;
         totals.set(k, (totals.get(k) ?? 0) + e.amount);
       }
 
@@ -195,7 +203,15 @@ export function IntakeBatch() {
             </Paper>
           )}
 
-          {groups.map(([ref, rs]) => {
+          {count('duplicate') > 0 && (
+            <Switch checked={showPosted} onChange={(e) => setShowPosted(e.currentTarget.checked)}
+              label={`להציג גם ${count('duplicate')} שורות שכבר נרשמו מגרסה קודמת`} />
+          )}
+
+          {groups.map(([ref, all]) => {
+            // In an updated report most rows were posted before; they are hidden by default.
+            const rs = showPosted ? all : all.filter((r) => r.match_status !== 'duplicate');
+            if (!rs.length) return null;
             const first = rs[0];
             const prop = first.property_id ? byProperty.get(first.property_id) : undefined;
             const postable = rs.some((r) => r.proposed && r.match_status !== 'duplicate');
@@ -245,9 +261,9 @@ export function IntakeBatch() {
                             ))}
                           </Table.Td>
                           <Table.Td w={130}><Amounts row={r} /></Table.Td>
-                          <Table.Td w={120}><Badge variant="light" color={status(r.match_status).color}>{status(r.match_status).label}</Badge></Table.Td>
+                          <Table.Td w={120}><Badge variant="light" color={rowStatus(r).color}>{rowStatus(r).label}</Badge></Table.Td>
                           <Table.Td w={40}>
-                            {editable && r.proposed && r.match_status !== 'duplicate' && (
+                            {editable && (r.proposed || r.raw.voids) && r.match_status !== 'duplicate' && (
                               <Tooltip label={r.match_status === 'ignored' ? 'להחזיר לרישום' : 'לא לרשום את השורה'}>
                                 <ActionIcon variant="subtle" color="gray" onClick={() => toggle(r)} aria-label="החלפת מצב">
                                   {r.match_status === 'ignored' ? <IconArrowBackUp size={16} /> : <IconEyeOff size={16} />}

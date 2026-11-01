@@ -34,6 +34,8 @@ export interface ImportRow {
     row: number; property_ref: string; owner?: string; kind: string; match_note?: string; candidates?: string[];
     // Discrepancies a person must look at; approval waits until `checked` is set.
     errors?: string[]; checked?: boolean;
+    // Updated reports: the transaction this row replaces, or voids because the row is gone.
+    replaces?: string; voids?: string;
   };
   proposed: ProposedTransaction | null;
   match_status: RowStatus;
@@ -89,23 +91,40 @@ async function propertiesForMatch(country: Country): Promise<PropertyForMatch[]>
   }));
 }
 
-const POSTED = 'fingerprint, raw, proposed, batch:import_batches!inner(source_id), transaction:transactions!import_rows_transaction_id_fkey!inner(status)';
-type PostedRow = { fingerprint: string | null; raw: { property_ref?: string }; proposed: ProposedTransaction };
+const POSTED = 'row_ref, fingerprint, raw, proposed, property_id, batch:import_batches!inner(source_id, scope), transaction:transactions!import_rows_transaction_id_fkey!inner(id, status)';
+type PostedRow = {
+  row_ref: string; fingerprint: string | null; raw: { property_ref?: string; kind?: string }; proposed: ProposedTransaction;
+  property_id: string | null; transaction: { id: string };
+};
 
-// What this source already posted: exact fingerprints ("already imported"), and the
-// same rows of the same months without the amount ("changed since").
+// What this source already posted. `exact`: fingerprints anywhere ("already imported").
+// `earlier`: what was posted from the same scope (the owner's file, the month) and is
+// not in this version as it is: these rows were either changed or removed since.
 async function alreadyPosted(sourceId: string, result: ParseResult) {
   const fps = [...new Set(result.rows.map((r) => r.fingerprint).filter((f): f is string => !!f))];
-  const periods = [...new Set(result.rows.map((r) => r.proposed?.period).filter((p): p is string => !!p))];
   const exact = new Set<string>();
   for (let i = 0; i < fps.length; i += 40) {
     const rows = must(await supabase.from('import_rows').select(POSTED).eq('transaction.status', 'posted')
       .in('fingerprint', fps.slice(i, i + 40))) as unknown as PostedRow[];
     rows.forEach((r) => exact.add(r.fingerprint!));
   }
-  const sameMonths = periods.length ? must(await supabase.from('import_rows').select(POSTED)
-    .eq('batch.source_id', sourceId).eq('transaction.status', 'posted').in('proposed->>period', periods)) as unknown as PostedRow[] : [];
-  const byKey = new Map(sameMonths.map((r) => [identity(r.raw.property_ref ?? '', r.proposed), r.proposed]));
+  const earlier: PostedRow[] = [];
+  if (result.scope) {
+    for (let from = 0; ; from += 1000) {
+      const page = must(await supabase.from('import_rows').select(POSTED)
+        .eq('batch.source_id', sourceId).eq('batch.scope', result.scope).eq('transaction.status', 'posted')
+        .not('proposed', 'is', null).order('row_ref').range(from, from + 999)) as unknown as PostedRow[];
+      earlier.push(...page);
+      if (page.length < 1000) break;
+    }
+  }
+  const inFile = new Set(fps);
+  const byKey = new Map<string, PostedRow[]>();
+  for (const r of earlier) {
+    if (r.fingerprint && inFile.has(r.fingerprint)) continue;
+    const k = identity(r.raw.property_ref ?? '', r.proposed);
+    byKey.set(k, [...(byKey.get(k) ?? []), r]);
+  }
   return { exact, byKey };
 }
 
@@ -130,7 +149,7 @@ export async function createBatch(source: Source, file: File, result: ParseResul
 
   const id = crypto.randomUUID();
   must(await supabase.from('import_batches').insert({
-    id, source_id: source.id, country_code: source.country_code, status: 'in_review',
+    id, source_id: source.id, country_code: source.country_code, status: 'in_review', scope: result.scope ?? null,
     notes: JSON.stringify({ period: result.period, file_name: file.name, warnings: result.warnings, checks: result.checks ?? [] } satisfies BatchNotes),
   }));
 
@@ -143,25 +162,44 @@ export async function createBatch(source: Source, file: File, result: ParseResul
   const matches = new Map<string, ReturnType<typeof matchProperty>>();
   // An opening balance is proposed by every report but posted once (Gershon, SPEC decision 43).
   const fresh = result.rows.filter((r) => !(r.proposed?.category === 'opening_balance' && r.fingerprint && posted.exact.has(r.fingerprint)));
-  const rows = fresh.map((r: ParsedRow) => {
+  type NewRow = Omit<ImportRow, 'id' | 'transaction_id'> & { batch_id: string; fingerprint: string | null };
+  const rows = fresh.map((r: ParsedRow): NewRow => {
     if (!matches.has(r.property.ref)) matches.set(r.property.ref, matchProperty(r.property, source.country_code, properties, known));
     const m = matches.get(r.property.ref)!;
     const issues = [...r.issues];
     let status: RowStatus = !r.proposed ? 'ignored' : m.propertyId ? 'matched' : 'unmatched';
+    const errors = [...r.errors];
+    let replaces: string | undefined;
     if (r.proposed && r.fingerprint && posted.exact.has(r.fingerprint)) status = 'duplicate';
     else if (r.proposed) {
-      const before = posted.byKey.get(identity(r.property.ref, r.proposed));
+      // The same row as in the earlier version, with a different amount: replace it.
+      const before = posted.byKey.get(identity(r.property.ref, r.proposed))?.shift();
       if (before) {
-        status = 'ignored';
-        issues.push(`כבר נרשם מדוח קודם לאותו חודש בסכום אחר (${amountOf(before)}). אם זה תיקון, צריך לבטל קודם את התנועה הקודמת`);
+        replaces = before.transaction.id;
+        errors.push(`השורה השתנתה מהגרסה הקודמת: היה ${amountOf(before.proposed)}, עכשיו ${amountOf(r.proposed)}. באישור, התנועה הקודמת תבוטל והחדשה תירשם`);
       }
     }
     return {
       batch_id: id, row_ref: r.ref, proposed: r.proposed, fingerprint: r.fingerprint, issues,
       property_id: m.propertyId, match_status: status,
-      raw: { ...r.raw, kind: r.kind, owner: r.property.owner, match_note: m.note, candidates: m.candidates, errors: r.errors },
+      raw: {
+        ...r.raw, row: Number(r.raw.row ?? 0), property_ref: String(r.raw.property_ref ?? r.property.ref),
+        kind: r.kind, owner: r.property.owner, match_note: m.note, candidates: m.candidates, errors, ...(replaces ? { replaces } : {}),
+      },
     };
   });
+  // Posted from the earlier version and gone from this one: offered for voiding.
+  for (const old of [...posted.byKey.values()].flat()) {
+    rows.push({
+      batch_id: id, row_ref: `removed:${old.row_ref}`, proposed: null, fingerprint: null, issues: [],
+      property_id: old.property_id, match_status: 'matched',
+      raw: {
+        row: 1_000_000, property_ref: old.raw.property_ref ?? '', kind: 'נמחקה מהקובץ', voids: old.transaction.id,
+        description: `${old.proposed.description} (${old.proposed.occurred_on.split('-').reverse().join('.')}, ${amountOf(old.proposed)})`,
+        errors: ['השורה נמחקה מהגרסה החדשה של הקובץ. באישור, התנועה שנרשמה ממנה תבוטל'],
+      },
+    });
+  }
   for (let i = 0; i < rows.length; i += 200) must(await supabase.from('import_rows').insert(rows.slice(i, i + 200)));
   return id;
 }

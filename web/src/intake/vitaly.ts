@@ -132,5 +132,5 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
   const fileFees = (total(col.feeCash) ?? 0) + (total(col.feeCard) ?? 0);
   check('סה"כ דמי ניהול', fileFees, sums.fees);
 
-  return { period, rows, warnings };
+  return { period, rows, warnings, scope: period.slice(0, 7) };
 }

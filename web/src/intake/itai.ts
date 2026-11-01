@@ -244,5 +244,5 @@ export function parseItai(book: Book): ParseResult {
   else checks.push(`נוסחת האיזון מול איתי מתאימה: ${equation}, ולפי Totals ${fmt(round2(left))} lei`);
 
   if (!rows.length) warnings.push('לא נמצאו שורות בקובץ');
-  return { period: month(latest || '2026-01-01'), rows, warnings, checks };
+  return { period: month(latest || '2026-01-01'), rows, warnings, checks, scope: owner };
 }
