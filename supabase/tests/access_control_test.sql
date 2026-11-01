@@ -526,6 +526,23 @@ do $$ begin
 exception when unique_violation then raise notice 'ok - a file is recorded once (re-running the import adds nothing)';
 end $$;
 
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive)
+  values ('party', '10000000-0000-0000-0000-000000000001', 'UA', 'passport', 'UA/party/x/upload.pdf', true);
+  raise exception 'FAILED: an editor without the sensitive flag added a sensitive document';
+exception when insufficient_privilege then raise notice 'ok - adding a sensitive document needs the sensitive flag';
+end $$;
+reset role;
+update app.user_country_roles set can_view_sensitive = true where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive)
+values ('party', '10000000-0000-0000-0000-000000000001', 'UA', 'passport', 'UA/party/x/upload.pdf', true);
+select pg_temp.check(true, 'with the flag, an editor adds a sensitive document');
+delete from app.documents where storage_path = 'UA/party/x/upload.pdf';
+reset role;
+update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
+
 -- The document import queue is out of reach of every signed-in user.
 insert into app.document_imports (att_id, url, file_name, country_code, party_id, doc_type) values
   ('attQ1', 'https://v5.airtableusercontent.com/x', 'poa.pdf', 'UA', '10000000-0000-0000-0000-000000000001', 'poa');

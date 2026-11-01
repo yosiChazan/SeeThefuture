@@ -1,6 +1,8 @@
-import { Anchor, Group, Paper, Select, Stack, Table, Text, TextInput, Title } from '@mantine/core';
-import { IconSearch } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { Anchor, Button, Group, Paper, Select, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { IconPlus, IconSearch } from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
+import { PropertyForm } from '../components/PropertyForm';
+import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CountryBadge, CountryFilter, QueryState, StatusBadge } from '../components/common';
 import { buildingLabel, currentLease, money, owners, STATUS_HE } from '../lib/format';
@@ -13,6 +15,8 @@ export function Properties() {
   const city = params.get('city');
   const search = params.get('q') ?? '';
   const q = useProperties();
+  const access = useAccess();
+  const [adding, setAdding] = useState(false);
   // One call per change: two setParams calls in a row each start from the same URL,
   // so the second undid the first (choosing a country and clearing the city).
   const update = (changes: Record<string, string | null>) => setParams((prev) => {
@@ -37,7 +41,11 @@ export function Properties() {
 
   return (
     <Stack>
-      <Title order={2}>נכסים</Title>
+      <Group justify="space-between">
+        <Title order={2}>נכסים</Title>
+        {access.countries.some((c) => access.canEdit(c)) && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>נכס חדש</Button>}
+      </Group>
+      {adding && <PropertyForm onClose={() => setAdding(false)} />}
       <Group>
         <CountryFilter value={country} onChange={(v) => update({ country: v, city: null })} />
         <Select placeholder="עיר" data={cities} value={city} onChange={(v) => update({ city: v })} clearable w={150} />
