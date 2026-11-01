@@ -36,12 +36,13 @@ export function sameOwner(a: string, b: string): boolean {
 // "Balcescu 32 34" apt 17 lot 1 ↔ "Nicolae Balcescu 32-34", "17-LOT1-BIG";
 // "Covaci 10" lot 1 ↔ "Covaci 10", "8-LOT1-SMALL". Only the owner's properties count.
 function streetMatches(hint: PropertyHint, p: PropertyForMatch): boolean {
-  const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  // Street words only: house numbers ("38A") and short words differ between sources,
+  // and one shared word is enough ("Ion Ghica 1" ↔ "Ghica").
+  const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => /^[a-z]/.test(w) && w.length >= 4);
   const building = words(p.building);
-  const street = words(hint.street!);
-  if (!street.filter((w) => /\D/.test(w)).every((w) => building.some((b) => b === w || (w.length >= 5 && b.startsWith(w.slice(0, 5)))))) return false;
+  if (!words(hint.street!).some((w) => building.some((b) => b === w || b.startsWith(w.slice(0, 5)) || w.startsWith(b.slice(0, 5))))) return false;
   const [apt, ...rest] = p.unit_no.split('-');
-  if (hint.unit && apt !== hint.unit) return false;
+  if (hint.unit && apt.toLowerCase() !== hint.unit.toLowerCase()) return false;
   // Lots rented together ("1+2") are booked on the first one.
   const lot = hint.lot?.split('+')[0];
   if (lot && !rest.some((x) => x.replace(/^lot/i, '') === lot)) return false;
@@ -70,6 +71,12 @@ export function matchProperty(hint: PropertyHint, country: string, properties: P
     const hits = mine.filter((p) => streetMatches(hint, p));
     if (hits.length === 1) {
       return { propertyId: hits[0].id, candidates: [], note: hint.lot?.includes('+') ? `יחידות ${hint.lot} מושכרות יחד; נרשם על הראשונה` : undefined };
+    }
+    // The owner's only apartment with that number, in another building: most likely the
+    // same apartment recorded under the wrong building. Matched, and flagged.
+    const sameUnit = mine.filter((p) => hint.unit && p.unit_no.split('-')[0].toLowerCase() === hint.unit.toLowerCase());
+    if (!hits.length && sameUnit.length === 1) {
+      return { propertyId: sameUnit[0].id, candidates: [], note: `בדוח "${hint.street}", במערכת "${sameUnit[0].building}": לבדוק את הבניין` };
     }
     return { propertyId: null, candidates: (hits.length ? hits : mine).map((p) => p.id) };
   }

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parseGershon, parseGershonBalance } from './gershon.ts';
 import { bookFromJson, bookFromXlsx, type GridJson } from './grid.ts';
-import { itaiHint, itaiVat, parseItai } from './itai.ts';
+import { itaiFileName, itaiHint, itaiVat, parseItai } from './itai.ts';
 import { itaiHebrew, monthHe } from './itai_he.ts';
 import { matchProperty, sameOwner, sameTenant, type PropertyForMatch } from './match.ts';
 import { FormatError } from './types.ts';
@@ -206,7 +206,7 @@ test('Itai: VAT on every repayment, and the balance equation agrees with the Tot
   const itai = r.rows.flatMap((x) => x.proposed!.entries).filter((e) => e.account?.kind === 'manager_cash').reduce((s, e) => s + e.amount, 0);
   assert.ok(Math.abs(itai) < 0.1, `balance with Itai ends at ${itai}, as in Totals (0), up to rounding of each row`);
   assert.deepEqual(r.warnings, []);
-  assert.match(r.checks![0], /נוסחת האיזון מול איתי מתאימה: הוצאות 30,792.95 \+ מע"מ 6,152.0\d − החזרים 36,945.00/);
+  assert.match(r.checks![0], /נוסחת האיזון מול איתי מתאימה: −הוצאות 30,792.95 \+ החזרים מהבעלים 36,945.00 − מע"מ 6,152.0\d = /);
 });
 
 test('Itai: a balance that does not match Totals is a warning', () => {
@@ -260,4 +260,35 @@ test('Itai in Hebrew: months, management fees, expenses; the original is kept', 
   assert.equal(fee.proposed!.description, 'דמי ניהול ינואר 2026');
   assert.ok(fee.issues.includes('במקור: jan.2026 management commision'));
   assert.ok(fee.fingerprint!.endsWith('|jan.2026 management commision'), 'the fingerprint uses Itai\'s text, not the translation');
+});
+
+test('Itai file names: owner, and the apartment of a single-apartment file', () => {
+  assert.deepEqual(itaiFileName('Demo Owner - Bratianu6_ap.33 property table (1).xlsx'), { owner: 'Demo Owner', apartment: 'Bratianu6_ap.33' });
+  assert.deepEqual(itaiFileName('Second Owner - properties table.xlsx'), { owner: 'Second Owner', apartment: null });
+  assert.deepEqual(itaiFileName('Third Owner - Magheru 12-14 property table.xlsx'), { owner: 'Third Owner', apartment: 'Magheru 12-14' });
+});
+
+test('Itai, lease between eden and the tenant: eden collects, deducts, pays the owner; Totals agree', () => {
+  const r = parseItai(bookFromJson(fixtureBook('itai_eden.json')), 'Demo Owner - Bratianu6_ap.33 property table.xlsx');
+  assert.equal(r.scope, 'Demo Owner');
+  assert.ok(r.rows.every((x) => x.property.ref === 'Bratianu6_ap.33'), 'the apartment comes from the file name');
+  const sum = (kind: string) => Math.round(r.rows.flatMap((x) => x.proposed?.entries ?? []).filter((e) => e.account?.kind === kind).reduce((s, e) => s + e.amount, 0) * 100) / 100;
+  assert.equal(sum('manager_cash'), 0, 'Itai owes the owner nothing, as in Totals');
+  assert.equal(sum('client_bank'), 22965.04, 'what eden paid the owner');
+  assert.equal(sum('deposit_held'), 2986, 'the tenant\'s deposit is held apart, not income');
+  assert.ok(r.rows.some((x) => x.proposed?.category === 'tax_withheld' && /מס הכנסה על השכירות שנוכה במקור/.test(x.proposed.description)));
+  assert.ok(r.rows.some((x) => x.kind === 'תשלום לבעלים' && x.errors.some((e) => /אולי עוד לא בוצע/.test(e))), 'an undated payment to the owner is checked');
+  assert.match(r.checks![0], /שכירות שהתקבלה אצל איתי 33,543.00 − הוצאות 10,577.96 − תשלומים לבעלים 22,965.04 = 0.00 lei, ולפי Totals 0.00 lei \(החשבון מאוזן\)/);
+  assert.equal(r.leases!.length, 1);
+  assert.equal(r.leases![0].end, '2027-10-31');
+});
+
+test('Itai, both arrangements in one file: rows go by who received the money; "DUE rent" is not income', () => {
+  const r = parseItai(bookFromJson(fixtureBook('itai_mixed.json')), 'Demo Owner - Smardan 18_ap.72 property table.xlsx');
+  assert.ok(r.rows.some((x) => x.raw.received_by === 'owner') && r.rows.some((x) => x.raw.received_by === 'eden'));
+  const due = r.rows.filter((x) => x.kind === 'צפוי, טרם התקבל');
+  assert.equal(due.length, 1);
+  assert.equal(due[0].proposed, null);
+  assert.deepEqual(r.warnings, []);
+  assert.match(r.checks![0], /ולפי Totals -1,872.01 lei \(הבעלים חייב לאיתי\)/);
 });
