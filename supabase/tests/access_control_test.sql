@@ -429,6 +429,75 @@ select pg_temp.check((select count(*) from app.import_batches where id = '500000
 select pg_temp.check((select count(*) from app.import_batches where id = '50000000-0000-0000-0000-000000000004') = 1,
   'an approved report cannot be deleted');
 
+-- Resetting Itai's imports -------------------------------------------------
+
+insert into app.import_batches (id, source_id, country_code, status)
+select '50000000-0000-0000-0000-000000000008', s.id, 'UA', 'in_review' from app.import_sources s where s.adapter = 'itai_client_xlsx';
+insert into app.import_rows (batch_id, row_ref, raw, property_id, match_status, fingerprint, proposed) values
+  ('50000000-0000-0000-0000-000000000008', '1', '{"property_ref": "x"}', '30000000-0000-0000-0000-000000000004', 'matched', 'itai|x',
+   '{"occurred_on": "2026-02-01", "period": "2026-02-01", "category": "rent", "description": "r",
+     "entries": [{"amount": 100, "currency": "UAH", "account": {"kind": "manager_cash", "holder": "source"}}]}');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select app.commit_import_batch('50000000-0000-0000-0000-000000000008');
+reset role;
+select pg_temp.check((select count(*) from app.transactions where import_batch_id = '50000000-0000-0000-0000-000000000008' and status = 'posted') = 1, 'an Itai report is posted');
+
+-- As the admin with TOTP but without an email code: refused.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  perform app.reset_itai_imports('re-import with the new adapter');
+  raise exception 'FAILED: reset without an email code';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - reset needs a fresh code from email';
+end $$;
+reset role;
+
+-- With a fresh email code (amr otp) but no reason: refused. With both: done.
+create function pg_temp.as_admin_with_otp(age_seconds int) returns void language plpgsql as $$
+begin
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
+  perform set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-0000-0000-00000000000a', 'aal', 'aal2',
+    'amr', json_build_array(json_build_object('method', 'totp', 'timestamp', extract(epoch from now())::bigint),
+                            json_build_object('method', 'otp', 'timestamp', extract(epoch from now())::bigint - age_seconds)))::text, false);
+  execute 'set role authenticated';
+end $$;
+select pg_temp.as_admin_with_otp(30 * 60);
+do $$ begin
+  perform app.reset_itai_imports('re-import with the new adapter');
+  raise exception 'FAILED: reset with a stale email code';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - an email code older than 15 minutes is refused';
+end $$;
+reset role;
+select pg_temp.as_admin_with_otp(60);
+do $$ begin
+  perform app.reset_itai_imports('short');
+  raise exception 'FAILED: reset without a real reason';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - a reason is required';
+end $$;
+select pg_temp.check((app.reset_itai_imports('re-import with the new adapter') ->> 'transactions')::int = 1, 'the reset removes Itai''s posted transactions');
+reset role;
+select pg_temp.check(
+  (select count(*) from app.import_batches b join app.import_sources s on s.id = b.source_id where s.adapter = 'itai_client_xlsx') = 0
+  and (select count(*) from app.import_batches b join app.import_sources s on s.id = b.source_id where s.adapter = 'vitaly_rent_xlsx') > 0,
+  'only Itai''s reports are gone; other sources stay');
+select pg_temp.check(
+  (select new_row ->> 'reason' from app.audit_log where action = 'RESET_ITAI' order by id desc limit 1) = 're-import with the new adapter',
+  'the reason is kept in the audit log');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  perform app.reset_itai_imports('finance is not an admin');
+  raise exception 'FAILED: a non-admin reset';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - only an admin can reset';
+end $$;
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
