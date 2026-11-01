@@ -2,6 +2,7 @@
 //
 //   node scripts/import/property_details.ts            dry run: counts of what would change
 //   node scripts/import/property_details.ts --run      write the details, then copy the files
+//   ... --run --no-files                               write the details only
 //
 // The first import (scripts/import/load.ts) brought the properties, owners and leases.
 // This adds what it left out:
@@ -172,7 +173,10 @@ where x.amount is not null;`);
   // One request per chunk; each runs as a transaction.
   for (let i = 0; i < statements.length; i += 20) await sql(statements.slice(i, i + 20).join('\n'));
   console.log(`details written (${statements.length} statements)`);
-  await copyFiles(files);
+  if (process.argv.includes('--no-files')) { console.log(`files not copied (${files.length} waiting)`); return; }
+  // The same Airtable file can sit in two fields of a property: copy it once.
+  const seen = new Set<string>();
+  await copyFiles(files.filter((f) => !seen.has(f.att_id) && !!seen.add(f.att_id)));
 }
 
 main().catch((e) => { console.error(e.message); process.exit(1); });
