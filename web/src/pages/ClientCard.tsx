@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
 import { ClientDocuments } from '../components/ClientDocuments';
+import { ClientPropertyActivity } from '../components/ClientPropertyActivity';
 import { ClientForm } from '../components/ClientForm';
 import { PropertyForm } from '../components/PropertyForm';
 import { useAccess } from '../lib/access';
@@ -138,6 +139,8 @@ export function ClientCard() {
             </Table.ScrollContainer>
           ) : <Text c="dimmed" size="sm">אין חשבונות</Text>}</QueryState>
         </Paper>
+
+        {properties.data && <ClientPropertyActivity partyId={c.id} properties={properties.data} />}
 
         <ClientDocuments partyId={c.id} countries={[...new Set((properties.data ?? []).map((p) => p.country_code))]} />
 
