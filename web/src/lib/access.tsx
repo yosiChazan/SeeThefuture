@@ -15,6 +15,8 @@ export interface Access {
   canRead: (c: Country) => boolean;
   canEdit: (c: Country) => boolean;
   canApprove: (c: Country) => boolean;
+  // Sensitive documents and ID numbers in some country (SPEC decisions 64, 66).
+  canViewSensitive: boolean;
 }
 
 const AccessContext = createContext<Access | null>(null);
@@ -28,7 +30,7 @@ export function useAccessQuery(userId: string) {
       const profile = must(await supabase.from('profiles').select('display_name, is_admin, is_management, client_party_id').eq('user_id', userId).maybeSingle()) as
         { display_name: string; is_admin: boolean; is_management: boolean; client_party_id: string | null } | null;
       if (!profile) return null;
-      const roles = must(await supabase.from('user_country_roles').select('country_code, level').eq('user_id', userId)) as { country_code: Country; level: Level }[];
+      const roles = must(await supabase.from('user_country_roles').select('country_code, level, can_view_sensitive').eq('user_id', userId)) as { country_code: Country; level: Level; can_view_sensitive: boolean }[];
       const level = new Map(roles.map((r) => [r.country_code, RANK[r.level]]));
       const all: Country[] = ['UA', 'RO', 'GE', 'GR'];
       const canRead = (c: Country) => profile.is_admin || profile.is_management || (level.get(c) ?? 0) >= 1;
@@ -43,6 +45,7 @@ export function useAccessQuery(userId: string) {
         canRead,
         canEdit,
         canApprove,
+        canViewSensitive: profile.is_admin || roles.some((r) => r.can_view_sensitive),
       };
     },
   });

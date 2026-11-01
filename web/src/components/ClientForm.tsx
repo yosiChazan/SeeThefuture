@@ -3,13 +3,19 @@ import { notifications } from '@mantine/notifications';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { ClientRow } from '../lib/queries';
+import { useAccess } from '../lib/access';
+import { validIsraeliId } from '../lib/idnumber';
+import { saveIdentity, type ClientRow } from '../lib/queries';
 import { supabase } from '../lib/supabase';
 
 // Adds a client, or edits one (SPEC decisions 62, 65). Managers' reports name owners in
 // Latin letters, and the intake matches them by name: when the display name changes and
 // no name as in the reports is set yet, the old name is kept there, so matching goes on.
-export function ClientForm({ client, opened, onClose }: { client?: ClientRow; opened: boolean; onClose: () => void }) {
+export function ClientForm({ client, idNumber = null, opened, onClose }: { client?: ClientRow; idNumber?: string | null; opened: boolean; onClose: () => void }) {
+  const access = useAccess();
+  // The ID number is sensitive (SPEC decision 66): shown and saved only with the flag.
+  const canId = access.canViewSensitive;
+  const [idNo, setIdNo] = useState(idNumber ?? '');
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [v, setV] = useState({
@@ -29,10 +35,16 @@ export function ClientForm({ client, opened, onClose }: { client?: ClientRow; op
       display_name: name, legal_name: keepOld ? client!.display_name : blank(v.legal_name), kind: v.kind,
       phone: blank(v.phone), email: blank(v.email), tax_id: blank(v.tax_id), address: blank(v.address), notes: blank(v.notes),
     };
+    const idClean = idNo.replace(/\s/g, '');
+    const saveId = async (partyId: string) => {
+      if (canId && idClean !== (idNumber ?? '')) await saveIdentity(partyId, idClean || null, 'manual');
+    };
     if (client) {
       const { error } = await supabase.from('parties').update(fields).eq('id', client.id);
+      let idError: string | null = null;
+      if (!error) try { await saveId(client.id); } catch (e) { idError = (e as Error).message; }
       setBusy(false);
-      if (error) { notifications.show({ color: 'red', title: 'השמירה נכשלה', message: error.message }); return; }
+      if (error || idError) { notifications.show({ color: 'red', title: 'השמירה נכשלה', message: error?.message ?? idError }); return; }
       notifications.show({ color: 'teal', message: 'פרטי הלקוח נשמרו' });
       await qc.invalidateQueries();
       onClose();
@@ -42,6 +54,7 @@ export function ClientForm({ client, opened, onClose }: { client?: ClientRow; op
     const id = crypto.randomUUID();
     const add = await supabase.from('parties').insert({ id, ...fields });
     const role = add.error ? add : await supabase.from('party_roles').insert({ party_id: id, role: 'client' });
+    if (!role.error) try { await saveId(id); } catch (e) { notifications.show({ color: 'orange', title: 'הלקוח נוסף, מספר הזהות לא נשמר', message: (e as Error).message }); }
     setBusy(false);
     if (role.error) { notifications.show({ color: 'red', title: 'הלקוח לא נוסף', message: role.error.message }); return; }
     notifications.show({ color: 'teal', message: 'הלקוח נוסף' });
@@ -60,14 +73,19 @@ export function ClientForm({ client, opened, onClose }: { client?: ClientRow; op
           data={[{ value: 'person', label: 'אדם' }, { value: 'company', label: 'חברה' }]} />
         <TextInput label="טלפון" dir="ltr" value={v.phone} onChange={(e) => set('phone', e.currentTarget.value)} />
         <TextInput label="מייל" dir="ltr" type="email" value={v.email} onChange={(e) => set('email', e.currentTarget.value)} />
-        <TextInput label="ת.ז. / מספר מס" value={v.tax_id} onChange={(e) => set('tax_id', e.currentTarget.value)} />
+        {canId && (
+          <TextInput label="תעודת זהות" dir="ltr" value={idNo} onChange={(e) => setIdNo(e.currentTarget.value)}
+            error={idNo.trim() && /^\d+$/.test(idNo.trim()) && !validIsraeliId(idNo) ? 'ספרת הביקורת לא מתאימה למספר זהות ישראלי' : undefined}
+            description="רגיש: נראה רק למי שיש לו הרשאה למסמכים רגישים" />
+        )}
+        <TextInput label="מספר מס" value={v.tax_id} onChange={(e) => set('tax_id', e.currentTarget.value)} />
         <TextInput label="כתובת" value={v.address} onChange={(e) => set('address', e.currentTarget.value)} />
       </SimpleGrid>
       <Textarea label="הערות" mt="sm" autosize minRows={2} value={v.notes} onChange={(e) => set('notes', e.currentTarget.value)} />
       {keepOld && <Text size="xs" c="dimmed" mt="xs">השם הקודם, "{client!.display_name}", יישמר כשם בדוחות, כדי שהדוחות ימשיכו לזהות את הלקוח.</Text>}
       <Group justify="flex-end" mt="md">
         <Button variant="default" onClick={onClose}>ביטול</Button>
-        <Button onClick={save} loading={busy} disabled={!name}>{client ? 'שמירה' : 'הוספת לקוח'}</Button>
+        <Button onClick={save} loading={busy} disabled={!name || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : 'הוספת לקוח'}</Button>
       </Group>
     </Modal>
   );

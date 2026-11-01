@@ -543,6 +543,32 @@ delete from app.documents where storage_path = 'UA/party/x/upload.pdf';
 reset role;
 update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
 
+-- ID numbers: sensitive, like the documents.
+insert into app.party_identity (party_id, id_number, source) values ('10000000-0000-0000-0000-000000000001', '000000018', 'manual');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.party_identity) = 0, 'staff without the sensitive flag do not see ID numbers');
+do $$ begin
+  insert into app.party_identity (party_id, id_number) values ('10000000-0000-0000-0000-000000000002', '000000026');
+  raise exception 'FAILED: staff without the sensitive flag wrote an ID number';
+exception when insufficient_privilege then raise notice 'ok - writing an ID number needs the sensitive flag';
+end $$;
+reset role;
+update app.user_country_roles set can_view_sensitive = true where user_id = '00000000-0000-0000-0000-00000000000c';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.party_identity) = 1, 'with the flag, staff see ID numbers');
+insert into app.party_identity (party_id, id_number) values ('10000000-0000-0000-0000-000000000002', '000000026');
+select pg_temp.check(true, 'with the flag, an editor writes an ID number');
+reset role;
+update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.party_identity) = 0, 'management without the flag does not see ID numbers');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d', 'aal1');
+select pg_temp.check((select array_agg(id_number)::text from app.party_identity) = '{000000018}', 'a client sees only their own ID number');
+reset role;
+select pg_temp.check(
+  (select count(*) from app.audit_log where table_name = 'party_identity') >= 2, 'ID number changes are audited');
+
 -- The document import queue is out of reach of every signed-in user.
 insert into app.document_imports (att_id, url, file_name, country_code, party_id, doc_type) values
   ('attQ1', 'https://v5.airtableusercontent.com/x', 'poa.pdf', 'UA', '10000000-0000-0000-0000-000000000001', 'poa');
