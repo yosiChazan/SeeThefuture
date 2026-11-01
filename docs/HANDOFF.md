@@ -24,6 +24,7 @@
 | כניסה | מייל + סיסמה, ואז TOTP חובה לעובדים (aal2) | הרשמה עצמית כבויה. משתמש חדש: admin נותן שורה ב-`app.profiles` ו-`app.user_country_roles` |
 | דרופבוקס של איתי | אפליקציית Dropbox ציבורית (PKCE), App key `b7vd5tnnmgj61op`, redirect `/dropbox` | ה-refresh token והקישור לתיקייה ב-`app.integrations` (admin בלבד) |
 | נתונים | נטענו מייצוא Airtable (CSV) של אוקראינה, רומניה, גאורגיה | יתרות פתיחה 1.1.2026; רומניה מתחילת החשבונות (החלטה 48) |
+| Airtable API | משתנה הסביבה `AIRTABLE_TOKEN` (סוד של סביבת Claude) | נבדק 3.11.2026: גישה לארבעה בסיסים: UKRAINE, רומניה, גאורגיה, Greece. החיבור הישיר עוד לא נבנה (§6) |
 
 ## 3. מה בנוי
 
