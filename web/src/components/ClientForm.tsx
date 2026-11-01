@@ -70,7 +70,7 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
         <TextInput label="שם כפי שמופיע בדוחות" description="באותיות לטיניות; משמש לזיהוי הבעלים בדוחות המנהלים" dir="ltr"
           value={v.legal_name} onChange={(e) => set('legal_name', e.currentTarget.value)} placeholder={keepOld ? client.display_name : undefined} />
         <Select label="סוג" value={v.kind} allowDeselect={false} onChange={(x) => x && set('kind', x as ClientRow['kind'])}
-          data={[{ value: 'person', label: 'אדם' }, { value: 'company', label: 'חברה' }]} />
+          data={[{ value: 'person', label: 'לקוח' }, { value: 'company', label: 'חברה' }]} />
         <TextInput label="טלפון" dir="ltr" value={v.phone} onChange={(e) => set('phone', e.currentTarget.value)} />
         <TextInput label="מייל" dir="ltr" type="email" value={v.email} onChange={(e) => set('email', e.currentTarget.value)} />
         {canId && (
