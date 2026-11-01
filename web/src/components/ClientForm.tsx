@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccess } from '../lib/access';
+import { changes, summary, useConfirmSave } from './ConfirmSave';
 import { validIsraeliId } from '../lib/idnumber';
 import { saveIdentity, type ClientRow } from '../lib/queries';
 import { supabase } from '../lib/supabase';
@@ -29,7 +30,31 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
   const keepOld = renamed && !v.legal_name.trim();
   const blank = (s: string) => s.trim() || null;
 
-  async function save() {
+  const confirmSave = useConfirmSave();
+  const KIND_HE = { person: 'לקוח', company: 'חברה' } as const;
+
+  // Shows what is about to be saved; `save` runs only on "אישור" (SPEC decision 67).
+  function review() {
+    const idClean = idNo.replace(/\s/g, '');
+    const fields = [
+      { label: 'שם', before: client?.display_name, after: name },
+      { label: 'שם כפי שמופיע בדוחות', before: client?.legal_name, after: keepOld ? client!.display_name : v.legal_name.trim() },
+      { label: 'סוג', before: client && KIND_HE[client.kind], after: KIND_HE[v.kind] },
+      ...(canId ? [{ label: 'תעודת זהות', before: idNumber, after: idClean }] : []),
+      { label: 'טלפון', before: client?.phone, after: v.phone.trim() },
+      { label: 'מייל', before: client?.email, after: v.email.trim() },
+      { label: 'מספר מס', before: client?.tax_id, after: v.tax_id.trim() },
+      { label: 'כתובת', before: client?.address, after: v.address.trim() },
+      { label: 'הערות', before: client?.notes, after: v.notes.trim() },
+    ];
+    confirmSave.ask({
+      title: client ? `אישור שינויים: ${client.display_name}` : 'אישור לקוח חדש',
+      rows: client ? changes(fields) : summary(fields.map((f) => ({ label: f.label, value: f.after }))),
+      action: save,
+    });
+  }
+
+  async function save(): Promise<boolean> {
     setBusy(true);
     const fields = {
       display_name: name, legal_name: keepOld ? client!.display_name : blank(v.legal_name), kind: v.kind,
@@ -44,11 +69,11 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
       let idError: string | null = null;
       if (!error) try { await saveId(client.id); } catch (e) { idError = (e as Error).message; }
       setBusy(false);
-      if (error || idError) { notifications.show({ color: 'red', title: 'השמירה נכשלה', message: error?.message ?? idError }); return; }
+      if (error || idError) { notifications.show({ color: 'red', title: 'השמירה נכשלה', message: error?.message ?? idError }); return false; }
       notifications.show({ color: 'teal', message: 'פרטי הלקוח נשמרו' });
       await qc.invalidateQueries();
       onClose();
-      return;
+      return true;
     }
     // A new client: the party, and its client role so it is listed with the clients.
     const id = crypto.randomUUID();
@@ -56,11 +81,12 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
     const role = add.error ? add : await supabase.from('party_roles').insert({ party_id: id, role: 'client' });
     if (!role.error) try { await saveId(id); } catch (e) { notifications.show({ color: 'orange', title: 'הלקוח נוסף, מספר הזהות לא נשמר', message: (e as Error).message }); }
     setBusy(false);
-    if (role.error) { notifications.show({ color: 'red', title: 'הלקוח לא נוסף', message: role.error.message }); return; }
+    if (role.error) { notifications.show({ color: 'red', title: 'הלקוח לא נוסף', message: role.error.message }); return false; }
     notifications.show({ color: 'teal', message: 'הלקוח נוסף' });
     await qc.invalidateQueries();
     onClose();
     navigate(`/clients/${id}`);
+    return true;
   }
 
   return (
@@ -85,7 +111,8 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
       {keepOld && <Text size="xs" c="dimmed" mt="xs">השם הקודם, "{client!.display_name}", יישמר כשם בדוחות, כדי שהדוחות ימשיכו לזהות את הלקוח.</Text>}
       <Group justify="flex-end" mt="md">
         <Button variant="default" onClick={onClose}>ביטול</Button>
-        <Button onClick={save} loading={busy} disabled={!name || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : 'הוספת לקוח'}</Button>
+        {confirmSave.element}
+        <Button onClick={review} loading={busy} disabled={!name || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : 'הוספת לקוח'}</Button>
       </Group>
     </Modal>
   );

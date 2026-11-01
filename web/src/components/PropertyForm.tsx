@@ -7,6 +7,7 @@ import dayjs from 'dayjs';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccess } from '../lib/access';
+import { summary, useConfirmSave } from './ConfirmSave';
 import { COUNTRY_HE, STATUS_HE } from '../lib/format';
 import { useClients } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
@@ -53,7 +54,31 @@ export function PropertyForm({ ownerId, onClose }: { ownerId?: string; onClose: 
     && owners.every((o) => o.party_id && o.share > 0) && Math.abs(shareSum - 100) < 0.01 && (unknownSince || since);
   const setOwner = (i: number, patch: Partial<Owner>) => setOwners((os) => os.map((o, j) => (j === i ? { ...o, ...patch } : o)));
 
-  async function save() {
+  const confirmSave = useConfirmSave();
+  // Shows the new property before it is added (SPEC decision 67).
+  function review() {
+    const b = isNew ? `${building.name.trim()} (בניין חדש)` : buildings.find((x) => x.id === buildingId)?.name;
+    const name = (pid: string | null) => clients.data?.find((c) => c.id === pid)?.display_name ?? '';
+    confirmSave.ask({
+      title: 'אישור נכס חדש',
+      rows: summary([
+        { label: 'מדינה', value: country && COUNTRY_HE[country] },
+        { label: 'עיר', value: cities.find((c) => c.id === cityId)?.name_he },
+        { label: 'בניין', value: b },
+        { label: 'כתובת', value: isNew ? building.address.trim() : buildings.find((x) => x.id === buildingId)?.address },
+        { label: 'דירה', value: v.unit_no.trim() },
+        { label: 'קומה', value: v.floor.trim() },
+        { label: 'שטח (מ"ר)', value: v.sqm },
+        { label: 'סטטוס', value: STATUS_HE[v.status] },
+        { label: 'בעלים', value: owners.map((o) => `${name(o.party_id)} ${o.share}%`).join('\n') },
+        { label: 'בעלים מתאריך', value: unknownSince ? 'לא ידוע' : since?.split('-').reverse().join('.') },
+        { label: 'הערות', value: v.notes.trim() },
+      ]),
+      action: save,
+    });
+  }
+
+  async function save(): Promise<boolean> {
     setBusy(true); setError(null);
     try {
       let bId = buildingId!;
@@ -78,7 +103,8 @@ export function PropertyForm({ ownerId, onClose }: { ownerId?: string; onClose: 
       await qc.invalidateQueries();
       onClose();
       navigate(`/properties/${id}`);
-    } catch (e) { setError((e as Error).message); setBusy(false); }
+      return true;
+    } catch (e) { setError((e as Error).message); setBusy(false); return false; }
   }
 
   const clientOptions = (clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name })).sort((a, b) => a.label.localeCompare(b.label));
@@ -134,7 +160,8 @@ export function PropertyForm({ ownerId, onClose }: { ownerId?: string; onClose: 
         {error && <Alert color="red" title="הנכס לא נוסף">{error}</Alert>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>ביטול</Button>
-          <Button onClick={save} loading={busy} disabled={!ready}>הוספת נכס</Button>
+          {confirmSave.element}
+          <Button onClick={review} loading={busy} disabled={!ready}>הוספת נכס</Button>
         </Group>
       </Stack>
     </Modal>
