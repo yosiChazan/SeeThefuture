@@ -196,3 +196,27 @@ export function usePropertyDeals(propertyId: string) {
       installments(id, due_date, amount, currency, notes, paid_txn_id)`).eq('property_id', propertyId).order('signed_on')) as unknown as DealRow[],
   });
 }
+
+// A property's services and its charges history (SPEC decision 71).
+export interface ServiceRow { id: string; kind: string; provider: string | null; client_code: string | null; status: string | null; deadline: string | null; notes: string | null }
+export interface ChargeRow { id: string; period: string; kind: string; amount: number; currency: Currency; due_date: string | null; payer: string; status: string; notes: string | null }
+export function usePropertyServices(propertyId: string) {
+  return useQuery({
+    queryKey: ['services', propertyId],
+    queryFn: async () => must(await supabase.from('utility_contracts').select('id, kind, provider, client_code, status, deadline, notes').eq('property_id', propertyId)) as ServiceRow[],
+  });
+}
+export function usePropertyCharges(propertyId: string) {
+  return useQuery({
+    queryKey: ['charges', propertyId],
+    queryFn: async () => {
+      const out: ChargeRow[] = [];
+      for (let from = 0; ; from += 1000) {
+        const page = must(await supabase.from('charges').select('id, period, kind, amount, currency, due_date, payer, status, notes')
+          .eq('property_id', propertyId).order('period', { ascending: false }).order('kind').range(from, from + 999)) as ChargeRow[];
+        out.push(...page);
+        if (page.length < 1000) return out;
+      }
+    },
+  });
+}

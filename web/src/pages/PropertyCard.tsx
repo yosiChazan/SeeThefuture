@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
 import { EntityDocuments, type DocType } from '../components/EntityDocuments';
 import { PropertyDeals } from '../components/PropertyDeals';
+import { PropertyCharges, PropertyServices } from '../components/PropertyServices';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { LeaseTable } from '../components/LeaseTable';
@@ -97,6 +98,9 @@ export function PropertyCard() {
             <Title order={4} mb="sm">חוזי שכירות</Title>
             <LeaseTable leases={leases} country={p.country_code} />
           </Paper>
+
+          <PropertyServices propertyId={p.id} />
+          <PropertyCharges propertyId={p.id} />
 
           <EntityDocuments entityType="property" entityId={p.id} country={p.country_code} types={PROPERTY_DOC_TYPES} title="מסמכי הנכס" />
 
