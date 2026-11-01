@@ -125,3 +125,23 @@ export function useAccountEntries(accountIds: string[]) {
     },
   });
 }
+
+// A property's posted entries with their accounts, oldest first, in pages of 1,000.
+export function usePropertyEntries(propertyId: string) {
+  return useQuery({
+    queryKey: ['property-entries', propertyId],
+    queryFn: async () => {
+      const out: (EntryRow & { account: Account })[] = [];
+      for (let from = 0; ; from += 1000) {
+        const page = must(await supabase.from('entries')
+          .select(`id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, category, description, status), account:accounts!inner(${ACCOUNT_COLS})`)
+          .eq('property_id', propertyId).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as (EntryRow & { account: Account })[];
+        out.push(...page);
+        if (page.length < 1000) break;
+      }
+      out.sort((a, b) => a.transaction.occurred_on.localeCompare(b.transaction.occurred_on) || a.transaction.id.localeCompare(b.transaction.id));
+      const accounts = [...new Map(out.map((e) => [e.account.id, e.account])).values()];
+      return { entries: out as EntryRow[], accounts };
+    },
+  });
+}

@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { LeaseTable } from '../components/LeaseTable';
 import { COUNTRY_HE, date, isCurrentOwnership, propertyTitle } from '../lib/format';
-import { useProperty } from '../lib/queries';
+import { usePropertyEntries, useProperty } from '../lib/queries';
+import { AccountLedger } from '../components/AccountLedger';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -17,6 +18,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export function PropertyCard() {
   const { id } = useParams();
   const q = useProperty(id!);
+  const ledger = usePropertyEntries(id!);
   return (
     <QueryState q={q}>{(p) => {
       const leases = [...p.leases].sort((a, b) => (b.start_date ?? '9999').localeCompare(a.start_date ?? '9999'));
@@ -69,6 +71,12 @@ export function PropertyCard() {
           <Paper withBorder p="md">
             <Title order={4} mb="sm">חוזי שכירות</Title>
             <LeaseTable leases={leases} country={p.country_code} />
+          </Paper>
+
+          <Paper withBorder p="md">
+            <Title order={4} mb={4}>תנועות</Title>
+            <Text size="xs" c="dimmed" mb="sm">התנועות של הנכס הזה בכל חשבון, לפי הבעלים. רק תנועות שאושרו.</Text>
+            <QueryState q={ledger}>{(m) => <AccountLedger accounts={m.accounts} entries={m.entries} property />}</QueryState>
           </Paper>
         </Stack>
       );

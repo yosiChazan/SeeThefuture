@@ -1,7 +1,7 @@
 import { AppShell, Badge, Burger, Group, Image, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconBuildingCommunity, IconCrane, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSignature, IconUsers,
+  IconBuildingCommunity, IconCrane, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUsers,
 } from '@tabler/icons-react';
 import { NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { useAccess } from '../lib/access';
@@ -61,6 +61,9 @@ export function Layout() {
           </Stack>
         </AppShell.Section>
         <AppShell.Section>
+          {access.isAdmin && (
+            <NavLink component={RouterLink} to="/settings" label="הגדרות" leftSection={<IconSettings size={18} />} onClick={close} active={pathname.startsWith('/settings')} />
+          )}
           <NavLink label="יציאה" leftSection={<IconLogout size={18} />} onClick={() => supabase.auth.signOut()} />
         </AppShell.Section>
       </AppShell.Navbar>
