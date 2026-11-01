@@ -44,6 +44,14 @@ export function EntityDocuments({ entityType, entityId, country, types, title = 
     if (e) notifications.show({ color: 'red', message: e.message }); else window.open(data.signedUrl, '_blank');
   }
 
+  // Re-marking a document's type (SPEC decision 69).
+  async function changeType(d: Doc, t: string) {
+    const { error: e } = await supabase.from('documents').update({ doc_type: t }).eq('id', d.id);
+    if (e) notifications.show({ color: 'red', message: e.message });
+    else notifications.show({ color: 'teal', message: `${d.file_name ?? 'המסמך'} סומן כ${label(t)}` });
+    await qc.invalidateQueries({ queryKey: key });
+  }
+
   async function upload() {
     if (!type || !files.length) return;
     setBusy(true); setError(null);
@@ -82,7 +90,16 @@ export function EntityDocuments({ entityType, entityId, country, types, title = 
             <Table.Tbody>
               {ds.map((d) => (
                 <Table.Tr key={d.id}>
-                  <Table.Td>{label(d.doc_type)}{d.sensitive && <Badge size="xs" ml={6} variant="light" color="red">רגיש</Badge>}</Table.Td>
+                  <Table.Td w={210}>
+                    <Group gap={6} wrap="nowrap">
+                      {access.canEdit(country) ? (
+                        <Select size="xs" allowDeselect={false} aria-label="סוג המסמך" value={d.doc_type} style={{ flex: 1 }}
+                          data={types.some((t) => t.value === d.doc_type) ? types : [...types, { value: d.doc_type, label: d.doc_type }]}
+                          onChange={(v) => v && v !== d.doc_type && changeType(d, v)} />
+                      ) : <Text size="sm">{label(d.doc_type)}</Text>}
+                      {d.sensitive && <Badge size="xs" variant="light" color="red">רגיש</Badge>}
+                    </Group>
+                  </Table.Td>
                   <Table.Td><Anchor size="sm" dir="ltr" onClick={() => open(d)}>{d.file_name ?? d.storage_path.split('/').pop()}</Anchor></Table.Td>
                   <Table.Td>{date(d.uploaded_at.slice(0, 10))}</Table.Td>
                 </Table.Tr>
