@@ -13,6 +13,7 @@
 // he passes on; each repayment is posted in full and its VAT part as a separate cost
 // (SPEC decision 47).
 
+import { itaiHebrew, monthHe } from './itai_he.ts';
 import { round2, expectHeader, num, text } from './util.ts';
 import { FormatError, type Book, type Grid, type ParseResult, type ParsedLease, type ParsedRow, type PropertyHint, type ProposedEntry } from './types.ts';
 
@@ -116,7 +117,7 @@ export function parseItaiLeases(incomes: Grid, receiptsStart: number, owner: str
     out.push({
       ref: `Incomes!R${r}`, property: hint, tenant, start, end, rent, deposit, currency: 'EUR',
       contract: [no && !/^(fn|-)$/i.test(no) ? `חוזה ${no}` : 'חוזה', signed ? `מ-${signed.split('-').reverse().join('.')}` : ''].filter(Boolean).join(' '),
-      notes: text(incomes, r, notesCol), errors,
+      notes: itaiHebrew(text(incomes, r, notesCol)), errors,
     });
   }
   return out;
@@ -138,14 +139,21 @@ export function parseItai(book: Book): ParseResult {
   // The balance with Itai, piece by piece, for the equation against Totals.
   const sums = { expenses: 0, vat: 0, repaid: 0 };
 
-  const push = (row: Omit<ParsedRow, 'fingerprint'> & { counterparty: string }) => {
+  // `source` is Itai's own text. The description shown is its Hebrew translation, so the
+  // fingerprint (and the "changed since" comparison) use the original, which a better
+  // translation never changes.
+  const push = (row: Omit<ParsedRow, 'fingerprint'> & { counterparty: string; source: string }) => {
     const p = row.proposed!;
     if (p.occurred_on > latest) latest = p.occurred_on;
     const amount = p.entries[0].amount;
-    const { counterparty, ...rest } = row;
+    const { counterparty, source, ...rest } = row;
+    const translated = p.description !== source && source ? [`במקור: ${source}`] : [];
     // Two months are often paid on the same day for the same amount; the month and
-    // the description tell them apart.
-    rows.push({ ...rest, fingerprint: [ADAPTER, row.property.ref, p.category, p.occurred_on, p.period, amount, counterparty, p.description].join('|') });
+    // the text tell them apart.
+    rows.push({
+      ...rest, issues: [...rest.issues, ...translated], raw: { ...rest.raw, source_text: source },
+      fingerprint: [ADAPTER, row.property.ref, p.category, p.occurred_on, p.period, amount, counterparty, source].join('|'),
+    });
   };
   const month = (d: string) => `${d.slice(0, 8)}01`;
 
@@ -178,13 +186,15 @@ export function parseItai(book: Book): ParseResult {
     if (category === 'other') errors.push(`סוג תקבול לא מוכר: "${what || 'ריק'}"`);
     const hint = itaiHint(aptRef, text(incomes, r, col.owner)) ?? { ref: aptRef || '(ללא דירה)', unit: '' };
     const label = { rent: 'שכירות', deposit: 'פיקדון', utilities: 'החזר חשבונות', other: 'תקבול' }[category]!;
+    const rentMonth = forMonth ? ` עבור ${monthHe(forMonth)}` : '';
     push({
       ref: `Incomes!R${r}`, property: hint, kind: label,
       proposed: {
-        occurred_on: on, period: month(forMonth ?? on), category, description: `${category === 'other' ? what || label : label} מ-${tenant}`,
+        occurred_on: on, period: month(forMonth ?? on), category,
+        description: `${category === 'other' ? itaiHebrew(what) || label : label}${category === 'deposit' ? '' : rentMonth} מ-${tenant}`,
         entries: [{ amount: round2(amount), currency: 'RON', account: { kind: 'client_bank', holder: 'beneficiary' } }],
       },
-      issues, errors, counterparty: tenant,
+      issues, errors, counterparty: tenant, source: `${what} ${forMonth ?? ''}`.trim(),
       raw: { sheet: 'Incomes', row: r, property_ref: hint.ref, tenant, explanation: what, period: forMonth },
     });
   }
@@ -220,12 +230,13 @@ export function parseItai(book: Book): ParseResult {
     if (!hint && anchor) issues.push(`הוצאה כללית של הבעלים ("${aptRef || 'ריק'}"); נרשמה על הדירה הראשונה שלו`);
     if (!hint && !anchor) errors.push(`ההוצאה רשומה ל"${aptRef || 'ריק'}" ולא לדירה, ולא נמצאה דירה של הבעלים בקובץ`);
     const category = expenseCategory(what);
-    const entries: ProposedEntry[] = [{ amount: -round2(amount), currency: 'RON', memo: what, account: { kind: 'manager_cash', holder: 'source' } }];
+    const he = itaiHebrew(what);
+    const entries: ProposedEntry[] = [{ amount: -round2(amount), currency: 'RON', memo: he, account: { kind: 'manager_cash', holder: 'source' } }];
     push({
       ref: `Expenses!R${r}`, property: hint ?? anchor ?? { ref: aptRef || '(ללא דירה)', unit: '' },
       kind: category === 'mgmt_fee' ? 'דמי ניהול' : 'הוצאה',
-      proposed: { occurred_on: on, period: month(on), category, description: what, entries },
-      issues, errors, counterparty: text(expenses, r, e.to),
+      proposed: { occurred_on: on, period: month(on), category, description: he, entries },
+      issues, errors, counterparty: text(expenses, r, e.to), source: what,
       raw: { sheet: 'Expenses', row: r, property_ref: (hint ?? anchor)?.ref ?? aptRef, paid_to: text(expenses, r, e.to), paid_by: text(expenses, r, e.by) },
     });
   }
@@ -250,13 +261,13 @@ export function parseItai(book: Book): ParseResult {
       ref: `Received!R${r}`, property, kind: 'החזר מהבעלים לאיתי',
       proposed: {
         occurred_on: on, period: month(on), category: 'transfer',
-        description: `החזר לאיתי${invoice ? ` (חשבונית ${invoice})` : ''}${details ? `: ${details}` : ''}`,
+        description: `החזר לאיתי${details ? ` על ${itaiHebrew(details)}` : ''}${invoice ? ` (חשבונית ${invoice})` : ''}`,
         entries: [
           { amount: round2(amount), currency: 'RON', account: { kind: 'manager_cash', holder: 'source' } },
           { amount: -round2(amount), currency: 'RON', account: { kind: 'client_bank', holder: 'beneficiary' } },
         ],
       },
-      issues: [], errors, counterparty: `invoice ${invoice}`, raw,
+      issues: [], errors, counterparty: `invoice ${invoice}`, source: details, raw,
     });
     push({
       ref: `Received!R${r}`, property, kind: `מע"מ ${Math.round(vat * 100)}%`,
@@ -268,7 +279,7 @@ export function parseItai(book: Book): ParseResult {
           { amount: vatPart, currency: 'RON', external: 'source' },
         ],
       },
-      issues: [`ההחזר ${round2(amount)} lei כולל מע"מ; ${round2(amount - vatPart)} lei מכסים הוצאות`], errors, counterparty: `vat ${invoice}`, raw,
+      issues: [`ההחזר ${round2(amount)} lei כולל מע"מ; ${round2(amount - vatPart)} lei מכסים הוצאות`], errors, counterparty: `vat ${invoice}`, source: details, raw,
     });
   }
   if (!owner) throw new FormatError('לא נמצא שם הבעלים (עמודת beneficiary) בגיליון Incomes');

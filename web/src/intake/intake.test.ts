@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { parseGershon, parseGershonBalance } from './gershon.ts';
 import { bookFromJson, bookFromXlsx, type GridJson } from './grid.ts';
 import { itaiHint, itaiVat, parseItai } from './itai.ts';
+import { itaiHebrew, monthHe } from './itai_he.ts';
 import { matchProperty, sameOwner, sameTenant, type PropertyForMatch } from './match.ts';
 import { FormatError } from './types.ts';
 import { dayMonth, findPeriod, num } from './util.ts';
@@ -147,7 +148,7 @@ test('Itai: the whole history, rent to the owner, expenses and repayments throug
   const fps = r.rows.map((x) => x.fingerprint);
   assert.equal(new Set(fps).size, fps.length, 'fingerprints are unique');
   // "jul.2024 management commision" without a date is booked in July 2024, as a note.
-  const undated = r.rows.find((x) => x.raw.sheet === 'Expenses' && /jul\.2024/.test(x.proposed!.description) && x.issues.some((i) => /לפי החודש שבתיאור/.test(i)));
+  const undated = r.rows.find((x) => x.raw.sheet === 'Expenses' && /jul\.2024/.test(String(x.raw.source_text)) && x.issues.some((i) => /לפי החודש שבתיאור/.test(i)));
   assert.equal(undated?.proposed!.occurred_on, '2024-07-01');
   assert.deepEqual(undated?.errors, []);
 });
@@ -227,7 +228,7 @@ test('Itai leases: both header languages, no personal ID columns, notes kept', (
   const first = ls[0];
   assert.deepEqual([first.start, first.end, first.rent, first.deposit, first.currency], ['2020-07-09', '2027-07-08', 425, null, 'EUR']);
   assert.match(first.errors[0], /פיקדון לא ידוע/);
-  assert.match(first.notes, /prolonged for one year/);
+  assert.match(first.notes, /החל מ-09.07.2026 החוזה הוארך בשנה, השכירות עלתה מ-400 € ל-425 €/);
   assert.equal(ls[3].contract, 'חוזה 2 מ-16.01.2025');
   assert.ok(ls.every((l) => !JSON.stringify(l).includes('"X"')), 'the ID columns are not read');
 
@@ -243,4 +244,20 @@ test('tenants: two matching words, so two tenants with one surname stay apart', 
   assert.ok(sameTenant('Delta Games SRL', 'DELTA GAMES SRL'));
   assert.ok(!sameTenant('Popa Valentina', 'Popa Roberta'));
   assert.ok(sameTenant('EDEN', 'Eden'), 'a one-word name needs one word');
+});
+
+test('Itai in Hebrew: months, management fees, expenses; the original is kept', () => {
+  assert.equal(itaiHebrew('jan.2026 management commision'), 'דמי ניהול ינואר 2026');
+  assert.equal(itaiHebrew('apr. - jun.2025 management fee + expenses'), 'דמי ניהול + הוצאות אפריל–יוני 2025');
+  assert.equal(itaiHebrew('jan. - mar.2026 issuing of invoices in Smarbill'), 'הפקת חשבוניות ב-SmartBill ינואר–מרץ 2026');
+  assert.equal(itaiHebrew('ff 120 / 19.08.2026 - AC check and repair (700 ron)'), 'חשבונית 120 / 19.08.2026 - בדיקה ותיקון מזגן (700 ron)');
+  assert.equal(monthHe('2026-02-01'), 'פברואר 2026');
+
+  const r = parseItai(bookFromJson(fixtureBook('itai_client.json')));
+  const rent = r.rows.find((x) => x.proposed!.category === 'rent' && x.raw.period === '2024-04-01')!;
+  assert.match(rent.proposed!.description, /^שכירות עבור אפריל 2024 מ-/);
+  const fee = r.rows.find((x) => x.raw.source_text === 'jan.2026 management commision')!;
+  assert.equal(fee.proposed!.description, 'דמי ניהול ינואר 2026');
+  assert.ok(fee.issues.includes('במקור: jan.2026 management commision'));
+  assert.ok(fee.fingerprint!.endsWith('|jan.2026 management commision'), 'the fingerprint uses Itai\'s text, not the translation');
 });
