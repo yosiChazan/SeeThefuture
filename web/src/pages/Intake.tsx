@@ -1,4 +1,4 @@
-import { Alert, Anchor, Badge, Button, FileInput, Group, List, Modal, Paper, Select, Stack, Table, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, FileInput, Group, List, Modal, Paper, Select, Stack, Switch, Table, Text, Title } from '@mantine/core';
 import { IconBrandDropbox, IconFileSpreadsheet, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
@@ -91,6 +91,8 @@ export function Intake() {
   const [adding, setAdding] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Rejected and voided reports are hidden unless asked for (SPEC decision 59).
+  const [showClosed, setShowClosed] = useState(false);
   const sources = useSources();
   const canAdd = access.countries.some((c) => access.canEdit(c));
   // The Dropbox connection is readable by admins only (SPEC decision 53).
@@ -108,8 +110,17 @@ export function Intake() {
         </Group>
       </Group>
       <Text c="dimmed" size="sm">דוח שנקלט נבדק כאן לפני שהוא נרשם בכרטיסי החשבון. רק עובד עם הרשאת כספים מאשר רישום.</Text>
-      <QueryState q={batches}>{(bs) => (
+      <QueryState q={batches}>{(all) => {
+        const closed = all.filter((b) => b.status === 'rejected').length;
+        const bs = showClosed ? all : all.filter((b) => b.status !== 'rejected');
+        return (
         <Paper withBorder p="sm">
+          {closed > 0 && (
+            <Group justify="flex-end" mb="xs">
+              <Switch size="sm" checked={showClosed} onChange={(e) => setShowClosed(e.currentTarget.checked)}
+                label={`הצגת דוחות שנדחו או בוטלו (${closed})`} />
+            </Group>
+          )}
           {bs.length ? (
             <Table.ScrollContainer minWidth={700}>
               <Table striped highlightOnHover verticalSpacing="xs">
@@ -130,9 +141,10 @@ export function Intake() {
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
-          ) : <Text c="dimmed" size="sm">עוד לא נקלטו דוחות.</Text>}
+          ) : <Text c="dimmed" size="sm">{all.length ? 'אין דוחות פתוחים או רשומים.' : 'עוד לא נקלטו דוחות.'}</Text>}
         </Paper>
-      )}</QueryState>
+        );
+      }}</QueryState>
       {adding && <NewReport onClose={() => setAdding(false)} />}
       {pulling && itai && <DropboxPull source={itai} onClose={() => setPulling(false)} />}
       {deleting && batches.data && <DeletePending batches={batches.data} onClose={() => setDeleting(false)} />}
