@@ -54,7 +54,7 @@ export function LeaseTable({ leases, country, showProperty }: { leases: (Lease |
                       <Text size="xs" c="dimmed">{p.building.city.name_he}</Text>
                     </Table.Td>
                   )}
-                  <Table.Td>{l.tenant?.display_name ?? <Text span c="dimmed" size="sm">—</Text>}</Table.Td>
+                  <Table.Td><Anchor component={Link} to={`/leases/${l.id}`} size="sm" fw={500}>{l.tenant?.display_name ?? 'חוזה ללא שוכר'}</Anchor></Table.Td>
                   <Table.Td>{date(l.start_date)}</Table.Td>
                   <Table.Td>{date(l.end_date)}</Table.Td>
                   <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(l.rent_amount, l.rent_currency)}</Table.Td>
