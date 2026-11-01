@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Modal, Paper, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Modal, Paper, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle, IconArrowBackUp, IconCheck, IconDownload, IconEyeOff } from '@tabler/icons-react';
@@ -22,6 +22,41 @@ const ROW_STATUS: Record<RowStatus, { label: string; color: string }> = {
   ignored: { label: 'לא יירשם', color: 'gray' },
 };
 
+
+// Sorting the rows inside each property (SPEC decision 61). "file" keeps the report's order.
+type SortKey = 'file' | 'date' | 'kind' | 'amount';
+const SORT_KEY = 'intake-sort';
+const DIRECTIONS: Record<Exclude<SortKey, 'file'>, [string, string]> = {
+  date: ['מהישן לחדש', 'מהחדש לישן'],
+  kind: ['א–ת', 'ת–א'],
+  amount: ['מחובה לזכות', 'מזכות לחובה'],
+};
+const rowKind = (r: ImportRow) => `${r.raw.kind ?? ''} ${r.proposed ? CATEGORY_HE[r.proposed.category] ?? r.proposed.category : ''}`;
+// The money in the client's accounts (as shown in the amount column); minus is a debit.
+const rowAmount = (r: ImportRow) => (r.proposed?.entries ?? []).filter((e) => e.account).reduce((s, e) => s + e.amount, 0);
+
+function sortRows(rows: ImportRow[], key: SortKey, desc: boolean): ImportRow[] {
+  if (key === 'file') return rows;
+  const by = (a: ImportRow, b: ImportRow): number => {
+    if (key === 'date') {
+      const x = a.proposed?.occurred_on, y = b.proposed?.occurred_on;
+      if (!x || !y) return x ? -1 : y ? 1 : 0;  // rows without a date stay last
+      return x.localeCompare(y);
+    }
+    if (key === 'kind') return rowKind(a).localeCompare(rowKind(b), 'he');
+    return rowAmount(a) - rowAmount(b);
+  };
+  return [...rows].sort((a, b) => {
+    const c = by(a, b);
+    // Undated rows stay last in both directions.
+    if (key === 'date' && (!a.proposed?.occurred_on || !b.proposed?.occurred_on)) return c;
+    return desc ? -c : c;
+  });
+}
+
+function loadSort(): { key: SortKey; desc: boolean } {
+  try { return { key: 'file', desc: false, ...JSON.parse(localStorage.getItem(SORT_KEY) ?? '{}') }; } catch { return { key: 'file', desc: false }; }
+}
 
 function Amounts({ row }: { row: ImportRow }) {
   // The money that moves in the client's accounts; the manager's side is implied.
@@ -48,6 +83,11 @@ export function IntakeBatch() {
   const [voiding, setVoiding] = useState(false);
   const [showPosted, setShowPosted] = useState(false);
   const [reason, setReason] = useState('');
+  const [sort, setSortState] = useState(loadSort);
+  const setSort = (v: { key: SortKey; desc: boolean }) => {
+    setSortState(v);
+    try { localStorage.setItem(SORT_KEY, JSON.stringify(v)); } catch { /* not saved */ }
+  };
   const refresh = () => qc.invalidateQueries({ queryKey: ['import-batch', id] });
 
   const groups = useMemo(() => {
@@ -213,9 +253,19 @@ export function IntakeBatch() {
               label={`להציג גם ${count('duplicate')} שורות שכבר נרשמו מגרסה קודמת`} />
           )}
 
+          <Group gap="sm">
+            <Text size="sm" c="dimmed">סדר השורות:</Text>
+            <SegmentedControl size="xs" value={sort.key} onChange={(v) => setSort({ key: v as SortKey, desc: false })}
+              data={[{ value: 'file', label: 'כמו בקובץ' }, { value: 'date', label: 'תאריך' }, { value: 'kind', label: 'סוג תנועה' }, { value: 'amount', label: 'סכום' }]} />
+            {sort.key !== 'file' && (
+              <SegmentedControl size="xs" value={sort.desc ? 'desc' : 'asc'} onChange={(v) => setSort({ ...sort, desc: v === 'desc' })}
+                data={[{ value: 'asc', label: DIRECTIONS[sort.key][0] }, { value: 'desc', label: DIRECTIONS[sort.key][1] }]} />
+            )}
+          </Group>
+
           {groups.map(([ref, all]) => {
             // In an updated report most rows were posted before; they are hidden by default.
-            const rs = showPosted ? all : all.filter((r) => r.match_status !== 'duplicate');
+            const rs = sortRows(showPosted ? all : all.filter((r) => r.match_status !== 'duplicate'), sort.key, sort.desc);
             if (!rs.length) return null;
             const first = rs[0];
             const prop = first.property_id ? byProperty.get(first.property_id) : undefined;
