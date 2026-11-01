@@ -8,6 +8,7 @@ export interface Grid {
   cols: number;
   value(r: number, c: number): string | number | null;
   formula(r: number, c: number): string | null;
+  hidden(r: number): boolean;   // a row hidden in Excel (Itai hides past leases)
 }
 
 // A whole workbook; most reports use only the first sheet.
@@ -73,6 +74,7 @@ export interface ParsedLease {
   contract: string;      // "חוזה 2 מ-16.01.2025"
   notes: string;         // the manager's note, e.g. an extension and a new rent
   errors: string[];
+  hidden: boolean;       // a past lease the manager hid in the file: history, never an update
 }
 
 export interface ParseResult {

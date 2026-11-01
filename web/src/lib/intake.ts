@@ -235,7 +235,11 @@ async function leaseRow(batchId: string, l: ParsedLease, m: ReturnType<typeof ma
     const near = l.start ? mine.filter((x) => x.start_date && days(x.start_date, l.start!) <= 31) : [];
     const later = l.start ? mine.filter((x) => x.start_date && x.start_date > l.start!) : [];
     const target = (near.length ? near : later).sort((a, b) => (b.start_date ?? '').localeCompare(a.start_date ?? ''))[0];
-    if (target) {
+    // A row Itai hid is his archive of past leases: added when missing, never used to change one.
+    if (target && l.hidden) {
+      status = 'duplicate';
+      issues.push('חוזה קודם שאיתי הסתיר בקובץ. כבר קיים במערכת, ולא משנים אותו לפי השורה המוסתרת');
+    } else if (target) {
       const changes = [
         l.end && l.end !== target.end_date ? `סיום ${d(target.end_date)} → ${d(l.end)}` : '',
         l.rent !== null && Number(target.rent_amount) !== l.rent ? `שכירות ${target.rent_amount ?? '—'} → ${l.rent} €` : '',
@@ -249,7 +253,7 @@ async function leaseRow(batchId: string, l: ParsedLease, m: ReturnType<typeof ma
   return {
     batch_id: batchId, row_ref: `lease:${l.ref}`, proposed: null, fingerprint: null, issues, property_id: m.propertyId, match_status: status,
     raw: {
-      row: 0, property_ref: l.property.ref, kind: leaseId ? 'עדכון חוזה' : 'חוזה שכירות', owner: l.property.owner,
+      row: 0, property_ref: l.property.ref, kind: leaseId ? 'עדכון חוזה' : l.hidden ? 'חוזה קודם (מוסתר בקובץ)' : 'חוזה שכירות', owner: l.property.owner,
       match_note: m.note, candidates: m.candidates, errors,
       description: `${l.tenant} · ${d(l.start)}–${d(l.end)} · ${l.rent ?? '—'} € · פיקדון ${l.deposit ?? '—'} €`,
       lease: {

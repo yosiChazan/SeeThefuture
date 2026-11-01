@@ -113,6 +113,7 @@ test('xlsx reader: merged cells appear once, formulas keep their cached result',
   const ws = wb.addWorksheet('СІЧЕНЬ 2026');
   ws.getCell('B3').value = '3(29)';
   ws.mergeCells('B3:B6');
+  ws.getRow(3).hidden = true;
   ws.getCell('E3').value = 10;
   ws.getCell('G3').value = { formula: 'E3*2', result: 20 };
   wb.addWorksheet('Expenses').getCell('A1').value = 'amount paid (RON)';
@@ -120,6 +121,7 @@ test('xlsx reader: merged cells appear once, formulas keep their cached result',
   const g = book.sheets[0];
   assert.equal(g.sheet, 'СІЧЕНЬ 2026');
   assert.equal(book.sheet(/^expenses$/i)?.value(1, 1), 'amount paid (RON)');
+  assert.deepEqual([g.hidden(3), g.hidden(4)], [true, false], 'rows hidden in Excel are known');
   assert.deepEqual([g.value(3, 2), g.value(4, 2), g.value(6, 2)], ['3(29)', null, null]);
   assert.deepEqual([g.value(3, 7), g.formula(3, 7)], [20, '=E3*2']);
 });
@@ -291,4 +293,11 @@ test('Itai, both arrangements in one file: rows go by who received the money; "D
   assert.equal(due[0].proposed, null);
   assert.deepEqual(r.warnings, []);
   assert.match(r.checks![0], /ולפי Totals -1,872.01 lei \(הבעלים חייב לאיתי\)/);
+});
+
+test('Itai leases: rows hidden in the file are past leases, marked as such', () => {
+  const r = parseItai(bookFromJson(fixtureBook('itai_mixed.json')), 'Demo Owner - Smardan 18_ap.72 property table.xlsx');
+  const ls = r.leases!;
+  assert.deepEqual(ls.map((l) => l.hidden), [true, true, false]);
+  assert.ok(ls.filter((l) => !l.hidden).every((l) => (l.end ?? '') >= '2026-01-01'), 'the visible lease is the current one');
 });

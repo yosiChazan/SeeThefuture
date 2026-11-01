@@ -4,7 +4,7 @@ import type { Book, Grid } from './types.ts';
 type Cell = string | number | null;
 
 // Plain data form of a sheet, used by the tests' fixtures.
-export interface GridJson { sheet: string; cells: Record<string, Cell>; formulas?: Record<string, string> }
+export interface GridJson { sheet: string; cells: Record<string, Cell>; formulas?: Record<string, string>; hidden?: number[] }
 
 const key = (r: number, c: number) => `${r},${c}`;
 
@@ -21,6 +21,7 @@ export function gridFromJson(j: GridJson): Grid {
     sheet: j.sheet, rows, cols,
     value: (r, c) => j.cells[key(r, c)] ?? null,
     formula: (r, c) => j.formulas?.[key(r, c)] ?? null,
+    hidden: (r) => j.hidden?.includes(r) ?? false,
   };
 }
 
@@ -36,7 +37,9 @@ export async function bookFromXlsx(data: ArrayBuffer): Promise<Book> {
 function sheetToGrid(ws: Worksheet): Grid {
   const cells: Record<string, Cell> = {};
   const formulas: Record<string, string> = {};
+  const hidden: number[] = [];
   ws.eachRow({ includeEmpty: false }, (row, r) => {
+    if (row.hidden) hidden.push(r);
     row.eachCell({ includeEmpty: false }, (cell, c) => {
       // ExcelJS repeats a merged cell's value in every cell of the range; the
       // adapters expect it once, in the top-left cell, as Excel shows it.
@@ -58,5 +61,5 @@ function sheetToGrid(ws: Worksheet): Grid {
       if (out !== null) cells[key(r, c)] = out;
     });
   });
-  return gridFromJson({ sheet: ws.name, cells, formulas });
+  return gridFromJson({ sheet: ws.name, cells, formulas, hidden });
 }
