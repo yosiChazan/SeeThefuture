@@ -82,7 +82,17 @@ async function collect(): Promise<{ items: Item[]; unmatched: number; people: nu
       }
     }
   }
-  return { items, unmatched, people };
+  // One Airtable file can sit in two fields or under two people; it is copied once per
+  // person, under the person's own path, so the queue key adds the person.
+  const seen = new Set<string>();
+  const unique = items.filter((it) => { const k = `${it.att_id}|${it.party_id}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  // The queue is keyed by attachment id: the second person's copy gets its own key.
+  const first = new Map<string, string>();
+  for (const it of unique) {
+    if (!first.has(it.att_id)) first.set(it.att_id, it.party_id);
+    else if (first.get(it.att_id) !== it.party_id) it.att_id = `${it.att_id}_${it.party_id.slice(0, 8)}`;
+  }
+  return { items: unique, unmatched, people };
 }
 
 // Queues the files, then has the database call the function until the queue is empty.
@@ -124,6 +134,8 @@ async function main() {
   for (const it of items) byType.set(`${it.country} ${it.doc_type}`, (byType.get(`${it.country} ${it.doc_type}`) ?? 0) + 1);
   console.log(`${items.length} files of ${people} people`, Object.fromEntries(byType));
   console.log(`${unmatched} people with files in Airtable were not found in the system`);
+  const shared = items.filter((it) => it.att_id.includes('_')).length;
+  if (shared) console.log(`${shared} files also belong to another person: copied for each`);
   if (process.argv.includes('--run')) await run(items);
 }
 
