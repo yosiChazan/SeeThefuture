@@ -25,7 +25,7 @@ export function ClientCard() {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
-  const identity = useIdentity(id!, access.canViewSensitive);
+  const identity = useIdentity(id!);
   const [addingProperty, setAddingProperty] = useState(false);
   const canAddProperty = access.countries.some((x) => access.canEdit(x));
 
@@ -54,7 +54,13 @@ export function ClientCard() {
             <div><Text size="xs" c="dimmed">שם בדוחות</Text><Text size="sm" dir="ltr" ta="right">{c.legal_name ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">טלפון</Text><Text size="sm" dir="ltr" ta="right">{c.phone ?? '—'}</Text></div>
             <div><Text size="xs" c="dimmed">מייל</Text><Text size="sm" dir="ltr" ta="right">{c.email ?? '—'}</Text></div>
-            {access.canViewSensitive && (
+            {(c.first_name || c.last_name) && (
+              <>
+                <div><Text size="xs" c="dimmed">שם פרטי</Text><Text size="sm">{c.first_name ?? '—'}</Text></div>
+                <div><Text size="xs" c="dimmed">שם משפחה</Text><Text size="sm">{c.last_name ?? '—'}</Text></div>
+              </>
+            )}
+            {(
               <div><Text size="xs" c="dimmed">תעודת זהות</Text>
                 <Group gap={6}>
                   <Text size="sm" dir="ltr">{identity.data?.id_number ?? '—'}</Text>

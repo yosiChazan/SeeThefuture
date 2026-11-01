@@ -127,7 +127,7 @@ export function ClientDocuments({ partyId, countries = [] }: { partyId: string; 
   const [uploading, setUploading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const canUpload = access.countries.some((c) => access.canEdit(c));
-  const identity = useIdentity(partyId, access.canViewSensitive);
+  const identity = useIdentity(partyId);
   const docs = useQuery({
     queryKey: ['documents', partyId],
     queryFn: async () => must(await supabase.from('documents')

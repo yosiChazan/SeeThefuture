@@ -42,6 +42,10 @@ export function useLeases() {
 export interface ClientRow {
   id: string;
   display_name: string;
+  first_name: string | null;
+  last_name: string | null;
+  // One row or none (party_identity is keyed by the party); PostgREST may send either shape.
+  identity: { id_number: string } | { id_number: string }[] | null;
   legal_name: string | null;
   kind: 'person' | 'company';
   email: string | null;
@@ -53,7 +57,8 @@ export interface ClientRow {
   ownerships: { valid_to: string | null; property: { id: string; country_code: Country } | null }[];
 }
 
-const CLIENT_COLS = `id, display_name, legal_name, kind, email, phone, tax_id, address, notes,
+const CLIENT_COLS = `id, display_name, first_name, last_name, legal_name, kind, email, phone, tax_id, address, notes,
+  identity:party_identity(id_number),
   referred_by:parties!referred_by_party_id(id, display_name),
   ownerships(valid_to, property:properties(id, country_code)), party_roles!inner(role)`;
 
@@ -147,9 +152,11 @@ export function usePropertyEntries(propertyId: string) {
   });
 }
 
-// A client's ID number, for staff with the sensitive flag (SPEC decision 66).
+// A client's ID number; every staff member sees it (SPEC decision 72).
 export interface Identity { party_id: string; id_number: string; source: string | null; updated_at: string }
-export function useIdentity(partyId: string, enabled: boolean) {
+export const idNumberOf = (c: Pick<ClientRow, 'identity'>) => (Array.isArray(c.identity) ? c.identity[0]?.id_number : c.identity?.id_number) ?? null;
+
+export function useIdentity(partyId: string, enabled = true) {
   return useQuery({
     queryKey: ['identity', partyId],
     enabled,

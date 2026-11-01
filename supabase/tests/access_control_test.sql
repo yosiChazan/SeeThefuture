@@ -564,25 +564,19 @@ delete from app.documents where storage_path = 'UA/party/x/upload.pdf';
 reset role;
 update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c' and country_code = 'UA';
 
--- ID numbers: sensitive, like the documents.
+-- ID numbers: open to all staff (decision 72); writing needs edit rights.
 insert into app.party_identity (party_id, id_number, source) values ('10000000-0000-0000-0000-000000000001', '000000018', 'manual');
-select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
-select pg_temp.check((select count(*) from app.party_identity) = 0, 'staff without the sensitive flag do not see ID numbers');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.party_identity) = 1, 'management (no edit rights) sees ID numbers');
 do $$ begin
   insert into app.party_identity (party_id, id_number) values ('10000000-0000-0000-0000-000000000002', '000000026');
-  raise exception 'FAILED: staff without the sensitive flag wrote an ID number';
-exception when insufficient_privilege then raise notice 'ok - writing an ID number needs the sensitive flag';
+  raise exception 'FAILED: staff without edit rights wrote an ID number';
+exception when insufficient_privilege then raise notice 'ok - writing an ID number needs edit rights';
 end $$;
 reset role;
-update app.user_country_roles set can_view_sensitive = true where user_id = '00000000-0000-0000-0000-00000000000c';
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
-select pg_temp.check((select count(*) from app.party_identity) = 1, 'with the flag, staff see ID numbers');
 insert into app.party_identity (party_id, id_number) values ('10000000-0000-0000-0000-000000000002', '000000026');
-select pg_temp.check(true, 'with the flag, an editor writes an ID number');
-reset role;
-update app.user_country_roles set can_view_sensitive = false where user_id = '00000000-0000-0000-0000-00000000000c';
-select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
-select pg_temp.check((select count(*) from app.party_identity) = 0, 'management without the flag does not see ID numbers');
+select pg_temp.check((select count(*) from app.party_identity) = 2, 'an editor writes and sees ID numbers, without the sensitive flag');
 reset role;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d', 'aal1');
 select pg_temp.check((select array_agg(id_number)::text from app.party_identity) = '{000000018}', 'a client sees only their own ID number');
