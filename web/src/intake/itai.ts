@@ -14,7 +14,7 @@
 // (SPEC decision 47).
 
 import { round2, expectHeader, num, text } from './util.ts';
-import { FormatError, type Book, type Grid, type ParseResult, type ParsedRow, type PropertyHint, type ProposedEntry } from './types.ts';
+import { FormatError, type Book, type Grid, type ParseResult, type ParsedLease, type ParsedRow, type PropertyHint, type ProposedEntry } from './types.ts';
 
 const ADAPTER = 'itai';
 
@@ -79,6 +79,47 @@ function need(cols: Record<string, number>, name: string, sheet: string): number
   const c = cols[name];
   if (!c) throw new FormatError(`הקובץ לא בפורמט המוכר: בגיליון "${sheet}" חסרה העמודה "${name}"`);
   return c;
+}
+
+// The leases on top of "Incomes". Headers are Romanian in some files ("Data preluare",
+// "Chirie", "Closed") and English in others ("Entry date", "Rent", "End date"). The
+// personal ID columns (CNP / PIN, ID) are never read.
+export function parseItaiLeases(incomes: Grid, receiptsStart: number, owner: string): ParsedLease[] {
+  const find = (re: RegExp, what: string) => {
+    for (let c = 1; c <= incomes.cols; c++) if (re.test(text(incomes, 1, c))) return c;
+    throw new FormatError(`הקובץ לא בפורמט המוכר: בטבלת החוזים בגיליון Incomes חסרה העמודה "${what}"`);
+  };
+  if (!/^client$/i.test(text(incomes, 1, 1))) return [];
+  const col = {
+    contract: find(/^ctr\.?$/i, 'Ctr.'), signed: find(/^(data ctr\.?|ctr\.? date)$/i, 'Data ctr. / Ctr. date'),
+    start: find(/^(data preluare|entry date)$/i, 'Data preluare / Entry date'), deposit: find(/^(garantie|deposit)/i, 'Garantie / Deposit'),
+    rent: find(/^(chirie|rent)/i, 'Chirie / Rent'), end: find(/^(closed|end date)$/i, 'Closed / End date'), apt: find(/^ap\.?$/i, 'AP.'),
+  };
+  const notesCol = col.apt + 1;
+  const out: ParsedLease[] = [];
+  for (let r = 2; r < receiptsStart; r++) {
+    const tenant = text(incomes, r, 1);
+    const aptRef = text(incomes, r, col.apt);
+    // Blank tenant: the second lot of a lease on the row above ("Covaci10_L2"). "vacant ...": no lease.
+    if (!tenant || !aptRef || /^vacant/i.test(tenant) || /^incomes$/i.test(tenant)) continue;
+    const errors: string[] = [];
+    const hint = itaiHint(aptRef, owner) ?? { ref: aptRef, unit: '' };
+    const start = isoDate(incomes.value(r, col.start)) ?? isoDate(incomes.value(r, col.signed));
+    const end = isoDate(incomes.value(r, col.end));
+    const rent = num(incomes.value(r, col.rent));
+    const deposit = num(incomes.value(r, col.deposit));
+    if (!start) errors.push('חסר תאריך התחלה בחוזה');
+    if (rent === null) errors.push(`שכירות לא מספרית: "${text(incomes, r, col.rent) || 'ריק'}"`);
+    if (deposit === null && text(incomes, r, col.deposit)) errors.push(`פיקדון לא ידוע: "${text(incomes, r, col.deposit)}"`);
+    const no = text(incomes, r, col.contract);
+    const signed = isoDate(incomes.value(r, col.signed));
+    out.push({
+      ref: `Incomes!R${r}`, property: hint, tenant, start, end, rent, deposit, currency: 'EUR',
+      contract: [no && !/^(fn|-)$/i.test(no) ? `חוזה ${no}` : 'חוזה', signed ? `מ-${signed.split('-').reverse().join('.')}` : ''].filter(Boolean).join(' '),
+      notes: text(incomes, r, notesCol), errors,
+    });
+  }
+  return out;
 }
 
 export function parseItai(book: Book): ParseResult {
@@ -244,5 +285,5 @@ export function parseItai(book: Book): ParseResult {
   else checks.push(`נוסחת האיזון מול איתי מתאימה: ${equation}, ולפי Totals ${fmt(round2(left))} lei`);
 
   if (!rows.length) warnings.push('לא נמצאו שורות בקובץ');
-  return { period: month(latest || '2026-01-01'), rows, warnings, checks, scope: owner };
+  return { period: month(latest || '2026-01-01'), rows, warnings, checks, scope: owner, leases: parseItaiLeases(incomes, start, owner) };
 }

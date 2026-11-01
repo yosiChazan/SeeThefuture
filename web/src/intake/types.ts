@@ -59,6 +59,22 @@ export interface ParsedRow {
   raw: Record<string, unknown>;
 }
 
+// A lease as a report states it (Itai's leases table). Applied to app.leases on
+// approval: added when new, updated when the terms changed (SPEC decision 51).
+export interface ParsedLease {
+  ref: string;
+  property: PropertyHint;
+  tenant: string;
+  start: string | null;
+  end: string | null;
+  rent: number | null;
+  deposit: number | null;
+  currency: Currency;
+  contract: string;      // "חוזה 2 מ-16.01.2025"
+  notes: string;         // the manager's note, e.g. an extension and a new rent
+  errors: string[];
+}
+
 export interface ParseResult {
   period: string;        // YYYY-MM-01; for multi-month files, the latest month
   rows: ParsedRow[];
@@ -67,6 +83,7 @@ export interface ParseResult {
   // What a newer version of the same report replaces: Itai's file is per owner,
   // Vitaly's and Gershon's reports are per month.
   scope?: string;
+  leases?: ParsedLease[];
 }
 
 // The file is not in the format the adapter knows. Nothing is imported.

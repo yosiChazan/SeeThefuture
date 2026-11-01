@@ -363,6 +363,36 @@ select pg_temp.check(
   and (select count(*) from app.transactions where import_batch_id is null and status = 'void') = 0,
   'a row cannot void a transaction that another source posted');
 
+-- Leases from a report -------------------------------------------------------
+
+insert into app.import_batches (id, source_id, country_code, status, scope)
+select '50000000-0000-0000-0000-000000000006', s.id, 'UA', 'in_review', 'leases'
+from app.import_sources s where s.adapter = 'vitaly_rent_xlsx';
+insert into app.leases (id, property_id, tenant_party_id, start_date, end_date, rent_amount, rent_currency)
+values ('60000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000004',
+        '2025-07-01', '2026-06-30', 400, 'EUR');
+insert into app.import_rows (batch_id, row_ref, raw, property_id, match_status) values
+  ('50000000-0000-0000-0000-000000000006', 'L1',
+   '{"property_ref": "x", "lease": {"tenant": "Wordistry SRL", "lease_id": "60000000-0000-0000-0000-000000000001",
+     "end": "2027-06-30", "rent": 425, "currency": "EUR", "notes": "prolonged for one year"}}',
+   '30000000-0000-0000-0000-000000000004', 'matched'),
+  ('50000000-0000-0000-0000-000000000006', 'L2',
+   '{"property_ref": "x", "lease": {"tenant": "Nova Tenant SRL", "start": "2026-08-01", "end": "2027-07-31",
+     "rent": 820, "deposit": 1640, "currency": "EUR", "withholding": 8, "notes": "חוזה 3"}}',
+   '30000000-0000-0000-0000-000000000004', 'matched');
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-000000000006') = 0, 'a batch of leases posts no transactions');
+select pg_temp.check(
+  (select (end_date, rent_amount) = ('2027-06-30'::date, 425::numeric) and notes like '%prolonged%'
+   from app.leases where id = '60000000-0000-0000-0000-000000000001'),
+  'a changed lease is updated: end date, rent, and the manager''s note');
+select pg_temp.check(
+  (select count(*) from app.leases l join app.parties p on p.id = l.tenant_party_id
+   where p.display_name = 'Nova Tenant SRL' and p.kind = 'company' and l.rent_amount = 820 and l.deposit_currency = 'EUR' and l.withholding_tax_pct = 8) = 1,
+  'a new lease is added with a new company tenant');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
