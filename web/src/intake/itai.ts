@@ -85,8 +85,8 @@ function need(cols: Record<string, number>, name: string, sheet: string): number
   return c;
 }
 
-// "Matlin Hilel - Bratianu6_ap.33 property table (1).xlsx" → owner "Matlin Hilel",
-// apartment "Bratianu6_ap.33"; "Budik Dov Berish - properties table.xlsx" → no apartment.
+// "Demo Owner - Bratianu6_ap.33 property table (1).xlsx" → owner "Demo Owner",
+// apartment "Bratianu6_ap.33"; "Second Owner - properties table.xlsx" → no apartment.
 export function itaiFileName(fileName: string): { owner: string; apartment: string | null } {
   const base = fileName.replace(/\.xlsx$/i, '').replace(/\s*\(\d+\)\s*$/, '').trim();
   const [owner, ...rest] = base.split(' - ');

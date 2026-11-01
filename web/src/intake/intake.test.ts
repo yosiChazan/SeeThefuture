@@ -263,9 +263,9 @@ test('Itai in Hebrew: months, management fees, expenses; the original is kept', 
 });
 
 test('Itai file names: owner, and the apartment of a single-apartment file', () => {
-  assert.deepEqual(itaiFileName('Matlin Hilel - Bratianu6_ap.33 property table (1).xlsx'), { owner: 'Matlin Hilel', apartment: 'Bratianu6_ap.33' });
-  assert.deepEqual(itaiFileName('Budik Dov Berish - properties table.xlsx'), { owner: 'Budik Dov Berish', apartment: null });
-  assert.deepEqual(itaiFileName('Gal Ezer Haim - Magheru 12-14 property table.xlsx'), { owner: 'Gal Ezer Haim', apartment: 'Magheru 12-14' });
+  assert.deepEqual(itaiFileName('Demo Owner - Bratianu6_ap.33 property table (1).xlsx'), { owner: 'Demo Owner', apartment: 'Bratianu6_ap.33' });
+  assert.deepEqual(itaiFileName('Second Owner - properties table.xlsx'), { owner: 'Second Owner', apartment: null });
+  assert.deepEqual(itaiFileName('Third Owner - Magheru 12-14 property table.xlsx'), { owner: 'Third Owner', apartment: 'Magheru 12-14' });
 });
 
 test('Itai, lease between eden and the tenant: eden collects, deducts, pays the owner; Totals agree', () => {
