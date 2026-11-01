@@ -1,5 +1,9 @@
-import { Anchor, Badge, Breadcrumbs, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
-import { Link, useParams } from 'react-router-dom';
+import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
+import { IconTrash } from '@tabler/icons-react';
+import { useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { DeleteRecord } from '../components/DeleteRecord';
+import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { LeaseTable } from '../components/LeaseTable';
 import { COUNTRY_HE, date, isCurrentOwnership, propertyTitle } from '../lib/format';
@@ -19,6 +23,9 @@ export function PropertyCard() {
   const { id } = useParams();
   const q = useProperty(id!);
   const ledger = usePropertyEntries(id!);
+  const access = useAccess();
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState(false);
   return (
     <QueryState q={q}>{(p) => {
       const leases = [...p.leases].sort((a, b) => (b.start_date ?? '9999').localeCompare(a.start_date ?? '9999'));
@@ -31,8 +38,15 @@ export function PropertyCard() {
           </Breadcrumbs>
           <Group justify="space-between">
             <Title order={2}>{propertyTitle(p)}</Title>
-            <Group gap="xs"><CountryBadge code={p.country_code} /><StatusBadge status={p.status} size="md" /></Group>
+            <Group gap="xs">
+              <CountryBadge code={p.country_code} /><StatusBadge status={p.status} size="md" />
+              {access.isAdmin && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={() => setDeleting(true)}>מחיקת נכס</Button>}
+            </Group>
           </Group>
+          {deleting && (
+            <DeleteRecord kind="property" id={p.id} name={propertyTitle(p)} onClose={() => setDeleting(false)}
+              onDeleted={() => navigate('/properties', { replace: true })} />
+          )}
 
           <Paper withBorder p="md">
             <SimpleGrid cols={{ base: 2, sm: 4 }}>
