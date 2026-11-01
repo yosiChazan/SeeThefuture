@@ -608,6 +608,60 @@ reset role;
 select pg_temp.check((select count(*) from app.claim_document_imports(5)) = 1, 'a call takes the pending row');
 select pg_temp.check((select count(*) from app.claim_document_imports(5)) = 0, 'a row being copied is not taken twice');
 
+-- Deleting records entered by mistake (decision 67) -------------------------
+
+insert into app.properties (id, building_id, unit_no, status) values
+  ('30000000-0000-0000-0000-0000000000d1', '22000000-0000-0000-0000-000000000001', '99', 'vacant');
+insert into app.parties (id, kind, display_name) values ('10000000-0000-0000-0000-0000000000d1', 'person', 'Mistake Client');
+insert into app.party_roles (party_id, role) values ('10000000-0000-0000-0000-0000000000d1', 'client');
+insert into app.party_identity (party_id, id_number) values ('10000000-0000-0000-0000-0000000000d1', '000000034');
+insert into app.ownerships (property_id, party_id, share_pct, valid_from) values
+  ('30000000-0000-0000-0000-0000000000d1', '10000000-0000-0000-0000-0000000000d1', 100, '2026-01-01');
+insert into app.leases (id, property_id, start_date, rent_amount, rent_currency) values
+  ('40000000-0000-0000-0000-0000000000d1', '30000000-0000-0000-0000-0000000000d1', '2026-01-01', 100, 'UAH'),
+  ('40000000-0000-0000-0000-0000000000d2', '30000000-0000-0000-0000-0000000000d1', '2025-01-01', 90, 'UAH');
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  perform app.delete_record('lease', '40000000-0000-0000-0000-0000000000d1', 'typo in the lease');
+  raise exception 'FAILED: a non-admin deleted a lease';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - only an admin deletes';
+end $$;
+reset role;
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check(jsonb_array_length(app.deletion_preview('property', '30000000-0000-0000-0000-000000000004') -> 'blocked') > 0,
+  'a property with ledger entries cannot be deleted');
+select pg_temp.check(jsonb_array_length(app.deletion_preview('client', '10000000-0000-0000-0000-0000000000d1') -> 'blocked') = 1,
+  'a client who owns a property cannot be deleted');
+do $$ begin
+  perform app.delete_record('lease', '40000000-0000-0000-0000-0000000000d2', 'no');
+  raise exception 'FAILED: deleted without a reason';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - a reason is required to delete';
+end $$;
+select app.delete_record('lease', '40000000-0000-0000-0000-0000000000d2', 'entered twice by mistake');
+select pg_temp.check(not exists (select 1 from app.leases where id = '40000000-0000-0000-0000-0000000000d2')
+  and exists (select 1 from app.leases where id = '40000000-0000-0000-0000-0000000000d1'), 'a lease is deleted, the other stays');
+select pg_temp.check((app.deletion_preview('property', '30000000-0000-0000-0000-0000000000d1') -> 'deletes' ->> 'ownerships')::int = 1,
+  'the preview counts what goes with the property');
+select app.delete_record('property', '30000000-0000-0000-0000-0000000000d1', 'apartment does not exist');
+select pg_temp.check(not exists (select 1 from app.properties where id = '30000000-0000-0000-0000-0000000000d1')
+  and not exists (select 1 from app.ownerships where property_id = '30000000-0000-0000-0000-0000000000d1')
+  and not exists (select 1 from app.leases where property_id = '30000000-0000-0000-0000-0000000000d1'),
+  'a property without history is deleted with its ownership and leases');
+select app.delete_record('client', '10000000-0000-0000-0000-0000000000d1', 'duplicate client');
+select pg_temp.check(not exists (select 1 from app.parties where id = '10000000-0000-0000-0000-0000000000d1')
+  and not exists (select 1 from app.party_identity where party_id = '10000000-0000-0000-0000-0000000000d1'),
+  'once its property is gone, the client is deleted with the ID number');
+reset role;
+select pg_temp.check(
+  (select count(*) from app.audit_log where action in ('DELETE_LEASE', 'DELETE_PROPERTY', 'DELETE_CLIENT') and new_row ? 'reason' and old_row is not null) = 3,
+  'each deletion keeps the deleted row and the reason in the audit log');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

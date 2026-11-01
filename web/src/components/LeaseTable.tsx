@@ -1,5 +1,5 @@
 import { ActionIcon, Anchor, Badge, Group, Table, Text, Tooltip } from '@mantine/core';
-import { IconPencil } from '@tabler/icons-react';
+import { IconPencil, IconTrash } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -7,6 +7,7 @@ import { useAccess } from '../lib/access';
 import { date, isActiveLease, isIncompleteLease, money, propertyTitle, today } from '../lib/format';
 import type { LeaseRow } from '../lib/queries';
 import type { Country, Lease } from '../lib/types';
+import { DeleteRecord } from './DeleteRecord';
 import { LeaseForm } from './LeaseForm';
 
 export function LeaseState({ lease }: { lease: Lease }) {
@@ -23,6 +24,7 @@ export function LeaseState({ lease }: { lease: Lease }) {
 export function LeaseTable({ leases, country, showProperty }: { leases: (Lease | LeaseRow)[]; country?: Country; showProperty?: boolean }) {
   const access = useAccess();
   const [editing, setEditing] = useState<Lease | null>(null);
+  const [deleting, setDeleting] = useState<Lease | null>(null);
   if (!leases.length) return <Text c="dimmed" size="sm">אין חוזים</Text>;
   return (
     <>
@@ -64,6 +66,9 @@ export function LeaseTable({ leases, country, showProperty }: { leases: (Lease |
                       {c && access.canEdit(c) && (
                         <ActionIcon variant="subtle" aria-label="עריכה" onClick={() => setEditing(l)}><IconPencil size={16} /></ActionIcon>
                       )}
+                      {access.isAdmin && (
+                        <ActionIcon variant="subtle" color="red" aria-label="מחיקה" onClick={() => setDeleting(l)}><IconTrash size={16} /></ActionIcon>
+                      )}
                     </Group>
                   </Table.Td>
                 </Table.Tr>
@@ -73,6 +78,10 @@ export function LeaseTable({ leases, country, showProperty }: { leases: (Lease |
         </Table>
       </Table.ScrollContainer>
       {editing && <LeaseForm key={editing.id} lease={editing} opened onClose={() => setEditing(null)} />}
+      {deleting && (
+        <DeleteRecord kind="lease" id={deleting.id} onClose={() => setDeleting(null)} onDeleted={() => setDeleting(null)}
+          name={`חוזה ${deleting.tenant?.display_name ?? ''} ${date(deleting.start_date)}`.replace(/\s+/g, ' ').trim()} />
+      )}
     </>
   );
 }

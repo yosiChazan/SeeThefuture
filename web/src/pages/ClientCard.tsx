@@ -1,7 +1,8 @@
 import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
-import { IconPencil, IconPlus } from '@tabler/icons-react';
+import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { DeleteRecord } from '../components/DeleteRecord';
 import { ClientDocuments } from '../components/ClientDocuments';
 import { ClientForm } from '../components/ClientForm';
 import { PropertyForm } from '../components/PropertyForm';
@@ -22,6 +23,8 @@ export function ClientCard() {
   // Any editor may change a client's details (the parties table is not per country).
   const canEdit = access.isAdmin || access.countries.some((x) => access.canEdit(x));
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const navigate = useNavigate();
   const identity = useIdentity(id!, access.canViewSensitive);
   const [addingProperty, setAddingProperty] = useState(false);
   const canAddProperty = access.countries.some((x) => access.canEdit(x));
@@ -38,8 +41,12 @@ export function ClientCard() {
             <Title order={2}>{c.display_name}</Title>
             {c.kind === 'company' && <Badge variant="light">חברה</Badge>}
           </Group>
-          {canEdit && <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>עריכה</Button>}
+          <Group gap="xs">
+            {access.isAdmin && <Button variant="subtle" color="red" leftSection={<IconTrash size={16} />} onClick={() => setDeleting(true)}>מחיקת לקוח</Button>}
+            {canEdit && <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>עריכה</Button>}
+          </Group>
         </Group>
+        {deleting && <DeleteRecord kind="client" id={c.id} name={c.display_name} onClose={() => setDeleting(false)} onDeleted={() => navigate('/clients', { replace: true })} />}
         {editing && <ClientForm client={c} idNumber={identity.data?.id_number ?? null} opened onClose={() => setEditing(false)} />}
 
         <Paper withBorder p="md">
