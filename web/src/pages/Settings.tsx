@@ -5,10 +5,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { QueryState } from '../components/common';
+import { ResetItai } from '../components/ResetItai';
 import { useAccess } from '../lib/access';
 import { listSharedFiles, loadDropbox, saveSettings, startConnect } from '../lib/dropbox';
 
-// Admin settings. For now: the connection to Itai's Dropbox folder (SPEC decision 53).
+// Admin settings: the connection to Itai's Dropbox folder (SPEC decision 53) and
+// resetting Itai's imported reports (SPEC decision 58).
 export function Settings() {
   const access = useAccess();
   const qc = useQueryClient();
@@ -60,6 +62,7 @@ export function Settings() {
           </Stack>
         </Paper>
       )}</QueryState>
+      <ResetItai />
     </Stack>
   );
 }
