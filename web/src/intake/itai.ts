@@ -141,7 +141,7 @@ export function parseItaiLeases(incomes: Grid, receiptsStart: number, owner: str
     out.push({
       ref: `Incomes!R${r}`, property: hint, tenant, start, end, rent, deposit, currency: 'EUR',
       contract: [no && !/^(fn|-)$/i.test(no) ? `חוזה ${no}` : 'חוזה', signed ? `מ-${signed.split('-').reverse().join('.')}` : ''].filter(Boolean).join(' '),
-      notes: itaiHebrew(text(incomes, r, notesCol)), errors,
+      notes: itaiHebrew(text(incomes, r, notesCol)), errors, hidden: incomes.hidden(r),
     });
   }
   return out;
