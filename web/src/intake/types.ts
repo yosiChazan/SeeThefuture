@@ -22,7 +22,7 @@ export interface ProposedEntry {
   memo?: string;
   fx_rate?: number;
   // "source": the manager holding the money; "beneficiary": the owner's own account.
-  account?: { kind: 'manager_cash' | 'rent_pool' | 'expense_pool' | 'legacy_card' | 'client_bank' | 'hotel_balance'; holder: 'source' | 'beneficiary' };
+  account?: { kind: 'manager_cash' | 'rent_pool' | 'expense_pool' | 'legacy_card' | 'client_bank' | 'hotel_balance' | 'deposit_held'; holder: 'source' | 'beneficiary' };
   external?: 'source';
 }
 

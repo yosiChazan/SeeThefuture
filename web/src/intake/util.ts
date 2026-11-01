@@ -70,3 +70,19 @@ export function findCol(g: Grid, r: number, pattern: RegExp, what: string): numb
   for (let c = 1; c <= g.cols; c++) if (pattern.test(text(g, r, c))) return c;
   throw new FormatError(`הקובץ לא בפורמט המוכר: לא נמצאה עמודה "${what}" בשורה ${r}`);
 }
+
+// A cell's number. When a formula's saved result is missing (Excel did not store it),
+// a plain sum or difference of cells on the same sheet ("=B8-B9") is worked out.
+export function cellNumber(g: Grid, r: number, c: number): number | null {
+  const v = num(g.value(r, c));
+  if (v !== null) return v;
+  const f = g.formula(r, c)?.replace(/\$/g, '');
+  if (!f || !/^=[A-Z]+\d+([+-][A-Z]+\d+)*$/i.test(f)) return null;
+  let total = 0;
+  for (const [, sign, col, row] of f.slice(1).matchAll(/([+-]?)([A-Z]+)(\d+)/gi)) {
+    const n = cellNumber(g, Number(row), col.toUpperCase().split('').reduce((s, ch) => s * 26 + ch.charCodeAt(0) - 64, 0));
+    if (n === null) return null;
+    total += sign === '-' ? -n : n;
+  }
+  return total;
+}
