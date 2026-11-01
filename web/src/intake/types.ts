@@ -64,6 +64,9 @@ export interface ParseResult {
   rows: ParsedRow[];
   warnings: string[];    // file-level checks, e.g. totals that do not add up
   checks?: string[];     // file-level checks that passed, shown to the reviewer
+  // What a newer version of the same report replaces: Itai's file is per owner,
+  // Vitaly's and Gershon's reports are per month.
+  scope?: string;
 }
 
 // The file is not in the format the adapter knows. Nothing is imported.

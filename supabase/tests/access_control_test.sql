@@ -325,6 +325,44 @@ select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-0000000000
   'after cancelling, the corrected report posts again');
 reset role;
 
+-- Updated reports: replace a changed row, void a removed one -----------------
+
+-- Batch 4 posted rent 20000.01 (row 001) and the fee (row 002). A corrected version:
+-- the rent is now 21000, and the fee row is gone.
+insert into app.import_batches (id, source_id, country_code, status, scope)
+select '50000000-0000-0000-0000-000000000005', s.id, 'UA', 'in_review', '2026-01'
+from app.import_sources s where s.adapter = 'vitaly_rent_xlsx';
+insert into app.import_rows (batch_id, row_ref, raw, property_id, match_status, fingerprint, proposed)
+select '50000000-0000-0000-0000-000000000005'::uuid, '001',
+  jsonb_build_object('property_ref', 'PLC 17(2), APT. 30', 'replaces', x.transaction_id),
+  '30000000-0000-0000-0000-000000000004'::uuid, 'matched', 'vitaly|30|2026-01|rent|21000',
+  '{"occurred_on": "2026-01-08", "period": "2026-01-01", "category": "rent", "description": "Rent",
+    "entries": [{"amount": 21000, "currency": "UAH", "account": {"kind": "manager_cash", "holder": "source"}}]}'::jsonb
+from app.import_rows x where x.batch_id = '50000000-0000-0000-0000-000000000004' and x.row_ref = '001'
+union all
+select '50000000-0000-0000-0000-000000000005', '002', jsonb_build_object('voids', x.transaction_id),
+  '30000000-0000-0000-0000-000000000004', 'matched', null, null
+from app.import_rows x where x.batch_id = '50000000-0000-0000-0000-000000000004' and x.row_ref = '002'
+union all
+-- A row pointing at a transaction of another source must not void it.
+(select '50000000-0000-0000-0000-000000000005', '003', jsonb_build_object('voids', t.id), null, 'matched', null, null
+ from app.transactions t where t.import_batch_id is null and t.status = 'posted' limit 1);
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-000000000005') = 1, 'the corrected rent is posted');
+select pg_temp.check(
+  (select count(*) from app.transactions where import_batch_id = '50000000-0000-0000-0000-000000000004' and status = 'void') = 2,
+  'the old rent (replaced) and the removed fee are void');
+select pg_temp.check(
+  (select coalesce(sum(balance), 0) from app.account_balances
+   where kind = 'manager_cash' and holder_party_id = 'a0000000-0000-4000-8000-000000000001') = 41000.01,
+  'balances: batch 3 rent 20000.01 + corrected rent 21000');
+reset role;
+select pg_temp.check(
+  (select count(*) from app.import_rows where batch_id = '50000000-0000-0000-0000-000000000005') = 3
+  and (select count(*) from app.transactions where import_batch_id is null and status = 'void') = 0,
+  'a row cannot void a transaction that another source posted');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
