@@ -71,6 +71,7 @@ function NewReport({ onClose }: { onClose: () => void }) {
           <Alert color={preview.warnings.length ? 'orange' : 'teal'} title={`דוח ${monthLabel(preview.period)}`}>
             <Text size="sm">נמצאו {properties} דירות ו-{preview.rows.length} שורות. במסך הבא תראו כל שורה לפני האישור.</Text>
             {preview.warnings.length > 0 && <List size="sm" mt="xs">{preview.warnings.map((w) => <List.Item key={w}>{w}</List.Item>)}</List>}
+            {!!preview.checks?.length && <List size="sm" mt="xs">{preview.checks.map((c) => <List.Item key={c}>{c}</List.Item>)}</List>}
           </Alert>
         )}
         <Group justify="flex-end">

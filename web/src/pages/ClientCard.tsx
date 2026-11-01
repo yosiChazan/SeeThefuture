@@ -1,9 +1,9 @@
 import { Anchor, Badge, Breadcrumbs, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
 import { Link, useParams } from 'react-router-dom';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
-import { ACCOUNT_KIND_HE, COUNTRY_HE, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
+import { AccountLedger } from '../components/AccountLedger';
+import { ACCOUNT_KIND_HE, COUNTRY_HE, amountLabel, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
 import { useAccountEntries, useClient, useClientAccounts, useClientProperties } from '../lib/queries';
-import type { Currency } from '../lib/types';
 
 export function ClientCard() {
   const { id } = useParams();
@@ -67,12 +67,12 @@ export function ClientCard() {
 
         <Paper withBorder p="md">
           <Title order={4} mb={4}>חשבונות ויתרות</Title>
-          <Text size="xs" c="dimmed" mb="sm">כל מטבע מוצג בנפרד. יתרה כוללת רק תנועות שאושרו.</Text>
+          <Text size="xs" c="dimmed" mb="sm">כל מטבע מוצג בנפרד, ורק תנועות שאושרו נספרות. בחשבון הבנק של הלקוח מוצג כמה הופקד אליו לפי הדוחות, ולא היתרה בבנק.</Text>
           <QueryState q={accounts}>{(as) => as.length ? (
             <Table.ScrollContainer minWidth={700}>
               <Table verticalSpacing="xs">
                 <Table.Thead>
-                  <Table.Tr><Table.Th>מדינה</Table.Th><Table.Th>סוג</Table.Th><Table.Th>מחזיק</Table.Th><Table.Th>בנק</Table.Th><Table.Th>IBAN</Table.Th><Table.Th>יתרה</Table.Th></Table.Tr>
+                  <Table.Tr><Table.Th>מדינה</Table.Th><Table.Th>סוג</Table.Th><Table.Th>מחזיק</Table.Th><Table.Th>בנק</Table.Th><Table.Th>IBAN</Table.Th><Table.Th>סכום</Table.Th></Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {as.map((a) => (
@@ -82,7 +82,10 @@ export function ClientCard() {
                       <Table.Td>{a.holder.display_name}</Table.Td>
                       <Table.Td>{a.bank_name ?? '—'}</Table.Td>
                       <Table.Td dir="ltr" style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{a.iban ?? (a.card_last4 ? `•••• ${a.card_last4}` : '—')}</Table.Td>
-                      <Table.Td fw={500} style={{ whiteSpace: 'nowrap' }}>{money(a.balance, a.currency)}</Table.Td>
+                      <Table.Td style={{ whiteSpace: 'nowrap' }}>
+                        <Text size="sm" fw={500}>{money(a.balance, a.currency)}</Text>
+                        <Text size="xs" c="dimmed">{amountLabel(a.kind)}</Text>
+                      </Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>
@@ -92,23 +95,11 @@ export function ClientCard() {
         </Paper>
 
         <Paper withBorder p="md">
-          <Title order={4} mb="sm">תנועות אחרונות</Title>
-          {entries.data?.length ? (
-            <Table verticalSpacing="xs">
-              <Table.Thead><Table.Tr><Table.Th>תאריך</Table.Th><Table.Th>תיאור</Table.Th><Table.Th>סכום</Table.Th><Table.Th>מצב</Table.Th></Table.Tr></Table.Thead>
-              <Table.Tbody>
-                {[...entries.data].sort((a, b) => b.transaction.occurred_on.localeCompare(a.transaction.occurred_on)).map((e) => (
-                  <Table.Tr key={e.id}>
-                    <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
-                    <Table.Td>{e.memo ?? e.transaction.description ?? e.transaction.category}</Table.Td>
-                    <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
-                    <Table.Td><Badge size="xs" variant="light" color={e.transaction.status === 'posted' ? 'teal' : 'gray'}>
-                      {e.transaction.status === 'posted' ? 'מאושר' : e.transaction.status === 'void' ? 'בוטל' : 'טיוטה'}</Badge></Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          ) : <Text c="dimmed" size="sm">עוד אין תנועות. הן ייכנסו עם ייבוא הדוחות מהמנהלים המקומיים.</Text>}
+          <Title order={4} mb="sm">תנועות</Title>
+          <QueryState q={accounts}>{(as) => (
+            entries.isLoading ? <Text c="dimmed" size="sm">טוען תנועות…</Text>
+              : <AccountLedger accounts={as} entries={entries.data ?? []} />
+          )}</QueryState>
         </Paper>
       </Stack>
     )}</QueryState>

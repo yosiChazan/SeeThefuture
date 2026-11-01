@@ -133,21 +133,23 @@ test('Itai: names of apartments', () => {
   assert.equal(itaiHint('none'), null);
 });
 
-test('Itai: 2026 receipts to the owner, expenses and reimbursements through Itai', () => {
+test('Itai: the whole history, rent to the owner, expenses and repayments through Itai', () => {
   const r = parseItai(bookFromJson(fixtureBook('itai_client.json')));
   assert.equal(r.period, '2026-10-01');
-  assert.match(r.warnings[0], /לפני 01.01.2026 לא נקלטו/);
-  assert.ok(r.rows.every((x) => x.proposed!.occurred_on >= '2026-01-01'));
+  assert.ok(r.rows.some((x) => x.proposed!.occurred_on < '2025-01-01'), 'rows from 2024 are included');
   const by = (cat: string) => r.rows.filter((x) => x.proposed!.category === cat);
-  assert.ok(by('rent').length > 10);
+  assert.ok(by('rent').length > 50);
   assert.ok(by('rent').every((x) => x.proposed!.entries[0].account?.kind === 'client_bank' && x.proposed!.entries[0].amount > 0));
   assert.ok(by('mgmt_fee').every((x) => x.proposed!.entries[0].account?.kind === 'manager_cash' && x.proposed!.entries[0].amount < 0));
-  const back = by('transfer');
-  assert.ok(back.length >= 1);
-  assert.ok(back.every((x) => x.proposed!.entries.reduce((s, e) => s + e.amount, 0) === 0), 'a reimbursement only moves money');
+  assert.ok(by('transfer').every((x) => x.proposed!.entries.reduce((s, e) => s + e.amount, 0) === 0), 'a repayment only moves money');
+  assert.equal(by('opening_balance').length, 0, 'no opening balance: the history starts at 0');
   assert.ok(r.rows.filter((x) => x.raw.sheet === 'Incomes').every((x) => x.property.owner === 'Owner Demo'));
   const fps = r.rows.map((x) => x.fingerprint);
   assert.equal(new Set(fps).size, fps.length, 'fingerprints are unique');
+  // "jul.2024 management commision" without a date is booked in July 2024, as a note.
+  const undated = r.rows.find((x) => x.raw.sheet === 'Expenses' && /jul\.2024/.test(x.proposed!.description) && x.issues.some((i) => /לפי החודש שבתיאור/.test(i)));
+  assert.equal(undated?.proposed!.occurred_on, '2024-07-01');
+  assert.deepEqual(undated?.errors, []);
 });
 
 test('Itai: a file without the expected sheets stops the import', () => {
@@ -196,16 +198,23 @@ test('Itai VAT: by the period invoiced, else by the payment date', () => {
   assert.equal(itaiVat(null, ''), 0.21);
 });
 
-test('Itai: opening balance, VAT on repayments, and the result agrees with the Totals sheet', () => {
+test('Itai: VAT on every repayment, and the balance equation agrees with the Totals sheet', () => {
   const r = parseItai(bookFromJson(fixtureBook('itai_client.json')));
-  const open = r.rows.filter((x) => x.proposed!.category === 'opening_balance');
-  assert.equal(open.length, 1);
-  assert.equal(open[0].proposed!.entries[0].amount, -3228.38, 'owed to Itai on 1.1.2026');
-  assert.equal(open[0].fingerprint, 'itai|Owner Demo|opening');
-  assert.equal(open[0].errors.length, 1, 'to be confirmed by a person');
   const vat = r.rows.filter((x) => x.proposed!.category === 'vat');
   assert.equal(vat.length, r.rows.filter((x) => x.proposed!.category === 'transfer').length, 'one VAT row per repayment');
   const itai = r.rows.flatMap((x) => x.proposed!.entries).filter((e) => e.account?.kind === 'manager_cash').reduce((s, e) => s + e.amount, 0);
-  assert.ok(Math.abs(itai) < 0.02, `balance with Itai ends at ${itai}, as in Totals (0)`);
-  assert.ok(!r.warnings.some((w) => /Totals/.test(w)));
+  assert.ok(Math.abs(itai) < 0.1, `balance with Itai ends at ${itai}, as in Totals (0), up to rounding of each row`);
+  assert.deepEqual(r.warnings, []);
+  assert.match(r.checks![0], /נוסחת האיזון מול איתי מתאימה: הוצאות 30,792.95 \+ מע"מ 6,152.0\d − החזרים 36,945.00/);
+});
+
+test('Itai: a balance that does not match Totals is a warning', () => {
+  const book = fixtureBook('itai_client.json');
+  const totals = book.find((s) => s.sheet === 'Totals')!;
+  const key = Object.keys(totals.cells).find((k) => /remaining to receive/i.test(String(totals.cells[k])))!;
+  const [r] = key.split(',');
+  totals.cells[`${r},2`] = 500;
+  const res = parseItai(bookFromJson(book));
+  assert.match(res.warnings[0], /נוסחת האיזון לא מתאימה/);
+  assert.equal(res.checks?.length ?? 0, 0);
 });

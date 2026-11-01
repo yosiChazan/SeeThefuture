@@ -25,6 +25,17 @@ export const ACCOUNT_KIND_HE: Record<string, string> = {
   hotel_balance: 'יתרה במלון', client_bank: 'חשבון בנק של הלקוח', company: 'חשבון חברה', legacy_card: 'כרטיס ישן',
 };
 
+export const CATEGORY_HE: Record<string, string> = {
+  rent: 'שכירות', mgmt_fee: 'דמי ניהול', utilities: 'חשבונות', building_fees: 'הוצאות בניין', legal_fees: 'שכ"ט עו"ד',
+  repair: 'תיקונים', brokerage: 'תיווך', fx: 'המרת מטבע', deposit: 'פיקדון', opening_balance: 'יתרת פתיחה', vat: 'מע"מ',
+  transfer: 'העברה', other: 'אחר', tax_withheld: 'מס במקור', hotel_share: 'חלק המלון', loan: 'הלוואה',
+  purchase_installment: 'תשלום רכישה', deal_fee: 'דמי עסקה', commission: 'עמלה',
+};
+
+// The client's own bank account shows what the reports say was paid into it, not
+// the balance at the bank (we do not see what the owner takes out).
+export const amountLabel = (kind: string) => (kind === 'client_bank' ? 'הופקד אצל הלקוח' : 'יתרה');
+
 export function money(amount: number | null | undefined, currency: Currency | null | undefined): string {
   if (amount === null || amount === undefined) return '—';
   const n = new Intl.NumberFormat('he-IL', { maximumFractionDigits: 2 }).format(amount);
