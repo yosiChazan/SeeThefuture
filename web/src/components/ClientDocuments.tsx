@@ -1,5 +1,7 @@
 import { Alert, Anchor, Badge, Button, FileInput, Group, Modal, Paper, Select, Stack, Table, Text, Title } from '@mantine/core';
-import { IconUpload } from '@tabler/icons-react';
+import { IconId, IconUpload } from '@tabler/icons-react';
+import { IdFromScans } from './IdFromScans';
+import { useIdentity } from '../lib/queries';
 import { useState } from 'react';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -120,7 +122,9 @@ export function ClientDocuments({ partyId, countries = [] }: { partyId: string; 
   const access = useAccess();
   const qc = useQueryClient();
   const [uploading, setUploading] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const canUpload = access.countries.some((c) => access.canEdit(c));
+  const identity = useIdentity(partyId, access.canViewSensitive);
   const docs = useQuery({
     queryKey: ['documents', partyId],
     queryFn: async () => must(await supabase.from('documents')
@@ -146,8 +150,17 @@ export function ClientDocuments({ partyId, countries = [] }: { partyId: string; 
     <Paper withBorder p="md">
       <Group justify="space-between" mb={4}>
         <Title order={4}>מסמכים</Title>
-        {canUpload && <Button size="xs" variant="light" leftSection={<IconUpload size={14} />} onClick={() => setUploading(true)}>הוספת מסמכים</Button>}
+        <Group gap="xs">
+          {canUpload && access.canViewSensitive && !!docs.data?.length && (
+            <Button size="xs" variant="light" leftSection={<IconId size={14} />} onClick={() => setScanning(true)}>זיהוי ת.ז. מהמסמכים</Button>
+          )}
+          {canUpload && <Button size="xs" variant="light" leftSection={<IconUpload size={14} />} onClick={() => setUploading(true)}>הוספת מסמכים</Button>}
+        </Group>
       </Group>
+      {scanning && docs.data && (
+        <IdFromScans partyId={partyId} current={identity.data?.id_number ?? null} onClose={() => setScanning(false)}
+          primary={docs.data.filter(isPassport)} others={docs.data.filter((d) => !isPassport(d))} />
+      )}
       {uploading && <UploadDocuments partyId={partyId} countries={countries} onClose={() => setUploading(false)} />}
       <Text size="xs" c="dimmed" mb="sm">מסמכים רגישים מוצגים רק למי שיש לו הרשאה למסמכים רגישים במדינה. כל פתיחה נרשמת.</Text>
       <QueryState q={docs}>{(ds) => ds.length ? (
