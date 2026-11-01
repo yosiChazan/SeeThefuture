@@ -5,7 +5,7 @@ import dayjs from 'dayjs';
 import { useState } from 'react';
 import { useAccess } from '../lib/access';
 import { loadDropbox, saveSettings } from '../lib/dropbox';
-import { batchNotes, type Batch } from '../lib/intake';
+import { batchFiles, batchNotes, type Batch } from '../lib/intake';
 import { must, supabase } from '../lib/supabase';
 
 const WORD = 'מחיקה';
@@ -28,7 +28,8 @@ export function DeletePending({ batches, onClose }: { batches: Batch[]; onClose:
     for (const b of pending.filter((x) => chosen.has(x.id))) {
       try {
         must(await supabase.from('import_batches').delete().eq('id', b.id).in('status', ['parsed', 'in_review']));
-        if (b.file_path) await supabase.storage.from('imports').remove([b.file_path]);
+        const files = batchFiles(b);
+        if (files.length) await supabase.storage.from('imports').remove(files);
         gone.push(b);
       } catch (e) { notifications.show({ color: 'red', title: `${b.source.name}: לא נמחק`, message: (e as Error).message }); }
     }

@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Modal, Paper, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Menu, Modal, Paper, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle, IconArrowBackUp, IconCheck, IconDownload, IconEyeOff } from '@tabler/icons-react';
@@ -8,7 +8,7 @@ import { Link, useParams } from 'react-router-dom';
 import { CountryBadge, QueryState } from '../components/common';
 import { useAccess } from '../lib/access';
 import { CATEGORY_HE, date, money, owners, propertyTitle } from '../lib/format';
-import { batchNotes, useBatch, type ImportRow, type RowStatus } from '../lib/intake';
+import { batchFiles, batchNotes, useBatch, type ImportRow, type RowStatus } from '../lib/intake';
 import { useProperties } from '../lib/queries';
 import { supabase } from '../lib/supabase';
 import type { Currency } from '../lib/types';
@@ -99,6 +99,7 @@ export function IntakeBatch() {
   return (
     <QueryState q={q}>{({ batch, rows }) => {
       const notes = batchNotes(batch);
+      const files = batchFiles(batch);
       const open = batch.status === 'in_review' || batch.status === 'parsed';
       const editable = open && access.canEdit(batch.country_code);
       const count = (s: RowStatus) => rows.filter((r) => r.match_status === s).length;
@@ -151,8 +152,8 @@ export function IntakeBatch() {
         await refresh();
       }
 
-      async function download() {
-        const { data, error } = await supabase.storage.from('imports').createSignedUrl(batch.file_path!, 60);
+      async function download(path: string) {
+        const { data, error } = await supabase.storage.from('imports').createSignedUrl(path, 60);
         if (error) notifications.show({ color: 'red', message: error.message }); else window.open(data.signedUrl, '_blank');
       }
 
@@ -212,7 +213,15 @@ export function IntakeBatch() {
                 {notes?.file_name && <Text size="sm" c="dimmed" dir="ltr">{notes.file_name}</Text>}
               </Group>
             </Stack>
-            {batch.file_path && <Button variant="default" leftSection={<IconDownload size={16} />} onClick={download}>הקובץ המקורי</Button>}
+            {files.length === 1 && !notes?.form && <Button variant="default" leftSection={<IconDownload size={16} />} onClick={() => download(files[0])}>הקובץ המקורי</Button>}
+            {(files.length > 1 || (files.length === 1 && !!notes?.form)) && (
+              <Menu position="bottom-end">
+                <Menu.Target><Button variant="default" leftSection={<IconDownload size={16} />}>צילומי המסך ({files.length})</Button></Menu.Target>
+                <Menu.Dropdown>
+                  {files.map((f) => <Menu.Item key={f} onClick={() => download(f)}><Text size="sm" dir="ltr">{f.split('/').pop()}</Text></Menu.Item>)}
+                </Menu.Dropdown>
+              </Menu>
+            )}
           </Group>
 
           {!!notes?.checks?.length && (

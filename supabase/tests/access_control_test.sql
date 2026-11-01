@@ -498,6 +498,27 @@ exception when others then
 end $$;
 reset role;
 
+-- Manual form (Yarach): the transfers reach Gershon, so the row names him as the holder.
+
+insert into app.import_batches (id, source_id, country_code, status, scope)
+select '50000000-0000-0000-0000-000000000009', s.id, 'UA', 'in_review', '2026-10' from app.import_sources s where s.adapter = 'manual_yarach';
+insert into app.import_rows (batch_id, row_ref, raw, property_id, match_status, fingerprint, proposed) values
+  ('50000000-0000-0000-0000-000000000009', 'yarach:30', '{"property_ref": "Arcadia 30"}', '30000000-0000-0000-0000-000000000004', 'matched',
+   'yarach|30|2026-10-01|12991.51',
+   '{"occurred_on": "2026-10-31", "period": "2026-10-01", "category": "rent", "description": "share of Yarach''s transfers",
+     "entries": [{"amount": 12991.51, "currency": "UAH", "account": {"kind": "rent_pool", "holder": "a0000000-0000-4000-8000-000000000004"}}]}');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check(app.commit_import_batch('50000000-0000-0000-0000-000000000009') = 1, 'UA finance posts Yarach''s form');
+select pg_temp.check(
+  (select array_agg(balance order by balance)::text from app.account_balances
+   where kind = 'rent_pool' and holder_party_id = 'a0000000-0000-4000-8000-000000000004' and currency = 'UAH'
+     and beneficiary_party_id in ('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002')) = '{6495.75,6495.76}',
+  'Yarach''s share lands in each owner''s rent pool at Gershon, not with Yarach');
+select pg_temp.check(
+  not exists (select 1 from app.accounts where holder_party_id = 'a0000000-0000-4000-8000-000000000002'),
+  'no account is opened for Yarach');
+reset role;
+
 -- Party documents: sensitive files need the per-country flag -----------------
 
 insert into app.documents (entity_type, entity_id, country_code, doc_type, storage_path, sensitive, file_name, source) values
