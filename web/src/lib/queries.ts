@@ -227,3 +227,30 @@ export function usePropertyCharges(propertyId: string) {
     },
   });
 }
+
+// The charges and purchases of the properties a client owns, each within the client's
+// ownership period (SPEC decision 74). Display only: the ledger is unchanged.
+export function useClientPropertyActivity(partyId: string) {
+  return useQuery({
+    queryKey: ['client-activity', partyId],
+    queryFn: async () => {
+      const owned = must(await supabase.from('ownerships').select('property_id, share_pct, valid_from, valid_to').eq('party_id', partyId)) as
+        { property_id: string; share_pct: number; valid_from: string; valid_to: string | null }[];
+      const ids = [...new Set(owned.map((o) => o.property_id))];
+      if (!ids.length) return { charges: [] as (ChargeRow & { property_id: string })[], deals: [] as (DealRow & { property_id: string })[], owned };
+      const charges: (ChargeRow & { property_id: string })[] = [];
+      for (let from = 0; ; from += 1000) {
+        const page = must(await supabase.from('charges').select('id, property_id, period, kind, amount, currency, due_date, payer, status, notes')
+          .in('property_id', ids).order('period', { ascending: false }).order('kind').range(from, from + 999)) as (ChargeRow & { property_id: string })[];
+        charges.push(...page);
+        if (page.length < 1000) break;
+      }
+      const deals = must(await supabase.from('deals').select(`id, property_id, signed_on, status, total_price, price_currency, notes,
+        client:parties!deals_client_party_id_fkey(id, display_name), referrer:parties!deals_referrer_party_id_fkey(id, display_name),
+        installments(id, due_date, amount, currency, notes, paid_txn_id)`).in('property_id', ids)) as unknown as (DealRow & { property_id: string })[];
+      // A charge belongs to the owner of that month.
+      const ownedOn = (pid: string, period: string) => owned.some((o) => o.property_id === pid && o.valid_from.slice(0, 7) <= period.slice(0, 7) && (!o.valid_to || o.valid_to >= period));
+      return { charges: charges.filter((c) => ownedOn(c.property_id, c.period)), deals, owned };
+    },
+  });
+}
