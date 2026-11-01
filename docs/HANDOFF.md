@@ -51,7 +51,7 @@
   `supabase/functions/airtable-documents`, שעובדת מתור `app.document_imports` (בלי קלט ובלי סוד), והמסד קורא לה ב-`pg_net`.
 - **הוספה מהממשק (החלטה 65):** לקוח חדש (מסך לקוחות), נכס חדש (מסך נכסים או כרטיס לקוח, כולל בניין חדש
   ובעלים), והעלאת מסמכים בכרטיס הלקוח (`ClientForm`, `PropertyForm`, `ClientDocuments`).
-- **תעודת זהות (החלטה 66):** `app.party_identity` (רגיש). זיהוי מסריקות בדפדפן: `web/src/lib/idnumber.ts`
+- **תעודת זהות (החלטות 66, 72):** `app.party_identity` (פתוח לכל העובדים מאז החלטה 72; שם פרטי/משפחה ב-`parties`). זיהוי מסריקות בדפדפן: `web/src/lib/idnumber.ts`
   (ספרת ביקורת, MRZ; עם בדיקות) ו-`web/src/lib/idocr.ts` (tesseract.js + pdf.js, נטענים רק כשצריך).
   נבדק בדפדפן על דוגמאות סינתטיות; המודל יורד מ-CDN, שחסום בסביבת Claude (לבדיקה: `@tesseract.js-data/eng` מ-npm).
 - **מחיקה (החלטה 67):** נכס, חוזה או לקוח בלי היסטוריה כספית, admin בלבד, עם סיבה והקלדת "מחיקה"

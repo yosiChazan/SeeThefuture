@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccess } from '../lib/access';
 import { validIsraeliId } from '../lib/idnumber';
+import { fullName, suggestSplit } from '../lib/names';
 import { saveIdentity, type ClientRow } from '../lib/queries';
 import { supabase } from '../lib/supabase';
 
@@ -12,19 +13,22 @@ import { supabase } from '../lib/supabase';
 // Latin letters, and the intake matches them by name: when the display name changes and
 // no name as in the reports is set yet, the old name is kept there, so matching goes on.
 export function ClientForm({ client, idNumber = null, opened, onClose }: { client?: ClientRow; idNumber?: string | null; opened: boolean; onClose: () => void }) {
-  const access = useAccess();
-  // The ID number is sensitive (SPEC decision 66): shown and saved only with the flag.
-  const canId = access.canViewSensitive;
+  useAccess();
+  // The ID number is a regular detail, open to all staff (SPEC decision 72).
+  const canId = true;
+  // A person's name in two parts; a name not split yet starts from the suggested split.
+  const split = client && !client.first_name && !client.last_name && client.kind === 'person' ? suggestSplit(client.display_name) : null;
   const [idNo, setIdNo] = useState(idNumber ?? '');
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [v, setV] = useState({
-    display_name: client?.display_name ?? '', legal_name: client?.legal_name ?? '', kind: client?.kind ?? ('person' as ClientRow['kind']),
+    display_name: client?.display_name ?? '', first_name: client?.first_name ?? split?.first ?? '', last_name: client?.last_name ?? split?.last ?? '', legal_name: client?.legal_name ?? '', kind: client?.kind ?? ('person' as ClientRow['kind']),
     phone: client?.phone ?? '', email: client?.email ?? '', tax_id: client?.tax_id ?? '', address: client?.address ?? '', notes: client?.notes ?? '',
   });
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof typeof v>(k: K, x: (typeof v)[K]) => setV((p) => ({ ...p, [k]: x }));
-  const name = v.display_name.trim();
+  const person = v.kind === 'person';
+  const name = person ? fullName(v.first_name, v.last_name) : v.display_name.trim();
   const renamed = !!client && name !== client.display_name;
   const keepOld = renamed && !v.legal_name.trim();
   const blank = (s: string) => s.trim() || null;
@@ -32,7 +36,7 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
   async function save() {
     setBusy(true);
     const fields = {
-      display_name: name, legal_name: keepOld ? client!.display_name : blank(v.legal_name), kind: v.kind,
+      display_name: name, first_name: person ? blank(v.first_name) : null, last_name: person ? blank(v.last_name) : null, legal_name: keepOld ? client!.display_name : blank(v.legal_name), kind: v.kind,
       phone: blank(v.phone), email: blank(v.email), tax_id: blank(v.tax_id), address: blank(v.address), notes: blank(v.notes),
     };
     const idClean = idNo.replace(/\s/g, '');
@@ -66,7 +70,14 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
   return (
     <Modal opened={opened} onClose={onClose} title={client ? 'עריכת פרטי לקוח' : 'לקוח חדש'} size="lg">
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
-        <TextInput label="שם" required value={v.display_name} onChange={(e) => set('display_name', e.currentTarget.value)} error={!name && 'חובה'} />
+        {person ? (
+          <>
+            <TextInput label="שם פרטי" value={v.first_name} onChange={(e) => set('first_name', e.currentTarget.value)} />
+            <TextInput label="שם משפחה" required value={v.last_name} onChange={(e) => set('last_name', e.currentTarget.value)} error={!v.last_name.trim() && 'חובה'} />
+          </>
+        ) : (
+          <TextInput label="שם החברה" required value={v.display_name} onChange={(e) => set('display_name', e.currentTarget.value)} error={!name && 'חובה'} />
+        )}
         <TextInput label="שם כפי שמופיע בדוחות" description="באותיות לטיניות; משמש לזיהוי הבעלים בדוחות המנהלים" dir="ltr"
           value={v.legal_name} onChange={(e) => set('legal_name', e.currentTarget.value)} placeholder={keepOld ? client.display_name : undefined} />
         <Select label="סוג" value={v.kind} allowDeselect={false} onChange={(x) => x && set('kind', x as ClientRow['kind'])}
@@ -76,7 +87,7 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
         {canId && (
           <TextInput label="תעודת זהות" dir="ltr" value={idNo} onChange={(e) => setIdNo(e.currentTarget.value)}
             error={idNo.trim() && /^\d+$/.test(idNo.trim()) && !validIsraeliId(idNo) ? 'ספרת הביקורת לא מתאימה למספר זהות ישראלי' : undefined}
-            description="רגיש: נראה רק למי שיש לו הרשאה למסמכים רגישים" />
+            />
         )}
         <TextInput label="מספר מס" value={v.tax_id} onChange={(e) => set('tax_id', e.currentTarget.value)} />
         <TextInput label="כתובת" value={v.address} onChange={(e) => set('address', e.currentTarget.value)} />
@@ -85,7 +96,7 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
       {keepOld && <Text size="xs" c="dimmed" mt="xs">השם הקודם, "{client!.display_name}", יישמר כשם בדוחות, כדי שהדוחות ימשיכו לזהות את הלקוח.</Text>}
       <Group justify="flex-end" mt="md">
         <Button variant="default" onClick={onClose}>ביטול</Button>
-        <Button onClick={save} loading={busy} disabled={!name || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : 'הוספת לקוח'}</Button>
+        <Button onClick={save} loading={busy} disabled={!name || (person && !v.last_name.trim()) || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : 'הוספת לקוח'}</Button>
       </Group>
     </Modal>
   );
