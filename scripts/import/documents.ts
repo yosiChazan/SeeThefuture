@@ -1,12 +1,13 @@
 // Copies people's documents from Airtable into the system (SPEC decision 64).
 //
 //   node scripts/import/documents.ts          dry run: what would be copied, who is not matched
-//   node scripts/import/documents.ts --run    copy (needs IMPORT_SECRET, the function's secret)
+//   node scripts/import/documents.ts --run    queue the files and copy them
 //
 // Needs AIRTABLE_TOKEN (read-only) and SUPABASE_ACCESS_TOKEN; run with NODE_USE_ENV_PROXY=1.
 // The sandbox reaches neither Airtable's file links nor *.supabase.co, so the copying
-// happens server-side: the database (pg_net) calls the airtable-documents Edge Function
-// with the short-lived attachment links read here. Re-running copies only what is missing.
+// happens server-side: the short-lived attachment links read here go into the queue
+// app.document_imports, and the database (pg_net) calls the airtable-documents Edge
+// Function, which copies them. Re-running copies only what is missing.
 // Prints counts only, never names or files: they are client personal data.
 
 import { cleanName, nameKey } from './lib/parse.ts';
@@ -14,7 +15,6 @@ import { cleanName, nameKey } from './lib/parse.ts';
 const REF = process.env.SUPABASE_PROJECT_REF ?? 'oqvanprfxsdonzldgtnq';
 const AIRTABLE = process.env.AIRTABLE_TOKEN;
 const SUPABASE = process.env.SUPABASE_ACCESS_TOKEN;
-const SECRET = process.env.IMPORT_SECRET;
 const FUNCTION_URL = `https://${REF}.supabase.co/functions/v1/airtable-documents`;
 
 // Base, people table and the attachment fields to copy, with their document type.
@@ -24,6 +24,8 @@ const SOURCES = [
   { base: 'רומניה', country: 'RO', table: 'Persons', fields: { 'תעודת זהות וספח': 'id_card', POA: 'poa', Attachments: 'attachment' } },
   { base: 'גאורגיה', country: 'GE', table: 'person', fields: { 'יפויי כוח': 'poa', Attachments: 'attachment' } },
 ] as const;
+
+export const PASSPORT_NAME = /(passport|pasport|pasaport|паспорт|דרכון)/i;
 
 interface Attachment { id: string; url: string; filename: string; size?: number; type?: string }
 interface Item { url: string; att_id: string; file_name: string; content_type?: string; country: string; party_id: string; doc_type: string }
@@ -78,51 +80,55 @@ async function collect(): Promise<{ items: Item[]; unmatched: number; people: nu
       if (!party) { unmatched += 1; continue; }
       people += 1;
       for (const { a, type } of files) {
-        items.push({ url: a.url, att_id: a.id, file_name: a.filename, content_type: a.type, country: s.country, party_id: party, doc_type: type });
+        // An attachment named as a passport is filed with the passports (decision 64).
+        const docType = type === 'attachment' && PASSPORT_NAME.test(a.filename) ? 'passport' : type;
+        items.push({ url: a.url, att_id: a.id, file_name: a.filename, content_type: a.type, country: s.country, party_id: party, doc_type: docType });
       }
     }
   }
-  return { items, unmatched, people };
+  // One Airtable file can sit in two fields or under two people; it is copied once per
+  // person, under the person's own path, so the queue key adds the person.
+  const seen = new Set<string>();
+  const unique = items.filter((it) => { const k = `${it.att_id}|${it.party_id}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  // The queue is keyed by attachment id: the second person's copy gets its own key.
+  const first = new Map<string, string>();
+  for (const it of unique) {
+    if (!first.has(it.att_id)) first.set(it.att_id, it.party_id);
+    else if (first.get(it.att_id) !== it.party_id) it.att_id = `${it.att_id}_${it.party_id.slice(0, 8)}`;
+  }
+  return { items: unique, unmatched, people };
 }
 
-// Sends the items through pg_net, a few requests at a time, and waits for each answer.
+// Queues the files, then has the database call the function until the queue is empty.
 async function run(items: Item[]) {
-  if (!SECRET) throw new Error('IMPORT_SECRET is not set');
-  await sql('create extension if not exists pg_net');
-  const tally = new Map<string, number>();
-  const chunks: Item[][] = [];
-  for (let i = 0; i < items.length; i += 4) chunks.push(items.slice(i, i + 4));
-  for (let i = 0; i < chunks.length; i += 4) {
-    const wave = chunks.slice(i, i + 4);
-    const ids: number[] = [];
-    for (const c of wave) {
-      const [row] = await sql<{ id: number }>(`select net.http_post(
-        url := ${lit(FUNCTION_URL)},
-        body := ${lit(JSON.stringify({ items: c }))}::jsonb,
-        headers := jsonb_build_object('Content-Type', 'application/json', 'x-import-secret', ${lit(SECRET)}),
-        timeout_milliseconds := 140000) as id`);
-      ids.push(row.id);
-    }
-    for (let tries = 0; ; tries++) {
-      await new Promise((r) => setTimeout(r, 3000));
-      const done = await sql<{ id: number; status_code: number | null; content: string | null; error_msg: string | null }>(
-        `select id, status_code, content, error_msg from net._http_response where id in (${ids.join(',')})`);
-      if (done.length === ids.length || tries > 60) {
-        for (const d of done) {
-          if (d.status_code === 200 && d.content) {
-            for (const v of Object.values(JSON.parse(d.content) as Record<string, string>)) {
-              const k = v.startsWith('error') || v.startsWith('upload') || v.startsWith('record') || v.startsWith('download') ? `failed (${v.slice(0, 60)})` : v;
-              tally.set(k, (tally.get(k) ?? 0) + 1);
-            }
-          } else tally.set(`request failed (${d.status_code ?? d.error_msg})`, (tally.get(`request failed (${d.status_code ?? d.error_msg})`) ?? 0) + 4);
-        }
-        if (done.length < ids.length) tally.set('no answer', (tally.get('no answer') ?? 0) + (ids.length - done.length) * 4);
-        break;
-      }
-    }
-    console.log(`${Math.min((i + 4) * 4, items.length)}/${items.length}`, Object.fromEntries(tally));
+  for (let i = 0; i < items.length; i += 50) {
+    const values = items.slice(i, i + 50).map((it) =>
+      `(${[it.att_id, it.url, it.file_name, it.content_type ?? '', it.country, it.party_id, it.doc_type].map(lit).join(', ')})`).join(',\n');
+    await sql(`insert into app.document_imports (att_id, url, file_name, content_type, country_code, party_id, doc_type)
+      values ${values}
+      on conflict (att_id) do update set url = excluded.url, status = 'pending', result = null, updated_at = now()
+      where app.document_imports.status <> 'done'`);
   }
-  return tally;
+  await sql('create extension if not exists pg_net');
+  for (let round = 0; round < 200; round++) {
+    const [left] = await sql<{ n: number }>(`select count(*)::int as n from app.document_imports where status in ('pending', 'working')`);
+    if (!left.n) break;
+    // Four calls at a time; each copies up to four files.
+    const ids = (await sql<{ id: number }>(`select net.http_post(url := ${lit(FUNCTION_URL)}, body := '{}'::jsonb,
+      headers := '{"Content-Type": "application/json"}'::jsonb, timeout_milliseconds := 140000) as id
+      from generate_series(1, 4)`)).map((r) => r.id);
+    for (let tries = 0; tries < 60; tries++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const [d] = await sql<{ n: number; bad: string | null }>(`select count(*)::int as n,
+        string_agg(distinct coalesce(status_code::text, error_msg), ', ') filter (where status_code is distinct from 200) as bad
+        from net._http_response where id in (${ids.join(',')})`);
+      if (d.n === ids.length) { if (d.bad) console.log(`calls not ok: ${d.bad}`); break; }
+    }
+    const counts = await sql<{ status: string; n: number }>(`select status, count(*)::int as n from app.document_imports group by 1 order by 1`);
+    console.log(Object.fromEntries(counts.map((c) => [c.status, c.n])));
+  }
+  const failed = await sql<{ result: string; n: number }>(`select result, count(*)::int as n from app.document_imports where status = 'failed' group by 1`);
+  if (failed.length) console.log('failed:', failed);
 }
 
 async function main() {
@@ -132,6 +138,8 @@ async function main() {
   for (const it of items) byType.set(`${it.country} ${it.doc_type}`, (byType.get(`${it.country} ${it.doc_type}`) ?? 0) + 1);
   console.log(`${items.length} files of ${people} people`, Object.fromEntries(byType));
   console.log(`${unmatched} people with files in Airtable were not found in the system`);
+  const shared = items.filter((it) => it.att_id.includes('_')).length;
+  if (shared) console.log(`${shared} files also belong to another person: copied for each`);
   if (process.argv.includes('--run')) await run(items);
 }
 
