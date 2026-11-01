@@ -25,6 +25,8 @@ const SOURCES = [
   { base: 'גאורגיה', country: 'GE', table: 'person', fields: { 'יפויי כוח': 'poa', Attachments: 'attachment' } },
 ] as const;
 
+export const PASSPORT_NAME = /(passport|pasport|pasaport|паспорт|דרכון)/i;
+
 interface Attachment { id: string; url: string; filename: string; size?: number; type?: string }
 interface Item { url: string; att_id: string; file_name: string; content_type?: string; country: string; party_id: string; doc_type: string }
 
@@ -78,7 +80,9 @@ async function collect(): Promise<{ items: Item[]; unmatched: number; people: nu
       if (!party) { unmatched += 1; continue; }
       people += 1;
       for (const { a, type } of files) {
-        items.push({ url: a.url, att_id: a.id, file_name: a.filename, content_type: a.type, country: s.country, party_id: party, doc_type: type });
+        // An attachment named as a passport is filed with the passports (decision 64).
+        const docType = type === 'attachment' && PASSPORT_NAME.test(a.filename) ? 'passport' : type;
+        items.push({ url: a.url, att_id: a.id, file_name: a.filename, content_type: a.type, country: s.country, party_id: party, doc_type: docType });
       }
     }
   }
