@@ -180,3 +180,19 @@ export function useLease(id: string) {
     ).eq('id', id).single()) as unknown as LeaseCardRow,
   });
 }
+
+// The purchase of a property, with its payments (SPEC decision 70).
+export interface DealRow {
+  id: string; signed_on: string | null; status: 'lead' | 'in_progress' | 'completed' | 'cancelled';
+  total_price: number | null; price_currency: Currency | null; notes: string | null;
+  client: { id: string; display_name: string } | null; referrer: { id: string; display_name: string } | null;
+  installments: { id: string; due_date: string | null; amount: number; currency: Currency; notes: string | null; paid_txn_id: string | null }[];
+}
+export function usePropertyDeals(propertyId: string) {
+  return useQuery({
+    queryKey: ['deals', propertyId],
+    queryFn: async () => must(await supabase.from('deals').select(`id, signed_on, status, total_price, price_currency, notes,
+      client:parties!deals_client_party_id_fkey(id, display_name), referrer:parties!deals_referrer_party_id_fkey(id, display_name),
+      installments(id, due_date, amount, currency, notes, paid_txn_id)`).eq('property_id', propertyId).order('signed_on')) as unknown as DealRow[],
+  });
+}

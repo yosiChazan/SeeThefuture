@@ -3,12 +3,21 @@ import { IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
+import { EntityDocuments, type DocType } from '../components/EntityDocuments';
+import { PropertyDeals } from '../components/PropertyDeals';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { LeaseTable } from '../components/LeaseTable';
 import { COUNTRY_HE, date, isCurrentOwnership, propertyTitle } from '../lib/format';
 import { usePropertyEntries, useProperty } from '../lib/queries';
 import { AccountLedger } from '../components/AccountLedger';
+
+// Kinds of property documents (SPEC decision 70).
+const PROPERTY_DOC_TYPES: DocType[] = [
+  { value: 'purchase_contract', label: 'חוזה רכישה' }, { value: 'land_registry', label: 'נסח טאבו' }, { value: 'land_book', label: 'Land book' },
+  { value: 'poa', label: 'ייפוי כוח' }, { value: 'management_contract', label: 'חוזה ניהול' }, { value: 'caveat', label: 'הערת אזהרה' },
+  { value: 'payment_proof', label: 'הוכחת תשלום / קבלה' }, { value: 'bank_document', label: 'מסמך בנק' }, { value: 'attachment', label: 'מסמך אחר' },
+];
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -82,10 +91,14 @@ export function PropertyCard() {
             </Table>
           </Paper>
 
+          <PropertyDeals propertyId={p.id} />
+
           <Paper withBorder p="md">
             <Title order={4} mb="sm">חוזי שכירות</Title>
             <LeaseTable leases={leases} country={p.country_code} />
           </Paper>
+
+          <EntityDocuments entityType="property" entityId={p.id} country={p.country_code} types={PROPERTY_DOC_TYPES} title="מסמכי הנכס" />
 
           <Paper withBorder p="md">
             <Title order={4} mb={4}>תנועות</Title>
