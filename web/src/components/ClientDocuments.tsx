@@ -17,31 +17,37 @@ interface Doc { id: string; country_code: Country; doc_type: string; storage_pat
 const PASSPORT_TYPES = ['passport', 'id_card'];
 const isPassport = (d: Doc) => PASSPORT_TYPES.includes(d.doc_type);
 const DOC_TYPE_HE: Record<string, string> = {
-  id_card: 'תעודת זהות וספח', passport: 'דרכון', poa: 'ייפוי כוח', attachment: 'קובץ מצורף',
+  id_card: 'תעודת זהות וספח', passport: 'דרכון', poa: 'ייפוי כוח', attachment: 'מסמך אחר',
 };
 
-function DocTable({ docs, canMove, onOpen, onMove }: { docs: Doc[]; canMove: (d: Doc) => boolean; onOpen: (d: Doc) => void; onMove: (d: Doc, toPassport: boolean) => void }) {
+// The type of each document can be changed in place (SPEC decision 69): a scan that is
+// really a passport or an ID card is marked as one, and moves to the passports group.
+const TYPE_OPTIONS = [
+  { value: 'passport', label: 'דרכון' }, { value: 'id_card', label: 'תעודת זהות וספח' },
+  { value: 'poa', label: 'ייפוי כוח' }, { value: 'attachment', label: 'מסמך אחר' },
+];
+
+function DocTable({ docs, canChange, onOpen, onType }: { docs: Doc[]; canChange: (d: Doc) => boolean; onOpen: (d: Doc) => void; onType: (d: Doc, type: string) => void }) {
   if (!docs.length) return <Text c="dimmed" size="sm">אין</Text>;
   return (
     <Table.ScrollContainer minWidth={560}>
       <Table verticalSpacing="xs">
         <Table.Thead>
-          <Table.Tr><Table.Th>קובץ</Table.Th><Table.Th>סוג</Table.Th><Table.Th>מדינה</Table.Th><Table.Th>נוסף</Table.Th><Table.Th>סיווג</Table.Th></Table.Tr>
+          <Table.Tr><Table.Th>קובץ</Table.Th><Table.Th>סוג המסמך</Table.Th><Table.Th>מדינה</Table.Th><Table.Th>נוסף</Table.Th></Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {docs.map((d) => (
             <Table.Tr key={d.id}>
               <Table.Td><Anchor size="sm" dir="ltr" onClick={() => onOpen(d)}>{d.file_name ?? d.storage_path.split('/').pop()}</Anchor></Table.Td>
-              <Table.Td><Text size="sm">{DOC_TYPE_HE[d.doc_type] ?? d.doc_type}</Text></Table.Td>
+              <Table.Td w={190}>
+                {canChange(d) ? (
+                  <Select size="xs" allowDeselect={false} aria-label="סוג המסמך" value={d.doc_type}
+                    data={TYPE_OPTIONS.some((o) => o.value === d.doc_type) ? TYPE_OPTIONS : [...TYPE_OPTIONS, { value: d.doc_type, label: DOC_TYPE_HE[d.doc_type] ?? d.doc_type }]}
+                    onChange={(v) => v && v !== d.doc_type && onType(d, v)} />
+                ) : <Text size="sm">{DOC_TYPE_HE[d.doc_type] ?? d.doc_type}</Text>}
+              </Table.Td>
               <Table.Td>{COUNTRY_HE[d.country_code]}</Table.Td>
               <Table.Td>{date(d.uploaded_at.slice(0, 10))}</Table.Td>
-              <Table.Td w={150}>
-                {canMove(d) ? (
-                  <Select size="xs" allowDeselect={false} value={isPassport(d) ? 'passport' : 'other'}
-                    data={[{ value: 'passport', label: 'דרכונים' }, { value: 'other', label: 'מסמכים נוספים' }]}
-                    onChange={(v) => v && (v === 'passport') !== isPassport(d) && onMove(d, v === 'passport')} />
-                ) : <Text size="xs" c="dimmed">{isPassport(d) ? 'דרכונים' : 'מסמכים נוספים'}</Text>}
-              </Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
@@ -50,10 +56,7 @@ function DocTable({ docs, canMove, onOpen, onMove }: { docs: Doc[]; canMove: (d:
   );
 }
 
-const UPLOAD_TYPES = [
-  { value: 'passport', label: 'דרכון' }, { value: 'id_card', label: 'תעודת זהות וספח' },
-  { value: 'poa', label: 'ייפוי כוח' }, { value: 'attachment', label: 'מסמך אחר' },
-];
+const UPLOAD_TYPES = TYPE_OPTIONS;
 const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
 
 // Adds documents to a person (SPEC decision 65). Every document is sensitive (decision 64),
@@ -140,9 +143,10 @@ export function ClientDocuments({ partyId, countries = [] }: { partyId: string; 
   }
 
   // Moving to "other" files a passport as an attachment; a power of attorney stays one.
-  async function move(d: Doc, toPassport: boolean) {
-    const { error } = await supabase.from('documents').update({ doc_type: toPassport ? 'passport' : 'attachment' }).eq('id', d.id);
+  async function setType(d: Doc, type: string) {
+    const { error } = await supabase.from('documents').update({ doc_type: type }).eq('id', d.id);
     if (error) notifications.show({ color: 'red', message: error.message });
+    else notifications.show({ color: 'teal', message: `${d.file_name ?? 'המסמך'} סומן כ${DOC_TYPE_HE[type] ?? type}` });
     await qc.invalidateQueries({ queryKey: ['documents', partyId] });
   }
 
@@ -168,7 +172,7 @@ export function ClientDocuments({ partyId, countries = [] }: { partyId: string; 
           {([['דרכונים', ds.filter(isPassport)], ['מסמכים נוספים', ds.filter((d) => !isPassport(d))]] as const).map(([title, list]) => (
             <div key={title}>
               <Group gap="xs" mb={4}><Text fw={600} size="sm">{title}</Text><Badge size="sm" variant="light">{list.length}</Badge></Group>
-              <DocTable docs={list} canMove={(d) => access.canEdit(d.country_code)} onOpen={open} onMove={move} />
+              <DocTable docs={list} canChange={(d) => access.canEdit(d.country_code)} onOpen={open} onType={setType} />
             </div>
           ))}
         </Stack>
