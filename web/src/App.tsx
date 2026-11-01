@@ -7,6 +7,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Intake } from './pages/Intake';
 import { IntakeBatch } from './pages/IntakeBatch';
 import { Leases } from './pages/Leases';
+import { LeaseCard } from './pages/LeaseCard';
 import { Properties } from './pages/Properties';
 import { PropertyCard } from './pages/PropertyCard';
 import { DropboxCallback } from './pages/DropboxCallback';
@@ -24,6 +25,7 @@ export function App() {
             <Route path="clients" element={<Clients />} />
             <Route path="clients/:id" element={<ClientCard />} />
             <Route path="leases" element={<Leases />} />
+            <Route path="leases/:id" element={<LeaseCard />} />
             <Route path="intake" element={<Intake />} />
             <Route path="intake/:id" element={<IntakeBatch />} />
             <Route path="settings" element={<Settings />} />

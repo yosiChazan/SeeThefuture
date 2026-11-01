@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { must, supabase } from './supabase';
-import type { Account, Country, Lease, Property } from './types';
+import type { Account, Country, Currency, Lease, Property } from './types';
 
 const LEASE_COLS = `id, property_id, start_date, end_date, rent_amount, rent_currency, deposit_amount, deposit_currency,
   brokerage_fee, brokerage_currency, collect_day, withholding_tax_pct, notes, tenant:parties(id, display_name)`;
@@ -160,4 +160,23 @@ export function useIdentity(partyId: string, enabled: boolean) {
 export async function saveIdentity(partyId: string, idNumber: string | null, source: string) {
   if (!idNumber) return must(await supabase.from('party_identity').delete().eq('party_id', partyId));
   return must(await supabase.from('party_identity').upsert({ party_id: partyId, id_number: idNumber, source, updated_at: new Date().toISOString() }));
+}
+
+// One lease with its property, owners and tenant, for the lease card (SPEC decision 68).
+export interface LeaseCardRow extends Lease {
+  payment_currency: Currency | null;
+  property: Pick<Property, 'id' | 'unit_no' | 'country_code' | 'status'> & {
+    building: { name: string; address: string | null; city: { name_he: string }; project: { name: string } | null };
+    ownerships: { share_pct: number; valid_from: string; valid_to: string | null; party: { id: string; display_name: string } }[];
+  };
+}
+export function useLease(id: string) {
+  return useQuery({
+    queryKey: ['lease', id],
+    queryFn: async () => must(await supabase.from('leases').select(
+      `${LEASE_COLS}, payment_currency, property:properties(id, unit_no, country_code, status,
+        building:buildings(name, address, city:cities(name_he), project:projects(name)),
+        ownerships(share_pct, valid_from, valid_to, party:parties(id, display_name)))`,
+    ).eq('id', id).single()) as unknown as LeaseCardRow,
+  });
 }
