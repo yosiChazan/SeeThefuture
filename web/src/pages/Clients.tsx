@@ -1,16 +1,49 @@
-import { Anchor, Button, Group, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
-import { IconPlus, IconSearch } from '@tabler/icons-react';
+import { Anchor, Button, Group, Paper, Stack, Table, Text, TextInput, Title, UnstyledButton } from '@mantine/core';
+import { IconChevronDown, IconChevronUp, IconPlus, IconSearch, IconSelector } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { ClientForm } from '../components/ClientForm';
 import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CountryBadge, CountryFilter, QueryState } from '../components/common';
 import { idNumberOf, useClients, type ClientRow } from '../lib/queries';
+import { COUNTRY_HE } from '../lib/format';
 import type { Country } from '../lib/types';
 
 // Countries come from the client's properties; parties themselves span countries.
 const countriesOf = (c: ClientRow) => [...new Set(c.ownerships.map((o) => o.property?.country_code).filter((x): x is Country => !!x))];
 const propertyCount = (c: ClientRow) => new Set(c.ownerships.filter((o) => !o.valid_to && o.property).map((o) => o.property!.id)).size;
+
+// Sorting by a column (SPEC decision 73): a click sorts by it, a second click reverses.
+// Empty values stay at the bottom either way. Kept in the address, like the filters.
+type SortKey = 'first' | 'last' | 'id' | 'countries' | 'properties';
+const he = (a: string, b: string) => a.localeCompare(b, 'he', { numeric: true });
+const byName = (a: ClientRow, b: ClientRow) => he(a.last_name ?? a.display_name, b.last_name ?? b.display_name) || he(a.first_name ?? '', b.first_name ?? '');
+const SORT_VALUE: Record<SortKey, (c: ClientRow) => string | number | null> = {
+  first: (c) => c.first_name || (c.last_name ? null : c.display_name),
+  last: (c) => c.last_name || c.display_name,
+  id: (c) => idNumberOf(c),
+  countries: (c) => countriesOf(c).map((x) => COUNTRY_HE[x]).sort(he).join(', ') || null,
+  properties: (c) => propertyCount(c) || null,
+};
+function compare(key: SortKey, desc: boolean) {
+  return (a: ClientRow, b: ClientRow) => {
+    const x = SORT_VALUE[key](a), y = SORT_VALUE[key](b);
+    if (x === null || y === null) return x === y ? byName(a, b) : x === null ? 1 : -1;
+    const d = typeof x === 'number' && typeof y === 'number' ? x - y : he(String(x), String(y));
+    return (desc ? -d : d) || byName(a, b);
+  };
+}
+
+function SortHeader({ label, k, sort, desc, onSort }: { label: string; k: SortKey; sort: SortKey; desc: boolean; onSort: (k: SortKey) => void }) {
+  const Icon = sort !== k ? IconSelector : desc ? IconChevronDown : IconChevronUp;
+  return (
+    <Table.Th>
+      <UnstyledButton onClick={() => onSort(k)} aria-label={`מיון לפי ${label}`}>
+        <Group gap={4} wrap="nowrap"><Text size="sm" fw={700}>{label}</Text><Icon size={14} stroke={1.6} opacity={sort === k ? 1 : 0.5} /></Group>
+      </UnstyledButton>
+    </Table.Th>
+  );
+}
 
 export function Clients() {
   const [params, setParams] = useSearchParams();
@@ -21,6 +54,9 @@ export function Clients() {
   const canAdd = access.isAdmin || access.countries.some((x) => access.canEdit(x));
   const [adding, setAdding] = useState(false);
   const update = (k: string, v: string) => setParams((p) => { p.set(k, v); return p; }, { replace: true });
+  const sort = (['first', 'last', 'id', 'countries', 'properties'].includes(params.get('sort') ?? '') ? params.get('sort') : 'last') as SortKey;
+  const desc = params.get('dir') === 'desc';
+  const onSort = (k: SortKey) => setParams((p) => { p.set('sort', k); p.set('dir', k === sort && !desc ? 'desc' : 'asc'); return p; }, { replace: true });
 
   const rows = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -28,9 +64,9 @@ export function Clients() {
       .filter((c) => country === 'all' || countriesOf(c).includes(country as Country))
       .filter((c) => !s || [c.display_name, c.first_name, c.last_name, c.email, c.phone, idNumberOf(c)].some((x) => x?.toLowerCase().includes(s))
         || (/^\d{3,}$/.test(s) && (idNumberOf(c) ?? '').replace(/^0+/, '').includes(s.replace(/^0+/, ''))))
-      // By family name; a name not split yet sorts by its full name (SPEC decision 72).
-      .sort((a, b) => (a.last_name ?? a.display_name).localeCompare(b.last_name ?? b.display_name, 'he') || (a.first_name ?? '').localeCompare(b.first_name ?? '', 'he'));
-  }, [q.data, country, search]);
+      // Default: by family name; a name not split yet sorts by its full name (SPEC decision 72).
+      .sort(compare(sort, desc));
+  }, [q.data, country, search, sort, desc]);
 
   return (
     <Stack>
@@ -49,7 +85,12 @@ export function Clients() {
           <Table.ScrollContainer minWidth={900}>
             <Table striped highlightOnHover verticalSpacing="xs">
               <Table.Thead>
-                <Table.Tr><Table.Th>שם פרטי</Table.Th><Table.Th>שם משפחה</Table.Th><Table.Th>ת.ז.</Table.Th><Table.Th>מדינות</Table.Th><Table.Th>נכסים</Table.Th><Table.Th>טלפון</Table.Th><Table.Th>מייל</Table.Th></Table.Tr>
+                <Table.Tr>
+                  {([['שם פרטי', 'first'], ['שם משפחה', 'last'], ['ת.ז.', 'id'], ['מדינות', 'countries'], ['נכסים', 'properties']] as const).map(([label, k]) => (
+                    <SortHeader key={k} label={label} k={k} sort={sort} desc={desc} onSort={onSort} />
+                  ))}
+                  <Table.Th>טלפון</Table.Th><Table.Th>מייל</Table.Th>
+                </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {rows.map((c) => (
