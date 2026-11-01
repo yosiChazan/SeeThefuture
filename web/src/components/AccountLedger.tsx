@@ -8,7 +8,9 @@ const FROM = '2026-01-01';
 
 // One card per account: entries with a running total. From 2026 by default, with
 // everything before 1.1.2026 summed into one opening line; or the whole history.
-export function AccountLedger({ accounts, entries }: { accounts: Account[]; entries: EntryRow[] }) {
+// On a property card only that property's entries are given, so the total is the
+// property's share of the account, and the account's owner is named.
+export function AccountLedger({ accounts, entries, property = false }: { accounts: Account[]; entries: EntryRow[]; property?: boolean }) {
   const [range, setRange] = useState<'2026' | 'all'>('2026');
   const shown = accounts.filter((a) => entries.some((e) => e.account_id === a.id));
   return (
@@ -21,11 +23,11 @@ export function AccountLedger({ accounts, entries }: { accounts: Account[]; entr
         const before = range === '2026' ? mine.filter((e) => e.transaction.occurred_on < FROM) : [];
         const rows = range === '2026' ? mine.filter((e) => e.transaction.occurred_on >= FROM) : mine;
         let running = before.reduce((s, e) => s + Number(e.amount), 0);
-        const label = amountLabel(a.kind);
+        const label = property ? 'מהנכס' : amountLabel(a.kind);
         return (
           <Paper key={a.id} withBorder p="sm">
             <Group justify="space-between" mb="xs">
-              <Text fw={600} size="sm">{ACCOUNT_KIND_HE[a.kind] ?? a.kind} · {a.holder.display_name} · {a.currency}</Text>
+              <Text fw={600} size="sm">{ACCOUNT_KIND_HE[a.kind] ?? a.kind} · {a.holder.display_name} · {a.currency}{property ? ` · של ${a.beneficiary.display_name}` : ''}</Text>
               <Text size="sm">{label}: <b>{money(mine.reduce((s, e) => s + Number(e.amount), 0), a.currency)}</b></Text>
             </Group>
             <Table.ScrollContainer minWidth={600}>
@@ -37,7 +39,7 @@ export function AccountLedger({ accounts, entries }: { accounts: Account[]; entr
                   {range === '2026' && (
                     <Table.Tr fw={600}>
                       <Table.Td>01.01.2026</Table.Td>
-                      <Table.Td colSpan={2}>{a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
+                      <Table.Td colSpan={2}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
                       <Table.Td />
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
                     </Table.Tr>

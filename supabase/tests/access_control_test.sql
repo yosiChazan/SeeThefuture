@@ -393,6 +393,22 @@ select pg_temp.check(
   'a new lease is added with a new company tenant');
 reset role;
 
+-- Integrations: admins only -------------------------------------------------
+
+insert into app.integrations (name, refresh_token, settings) values ('dropbox', 'secret-token', '{"shared_link": "https://example.test/x"}');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.integrations) = 0, 'finance cannot read the Dropbox token');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.integrations) = 0, 'management cannot read the Dropbox token');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'aal1');
+select pg_temp.check((select count(*) from app.integrations) = 0, 'an admin without the TOTP code cannot read it');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check((select refresh_token from app.integrations where name = 'dropbox') = 'secret-token', 'an admin reads it');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

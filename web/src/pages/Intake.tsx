@@ -1,10 +1,11 @@
 import { Alert, Anchor, Badge, Button, FileInput, Group, List, Modal, Paper, Select, Stack, Table, Text, Title } from '@mantine/core';
-import { IconFileSpreadsheet, IconPlus } from '@tabler/icons-react';
+import { IconBrandDropbox, IconFileSpreadsheet, IconPlus } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CountryBadge, QueryState } from '../components/common';
+import { DropboxPull } from '../components/DropboxPull';
 import { ADAPTERS } from '../intake/adapters';
 import type { ParseResult } from '../intake/types';
 import { useAccess } from '../lib/access';
@@ -87,12 +88,19 @@ export function Intake() {
   const access = useAccess();
   const batches = useBatches();
   const [adding, setAdding] = useState(false);
+  const [pulling, setPulling] = useState(false);
+  const sources = useSources();
   const canAdd = access.countries.some((c) => access.canEdit(c));
+  // The Dropbox connection is readable by admins only (SPEC decision 53).
+  const itai = sources.data?.find((s) => s.adapter === 'itai_client_xlsx');
   return (
     <Stack>
       <Group justify="space-between">
         <Title order={2}>קליטת דוחות</Title>
-        {canAdd && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>דוח חדש</Button>}
+        <Group>
+          {access.isAdmin && itai && <Button variant="default" leftSection={<IconBrandDropbox size={16} />} onClick={() => setPulling(true)}>משיכה מהדרופבוקס</Button>}
+          {canAdd && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>דוח חדש</Button>}
+        </Group>
       </Group>
       <Text c="dimmed" size="sm">דוח שנקלט נבדק כאן לפני שהוא נרשם בכרטיסי החשבון. רק עובד עם הרשאת כספים מאשר רישום.</Text>
       <QueryState q={batches}>{(bs) => (
@@ -121,6 +129,7 @@ export function Intake() {
         </Paper>
       )}</QueryState>
       {adding && <NewReport onClose={() => setAdding(false)} />}
+      {pulling && itai && <DropboxPull source={itai} onClose={() => setPulling(false)} />}
     </Stack>
   );
 }
