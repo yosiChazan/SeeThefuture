@@ -207,6 +207,21 @@ export function usePropertyDeals(propertyId: string) {
   });
 }
 
+// Money paid around a purchase: seller, developer, lawyers, notaries (SPEC decision 83).
+export interface PurchasePaymentRow {
+  id: string; paid_on: string | null; kind: 'expense' | 'income' | 'loan' | 'transfer';
+  amount: number | null; currency: Currency | null; payer_name: string | null; payee_name: string | null; notes: string | null;
+  payer: { id: string; display_name: string } | null; payee: { id: string; display_name: string } | null;
+}
+export function usePurchasePayments(propertyId: string) {
+  return useQuery({
+    queryKey: ['purchase_payments', propertyId],
+    queryFn: async () => must(await supabase.from('purchase_payments').select(`id, paid_on, kind, amount, currency, payer_name, payee_name, notes,
+      payer:parties!purchase_payments_payer_party_id_fkey(id, display_name), payee:parties!purchase_payments_payee_party_id_fkey(id, display_name)`)
+      .eq('property_id', propertyId).order('paid_on', { nullsFirst: false })) as unknown as PurchasePaymentRow[],
+  });
+}
+
 // A property's services and its charges history (SPEC decision 71).
 export interface ServiceRow { id: string; kind: string; provider: string | null; client_code: string | null; status: string | null; deadline: string | null; notes: string | null }
 export interface ChargeRow { id: string; period: string; kind: string; amount: number; currency: Currency; due_date: string | null; payer: string; status: string; notes: string | null }
