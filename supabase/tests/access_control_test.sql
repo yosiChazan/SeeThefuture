@@ -679,6 +679,31 @@ select pg_temp.check((select count(*) from app.last_rent_by_property()) >= 1, 'l
 reset role;
 delete from app.party_links; delete from app.completeness_dismissals;
 
+-- Assignments, activities and company partners (decisions 79-81) ------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.contact_assignments (party_id, building_id, role) values ('10000000-0000-0000-0000-000000000002', '22000000-0000-0000-0000-000000000001', 'עו"ד');
+insert into app.activities (entity_type, entity_id, title, body) values ('party', '10000000-0000-0000-0000-000000000001', 'שיחה', 'דיברנו על החוזה');
+insert into app.company_partners (company_party_id, partner_party_id, share_pct) values ('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002', 50);
+select pg_temp.check((select count(*) from app.contact_assignments) = 1 and (select count(*) from app.activities) = 1 and (select count(*) from app.company_partners) = 1,
+  'an editor assigns a contact, writes an activity and adds a company partner');
+do $$ begin
+  insert into app.contact_assignments (party_id, building_id, city_id) values ('10000000-0000-0000-0000-000000000002', '22000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001');
+  raise exception 'FAILED: an assignment to two places at once';
+exception when check_violation then raise notice 'ok - an assignment names exactly one place';
+end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+do $$ begin
+  insert into app.activities (entity_type, entity_id, title) values ('party', '10000000-0000-0000-0000-000000000001', 'x');
+  raise exception 'FAILED: staff without edit rights wrote an activity';
+exception when insufficient_privilege then raise notice 'ok - writing an activity needs edit rights';
+end $$;
+select pg_temp.check((select count(*) from app.activities) = 1, 'staff without edit rights read activities');
+reset role;
+select pg_temp.check(exists (select 1 from app.audit_log where table_name = 'activities'), 'activities are audited');
+delete from app.contact_assignments; delete from app.activities; delete from app.company_partners;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

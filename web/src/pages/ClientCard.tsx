@@ -3,6 +3,7 @@ import { IconAddressBook, IconPencil, IconPlus, IconTrash, IconUserCheck } from 
 import { notifications } from '@mantine/notifications';
 import { useQueryClient } from '@tanstack/react-query';
 import { MemberOf, Partners } from '../components/Partners';
+import { Activities, CompanyPartners, ContactAssignments, PartnerIn } from '../components/CardExtras';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
@@ -10,6 +11,7 @@ import { ClientDocuments } from '../components/ClientDocuments';
 import { ClientPropertyActivity } from '../components/ClientPropertyActivity';
 import { ClientForm } from '../components/ClientForm';
 import { PropertyForm } from '../components/PropertyForm';
+import { LeaseTable } from '../components/LeaseTable';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { AccountLedger } from '../components/AccountLedger';
@@ -71,6 +73,7 @@ export function ClientCard() {
             {canEdit && <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>עריכה</Button>}
           </Group>
         </Group>
+        {isClient && <PartnerIn partyId={c.id} />}
         {memberOf && <MemberOf link={memberOf} canEdit={canEdit} />}
         {deleting && <DeleteRecord kind="client" id={c.id} name={c.display_name} onClose={() => setDeleting(false)} onDeleted={() => navigate('/clients', { replace: true })} />}
         {editing && <ClientForm client={c} idNumber={identity.data?.id_number ?? null} opened onClose={() => setEditing(false)} />}
@@ -102,8 +105,15 @@ export function ClientCard() {
           {c.notes && <Text size="sm" mt="md" style={{ whiteSpace: 'pre-wrap' }}>{c.notes}</Text>}
         </Paper>
 
-        {isClient && !memberOf && <Partners mainId={c.id} members={members} canEdit={canEdit} />}
+        {/* A contact is responsible for places, it does not own them (SPEC decision 79). */}
+        {!isClient && <ContactAssignments partyId={c.id} />}
+        <Activities entityType="party" entityId={c.id} />
+        {!isClient && <ClientDocuments partyId={c.id} countries={[]} />}
 
+        {isClient && c.kind === 'company' && <CompanyPartners companyId={c.id} />}
+        {isClient && !memberOf && c.kind === 'person' && <Partners mainId={c.id} members={members} canEdit={canEdit} />}
+
+        {isClient && <>
         <Paper withBorder p="md">
           <Group justify="space-between" mb="sm">
             <Title order={4}>נכסים</Title>
@@ -138,6 +148,15 @@ export function ClientCard() {
             </Table.ScrollContainer>
           ) : <Text c="dimmed" size="sm">אין נכסים</Text>}</QueryState>
         </Paper>
+
+        {/* The leases of the client's properties (of a company: all its contracts, decision 81). */}
+        {properties.data && properties.data.some((p) => p.leases.length) && (
+          <Paper withBorder p="md">
+            <Title order={4} mb="sm">חוזי שכירות</Title>
+            <LeaseTable showProperty leases={properties.data.flatMap((p) => p.leases.map((l) => ({ ...l, property: { id: p.id, unit_no: p.unit_no, country_code: p.country_code, status: p.status, building: p.building } })))
+              .sort((a, b) => (b.start_date ?? '').localeCompare(a.start_date ?? ''))} />
+          </Paper>
+        )}
 
         <Paper withBorder p="md">
           <Title order={4} mb={4}>חשבונות ויתרות</Title>
@@ -179,6 +198,7 @@ export function ClientCard() {
               : <AccountLedger accounts={as} entries={entries.data ?? []} />
           )}</QueryState>
         </Paper>
+        </>}
       </Stack>
       );
     }}</QueryState>
