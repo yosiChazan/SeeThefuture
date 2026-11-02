@@ -12,8 +12,8 @@ const STATUS: Record<DealRow['status'], { label: string; color: string }> = {
 
 // What happened on the client's properties outside the ledger: purchases and bills
 // (SPEC decision 74). Each bill shows only for the months the client owned the property.
-export function ClientPropertyActivity({ partyId, properties }: { partyId: string; properties: Property[] }) {
-  const q = useClientPropertyActivity(partyId);
+export function ClientPropertyActivity({ partyIds, properties }: { partyIds: string[]; properties: Property[] }) {
+  const q = useClientPropertyActivity(partyIds);
   if (!q.data) return null;
   const title = new Map(properties.map((p) => [p.id, propertyTitle(p)]));
   const share = new Map(q.data.owned.filter((o) => !o.valid_to).map((o) => [o.property_id, Number(o.share_pct)]));

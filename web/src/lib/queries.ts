@@ -54,6 +54,7 @@ export interface ClientRow {
   address: string | null;
   notes: string | null;
   referred_by: { id: string; display_name: string } | null;
+  party_roles?: { role: string }[];
   ownerships: { valid_to: string | null; property: { id: string; country_code: Country } | null }[];
 }
 
@@ -76,11 +77,12 @@ export function useClient(id: string) {
   });
 }
 
-export function useClientProperties(partyId: string) {
+export function useClientProperties(partyIds: string | string[]) {
+  const party = ([] as string[]).concat(partyIds);
   return useQuery({
-    queryKey: ['client-properties', partyId],
+    queryKey: ['client-properties', party],
     queryFn: async () => {
-      const ids = must(await supabase.from('ownerships').select('property_id').eq('party_id', partyId)) as { property_id: string }[];
+      const ids = must(await supabase.from('ownerships').select('property_id').in('party_id', party)) as { property_id: string }[];
       if (!ids.length) return [] as Property[];
       return must(await supabase.from('properties').select(PROPERTY_COLS).in('id', [...new Set(ids.map((r) => r.property_id))])) as unknown as Property[];
     },
@@ -91,12 +93,13 @@ const ACCOUNT_COLS = `id, country_code, currency, kind, label, bank_name, iban, 
   holder:parties!accounts_holder_party_id_fkey(id, display_name),
   beneficiary:parties!accounts_beneficiary_party_id_fkey(id, display_name)`;
 
-export function useClientAccounts(partyId: string) {
+export function useClientAccounts(partyIds: string | string[]) {
+  const party = ([] as string[]).concat(partyIds);
   return useQuery({
-    queryKey: ['client-accounts', partyId],
+    queryKey: ['client-accounts', party],
     queryFn: async () => {
-      const accounts = must(await supabase.from('accounts').select(ACCOUNT_COLS).eq('beneficiary_party_id', partyId)) as unknown as Account[];
-      const balances = must(await supabase.from('account_balances').select('account_id, balance').eq('beneficiary_party_id', partyId)) as { account_id: string; balance: number }[];
+      const accounts = must(await supabase.from('accounts').select(ACCOUNT_COLS).in('beneficiary_party_id', party)) as unknown as Account[];
+      const balances = must(await supabase.from('account_balances').select('account_id, balance').in('beneficiary_party_id', party)) as { account_id: string; balance: number }[];
       const byId = new Map(balances.map((b) => [b.account_id, Number(b.balance)]));
       return accounts.map((a) => ({ ...a, balance: byId.get(a.id) ?? 0 }));
     },
@@ -230,11 +233,12 @@ export function usePropertyCharges(propertyId: string) {
 
 // The charges and purchases of the properties a client owns, each within the client's
 // ownership period (SPEC decision 74). Display only: the ledger is unchanged.
-export function useClientPropertyActivity(partyId: string) {
+export function useClientPropertyActivity(partyIds: string | string[]) {
+  const party = ([] as string[]).concat(partyIds);
   return useQuery({
-    queryKey: ['client-activity', partyId],
+    queryKey: ['client-activity', party],
     queryFn: async () => {
-      const owned = must(await supabase.from('ownerships').select('property_id, share_pct, valid_from, valid_to').eq('party_id', partyId)) as
+      const owned = must(await supabase.from('ownerships').select('property_id, share_pct, valid_from, valid_to').in('party_id', party)) as
         { property_id: string; share_pct: number; valid_from: string; valid_to: string | null }[];
       const ids = [...new Set(owned.map((o) => o.property_id))];
       if (!ids.length) return { charges: [] as (ChargeRow & { property_id: string })[], deals: [] as (DealRow & { property_id: string })[], owned };
@@ -254,3 +258,36 @@ export function useClientPropertyActivity(partyId: string) {
     },
   });
 }
+
+// Everyone who is not a client: tenants, suppliers, lawyers, managers, marketers and
+// parties set aside as contacts (SPEC decision 76).
+export interface ContactRow {
+  id: string; display_name: string; kind: 'person' | 'company'; phone: string | null; email: string | null; notes: string | null;
+  party_roles: { role: string }[];
+}
+export function useContacts() {
+  return useQuery({
+    queryKey: ['contacts'],
+    queryFn: async () => {
+      const rows = must(await supabase.from('parties').select('id, display_name, kind, phone, email, notes, party_roles(role)').order('display_name')) as ContactRow[];
+      return rows.filter((p) => !p.party_roles.some((r) => r.role === 'client'));
+    },
+  });
+}
+
+export async function setClientRole(partyId: string, asClient: boolean) {
+  must(await supabase.from('party_roles').delete().eq('party_id', partyId).eq('role', asClient ? 'contact' : 'client'));
+  must(await supabase.from('party_roles').upsert({ party_id: partyId, role: asClient ? 'client' : 'contact' }, { onConflict: 'party_id,role', ignoreDuplicates: true }));
+}
+
+// Partners shown as one client (SPEC decision 77): the member's card points to the main
+// client, and the main client's card shows the member's properties and accounts too.
+export interface PartyLink { member_party_id: string; main_party_id: string; relation: 'spouse' | 'partner' | 'authorized'; member: { id: string; display_name: string; phone: string | null; email: string | null }; main: { id: string; display_name: string } }
+export function usePartyLinks() {
+  return useQuery({
+    queryKey: ['party-links'],
+    queryFn: async () => must(await supabase.from('party_links').select(`member_party_id, main_party_id, relation,
+      member:parties!party_links_member_party_id_fkey(id, display_name, phone, email), main:parties!party_links_main_party_id_fkey(id, display_name)`)) as unknown as PartyLink[],
+  });
+}
+export const RELATION_HE: Record<PartyLink['relation'], string> = { spouse: 'בן/בת זוג', partner: 'שותף', authorized: 'מורשה' };
