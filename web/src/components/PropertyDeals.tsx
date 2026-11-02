@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { date, money } from '../lib/format';
 import { usePropertyDeals, type DealRow } from '../lib/queries';
 import { QueryState } from './common';
+import { PurchasePayments } from './PurchasePayments';
 
 const STATUS: Record<DealRow['status'], { label: string; color: string }> = {
   lead: { label: 'ליד', color: 'gray' }, in_progress: { label: 'בתהליך', color: 'orange' },
@@ -45,6 +46,7 @@ export function PropertyDeals({ propertyId }: { propertyId: string }) {
           })}
         </Stack>
       ) : <Text c="dimmed" size="sm">אין פרטי רכישה</Text>}</QueryState>
+      <Stack mt="sm"><PurchasePayments propertyId={propertyId} /></Stack>
     </Paper>
   );
 }
