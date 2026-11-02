@@ -1,5 +1,8 @@
 import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
-import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
+import { IconAddressBook, IconPencil, IconPlus, IconTrash, IconUserCheck } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
+import { useQueryClient } from '@tanstack/react-query';
+import { MemberOf, Partners } from '../components/Partners';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
@@ -11,14 +14,20 @@ import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { AccountLedger } from '../components/AccountLedger';
 import { ACCOUNT_KIND_HE, COUNTRY_HE, amountLabel, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
-import { useAccountEntries, useClient, useClientAccounts, useClientProperties, useIdentity } from '../lib/queries';
+import { setClientRole, useAccountEntries, useClient, useClientAccounts, useClientProperties, useIdentity, usePartyLinks } from '../lib/queries';
 import { validIsraeliId } from '../lib/idnumber';
 
 export function ClientCard() {
   const { id } = useParams();
   const client = useClient(id!);
-  const properties = useClientProperties(id!);
-  const accounts = useClientAccounts(id!);
+  // A client and the partners linked to it are one client (SPEC decision 77).
+  const links = usePartyLinks();
+  const members = (links.data ?? []).filter((l) => l.main_party_id === id);
+  const memberOf = (links.data ?? []).find((l) => l.member_party_id === id);
+  const household = [id!, ...members.map((m) => m.member_party_id)];
+  const properties = useClientProperties(household);
+  const accounts = useClientAccounts(household);
+  const qc = useQueryClient();
   const entries = useAccountEntries((accounts.data ?? []).map((a) => a.id));
   const access = useAccess();
   // Any editor may change a client's details (the parties table is not per country).
@@ -30,11 +39,23 @@ export function ClientCard() {
   const [addingProperty, setAddingProperty] = useState(false);
   const canAddProperty = access.countries.some((x) => access.canEdit(x));
 
+  // Clients and contacts are listed apart (SPEC decision 76); the card is the same.
+  async function moveTo(asClient: boolean) {
+    try {
+      await setClientRole(id!, asClient);
+      notifications.show({ color: 'teal', message: asClient ? 'הועבר ללקוחות' : 'הועבר לאנשי הקשר' });
+      await qc.invalidateQueries();
+      navigate(asClient ? `/clients/${id}` : `/contacts/${id}`, { replace: true });
+    } catch (e) { notifications.show({ color: 'red', message: (e as Error).message }); }
+  }
+
   return (
-    <QueryState q={client}>{(c) => (
+    <QueryState q={client}>{(c) => {
+      const isClient = !!c.party_roles?.some((r) => r.role === 'client');
+      return (
       <Stack>
         <Breadcrumbs>
-          <Anchor component={Link} to="/clients" size="sm">לקוחות</Anchor>
+          {isClient ? <Anchor component={Link} to="/clients" size="sm">לקוחות</Anchor> : <Anchor component={Link} to="/contacts" size="sm">אנשי קשר</Anchor>}
           <Text size="sm">{c.display_name}</Text>
         </Breadcrumbs>
         <Group justify="space-between">
@@ -43,10 +64,14 @@ export function ClientCard() {
             {c.kind === 'company' && <Badge variant="light">חברה</Badge>}
           </Group>
           <Group gap="xs">
-            {access.isAdmin && <Button variant="subtle" color="red" leftSection={<IconTrash size={16} />} onClick={() => setDeleting(true)}>מחיקת לקוח</Button>}
+            {access.isAdmin && <Button variant="subtle" color="red" leftSection={<IconTrash size={16} />} onClick={() => setDeleting(true)}>מחיקה</Button>}
+            {canEdit && (isClient
+              ? <Button variant="subtle" leftSection={<IconAddressBook size={16} />} onClick={() => moveTo(false)}>הגדרה כאיש קשר</Button>
+              : <Button variant="subtle" leftSection={<IconUserCheck size={16} />} onClick={() => moveTo(true)}>הגדרה כלקוח</Button>)}
             {canEdit && <Button variant="default" leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>עריכה</Button>}
           </Group>
         </Group>
+        {memberOf && <MemberOf link={memberOf} canEdit={canEdit} />}
         {deleting && <DeleteRecord kind="client" id={c.id} name={c.display_name} onClose={() => setDeleting(false)} onDeleted={() => navigate('/clients', { replace: true })} />}
         {editing && <ClientForm client={c} idNumber={identity.data?.id_number ?? null} opened onClose={() => setEditing(false)} />}
 
@@ -77,6 +102,8 @@ export function ClientCard() {
           {c.notes && <Text size="sm" mt="md" style={{ whiteSpace: 'pre-wrap' }}>{c.notes}</Text>}
         </Paper>
 
+        {isClient && !memberOf && <Partners mainId={c.id} members={members} canEdit={canEdit} />}
+
         <Paper withBorder p="md">
           <Group justify="space-between" mb="sm">
             <Title order={4}>נכסים</Title>
@@ -91,7 +118,7 @@ export function ClientCard() {
                 </Table.Thead>
                 <Table.Tbody>
                   {ps.map((p) => {
-                    const own = p.ownerships.find((o) => o.party.id === c.id);
+                    const own = p.ownerships.find((o) => household.includes(o.party.id));
                     const l = currentLease(p);
                     const past = own && !isCurrentOwnership(own);
                     return (
@@ -99,7 +126,8 @@ export function ClientCard() {
                         <Table.Td><CountryBadge code={p.country_code} /></Table.Td>
                         <Table.Td><Anchor component={Link} to={`/properties/${p.id}`} size="sm">{propertyTitle(p)}</Anchor>
                           <Text size="xs" c="dimmed">{p.building.city.name_he}</Text></Table.Td>
-                        <Table.Td>{own ? `${Number(own.share_pct)}%` : '—'}{past && <Text size="xs">עד {date(own!.valid_to)}</Text>}</Table.Td>
+                        <Table.Td>{own ? `${Number(own.share_pct)}%` : '—'}{past && <Text size="xs">עד {date(own!.valid_to)}</Text>}
+                          {members.length > 0 && own && <Text size="xs" c="dimmed">{own.party.display_name}</Text>}</Table.Td>
                         <Table.Td><StatusBadge status={p.status} /></Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }}>{l ? money(l.rent_amount, l.rent_currency) : '—'}</Table.Td>
                       </Table.Tr>
@@ -140,7 +168,7 @@ export function ClientCard() {
           ) : <Text c="dimmed" size="sm">אין חשבונות</Text>}</QueryState>
         </Paper>
 
-        {properties.data && <ClientPropertyActivity partyId={c.id} properties={properties.data} />}
+        {properties.data && <ClientPropertyActivity partyIds={household} properties={properties.data} />}
 
         <ClientDocuments partyId={c.id} countries={[...new Set((properties.data ?? []).map((p) => p.country_code))]} />
 
@@ -152,6 +180,7 @@ export function ClientCard() {
           )}</QueryState>
         </Paper>
       </Stack>
-    )}</QueryState>
+      );
+    }}</QueryState>
   );
 }

@@ -5,7 +5,7 @@ import { ClientForm } from '../components/ClientForm';
 import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CountryBadge, CountryFilter, QueryState } from '../components/common';
-import { idNumberOf, useClients, type ClientRow } from '../lib/queries';
+import { idNumberOf, RELATION_HE, useClients, usePartyLinks, type ClientRow } from '../lib/queries';
 import { COUNTRY_HE } from '../lib/format';
 import type { Country } from '../lib/types';
 
@@ -50,6 +50,7 @@ export function Clients() {
   const country = params.get('country') ?? 'all';
   const search = params.get('q') ?? '';
   const q = useClients();
+  const links = usePartyLinks();
   const access = useAccess();
   const canAdd = access.isAdmin || access.countries.some((x) => access.canEdit(x));
   const [adding, setAdding] = useState(false);
@@ -58,15 +59,23 @@ export function Clients() {
   const desc = params.get('dir') === 'desc';
   const onSort = (k: SortKey) => setParams((p) => { p.set('sort', k); p.set('dir', k === sort && !desc ? 'desc' : 'asc'); return p; }, { replace: true });
 
+  // A partner is listed under the main client, not on its own row (SPEC decision 77).
+  const membersOf = useMemo(() => {
+    const m = new Map<string, { name: string; relation: string }[]>();
+    for (const l of links.data ?? []) m.set(l.main_party_id, [...(m.get(l.main_party_id) ?? []), { name: l.member.display_name, relation: RELATION_HE[l.relation] }]);
+    return m;
+  }, [links.data]);
+  const isMember = useMemo(() => new Set((links.data ?? []).map((l) => l.member_party_id)), [links.data]);
   const rows = useMemo(() => {
     const s = search.trim().toLowerCase();
     return (q.data ?? [])
+      .filter((c) => !isMember.has(c.id))
       .filter((c) => country === 'all' || countriesOf(c).includes(country as Country))
-      .filter((c) => !s || [c.display_name, c.first_name, c.last_name, c.email, c.phone, idNumberOf(c)].some((x) => x?.toLowerCase().includes(s))
+      .filter((c) => !s || [c.display_name, c.first_name, c.last_name, c.email, c.phone, idNumberOf(c), ...(membersOf.get(c.id) ?? []).map((m) => m.name)].some((x) => x?.toLowerCase().includes(s))
         || (/^\d{3,}$/.test(s) && (idNumberOf(c) ?? '').replace(/^0+/, '').includes(s.replace(/^0+/, ''))))
       // Default: by family name; a name not split yet sorts by its full name (SPEC decision 72).
       .sort(compare(sort, desc));
-  }, [q.data, country, search, sort, desc]);
+  }, [q.data, country, search, sort, desc, isMember, membersOf]);
 
   return (
     <Stack>
@@ -93,7 +102,7 @@ export function Clients() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {rows.map((c) => (
+                {rows.flatMap((c) => [
                   <Table.Tr key={c.id}>
                     {c.first_name || c.last_name ? (
                       <>
@@ -108,8 +117,12 @@ export function Clients() {
                     <Table.Td>{propertyCount(c) || '—'}</Table.Td>
                     <Table.Td dir="ltr" style={{ textAlign: 'right' }}>{c.phone ?? '—'}</Table.Td>
                     <Table.Td dir="ltr" style={{ textAlign: 'right' }}>{c.email ?? '—'}</Table.Td>
-                  </Table.Tr>
-                ))}
+                  </Table.Tr>,
+                  ...(membersOf.get(c.id) ?? []).map((m) => (
+                    <Table.Tr key={`${c.id}-${m.name}`}>
+                      <Table.Td colSpan={7} pt={0}><Text size="xs" c="dimmed">↳ {m.relation}: {m.name}</Text></Table.Td>
+                    </Table.Tr>
+                  ))])}
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>

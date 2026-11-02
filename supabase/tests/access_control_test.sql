@@ -656,6 +656,29 @@ select pg_temp.check(
   (select count(*) from app.audit_log where action in ('DELETE_LEASE', 'DELETE_PROPERTY', 'DELETE_CLIENT') and new_row ? 'reason' and old_row is not null) = 3,
   'each deletion keeps the deleted row and the reason in the audit log');
 
+-- Partners, contacts and the completeness page (decisions 76-78) -------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.party_links (member_party_id, main_party_id, relation) values ('10000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001', 'spouse');
+insert into app.completeness_dismissals (check_key, entity_id, reason) values ('client_no_phone', '10000000-0000-0000-0000-000000000001', 'no phone on purpose');
+select pg_temp.check((select count(*) from app.party_links) = 1 and (select count(*) from app.completeness_dismissals) = 1, 'an editor links partners and ignores a completeness item');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.party_links) = 1, 'staff without edit rights see the links');
+do $$ begin
+  delete from app.party_links;
+  if found then raise exception 'FAILED: staff without edit rights removed a link'; end if;
+  raise notice 'ok - staff without edit rights cannot unlink';
+end $$;
+reset role;
+select pg_temp.check(exists (select 1 from app.audit_log where table_name = 'party_links'), 'linking partners is audited');
+insert into app.party_roles (party_id, role) values ('10000000-0000-0000-0000-000000000002', 'contact');
+select pg_temp.check(exists (select 1 from app.party_roles where role = 'contact'), 'a party can be a contact');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.last_rent_by_property()) >= 1, 'last rent per property is readable');
+reset role;
+delete from app.party_links; delete from app.completeness_dismissals;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
