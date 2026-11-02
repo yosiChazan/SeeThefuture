@@ -62,6 +62,7 @@
   משותף לסקריפטים: `scripts/import/lib/remote.ts` (Airtable, SQL, תור ההעתקה). רומניה: `scripts/import/romania_details.ts <choices.json>` (החלטה 71).
 - **אנשי קשר, בני זוג, השלמת פרטים (החלטות 76–78):** `pages/Contacts.tsx`, `components/Partners.tsx`,
   `lib/completeness.ts` (הבדיקות, עם בדיקות יחידה) ו-`pages/Completeness.tsx`. מיגרציה 25.
+- **שיוך אנשי קשר, פעולות, שותפים בחברה (החלטות 79–81):** `components/CardExtras.tsx`. מיגרציה 26.
 - **הגדרות (admin):** חיבור לדרופבוקס ומשיכת הקבצים של איתי; איפוס הדוחות של איתי (סיבה + קוד במייל
   + TOTP + הקלדת "איפוס").
 

@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
 import { EntityDocuments, type DocType } from '../components/EntityDocuments';
 import { PropertyDeals } from '../components/PropertyDeals';
+import { Activities, PropertyContacts } from '../components/CardExtras';
 import { PropertyCharges, PropertyServices } from '../components/PropertyServices';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
@@ -92,6 +93,8 @@ export function PropertyCard() {
             </Table>
           </Paper>
 
+          <PropertyContacts propertyId={p.id} buildingId={p.building.id} countryCode={p.country_code} />
+          <Activities entityType="property" entityId={p.id} />
           <PropertyDeals propertyId={p.id} />
 
           <Paper withBorder p="md">
