@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { must, supabase } from './supabase';
 import type { Account, Country, Currency, Lease, Property } from './types';
+import type { PurchasePayment } from './purchase';
 
 const LEASE_COLS = `id, property_id, start_date, end_date, rent_amount, rent_currency, deposit_amount, deposit_currency,
   brokerage_fee, brokerage_currency, collect_day, withholding_tax_pct, notes, tenant:parties(id, display_name)`;
@@ -207,18 +208,18 @@ export function usePropertyDeals(propertyId: string) {
   });
 }
 
-// Money paid around a purchase: seller, developer, lawyers, notaries (SPEC decision 83).
-export interface PurchasePaymentRow {
-  id: string; paid_on: string | null; kind: 'expense' | 'income' | 'loan' | 'transfer';
-  amount: number | null; currency: Currency | null; payer_name: string | null; payee_name: string | null; notes: string | null;
+// Money paid around a purchase: toward the price, fees, costs, the client's transfers (SPEC decisions 83, 84).
+export interface PurchasePaymentRow extends PurchasePayment {
+  property_id: string; payer_name: string | null; payee_name: string | null;
   payer: { id: string; display_name: string } | null; payee: { id: string; display_name: string } | null;
 }
+const PURCHASE_PAYMENT_COLUMNS = `id, property_id, paid_on, kind, amount, currency, amount_usd, payer_name, payee_name, notes,
+  payer:parties!purchase_payments_payer_party_id_fkey(id, display_name), payee:parties!purchase_payments_payee_party_id_fkey(id, display_name)`;
 export function usePurchasePayments(propertyId: string) {
   return useQuery({
     queryKey: ['purchase_payments', propertyId],
-    queryFn: async () => must(await supabase.from('purchase_payments').select(`id, paid_on, kind, amount, currency, payer_name, payee_name, notes,
-      payer:parties!purchase_payments_payer_party_id_fkey(id, display_name), payee:parties!purchase_payments_payee_party_id_fkey(id, display_name)`)
-      .eq('property_id', propertyId).order('paid_on', { nullsFirst: false })) as unknown as PurchasePaymentRow[],
+    queryFn: async () => must(await supabase.from('purchase_payments').select(PURCHASE_PAYMENT_COLUMNS)
+      .eq('property_id', propertyId).order('paid_on', { nullsFirst: true })) as unknown as PurchasePaymentRow[],
   });
 }
 
@@ -256,7 +257,7 @@ export function useClientPropertyActivity(partyIds: string | string[]) {
       const owned = must(await supabase.from('ownerships').select('property_id, share_pct, valid_from, valid_to').in('party_id', party)) as
         { property_id: string; share_pct: number; valid_from: string; valid_to: string | null }[];
       const ids = [...new Set(owned.map((o) => o.property_id))];
-      if (!ids.length) return { charges: [] as (ChargeRow & { property_id: string })[], deals: [] as (DealRow & { property_id: string })[], owned };
+      if (!ids.length) return { charges: [] as (ChargeRow & { property_id: string })[], deals: [] as (DealRow & { property_id: string })[], payments: [] as PurchasePaymentRow[], owned };
       const charges: (ChargeRow & { property_id: string })[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('charges').select('id, property_id, period, kind, amount, currency, due_date, payer, status, notes')
@@ -267,9 +268,11 @@ export function useClientPropertyActivity(partyIds: string | string[]) {
       const deals = must(await supabase.from('deals').select(`id, property_id, signed_on, status, total_price, price_currency, notes,
         client:parties!deals_client_party_id_fkey(id, display_name), referrer:parties!deals_referrer_party_id_fkey(id, display_name),
         installments(id, due_date, amount, currency, notes, paid_txn_id)`).in('property_id', ids)) as unknown as (DealRow & { property_id: string })[];
+      const payments = must(await supabase.from('purchase_payments').select(PURCHASE_PAYMENT_COLUMNS)
+        .in('property_id', ids).order('paid_on', { nullsFirst: true })) as unknown as PurchasePaymentRow[];
       // A charge belongs to the owner of that month.
       const ownedOn = (pid: string, period: string) => owned.some((o) => o.property_id === pid && o.valid_from.slice(0, 7) <= period.slice(0, 7) && (!o.valid_to || o.valid_to >= period));
-      return { charges: charges.filter((c) => ownedOn(c.property_id, c.period)), deals, owned };
+      return { charges: charges.filter((c) => ownedOn(c.property_id, c.period)), deals, payments, owned };
     },
   });
 }
