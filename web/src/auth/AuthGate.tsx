@@ -48,7 +48,41 @@ function WithAccess({ userId, children }: { userId: string; children: ReactNode 
       </Frame>
     );
   }
+  if (access.data.mustChangePassword) return <Frame><ChangePassword onDone={() => access.refetch()} /></Frame>;
   return <AccessProvider value={access.data}>{children}</AccessProvider>;
+}
+
+// The password an admin gave is replaced before the app opens (SPEC decision 87).
+function ChangePassword({ onDone }: { onDone: () => void }) {
+  const [password, setPassword] = useState('');
+  const [again, setAgain] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const problem = password.length < 10 ? 'לפחות 10 תווים' : password !== again ? 'שתי הסיסמאות לא זהות' : null;
+  return (
+    <form onSubmit={async (e) => {
+      e.preventDefault();
+      if (problem) return;
+      setBusy(true); setError(null);
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) { setError(/same|different/i.test(error.message) ? 'הסיסמה החדשה צריכה להיות שונה מהקודמת' : error.message); setBusy(false); return; }
+      const done = await supabase.rpc('password_changed');
+      setBusy(false);
+      if (done.error) { setError(done.error.message); return; }
+      onDone();
+    }}>
+      <Stack>
+        <Title order={3}>בחירת סיסמה חדשה</Title>
+        <Text size="sm" c="dimmed">הסיסמה שקיבלת היא זמנית. בוחרים סיסמה אישית, ורק אז המערכת נפתחת.</Text>
+        <PasswordInput label="סיסמה חדשה" description="10 תווים לפחות" value={password} onChange={(e) => setPassword(e.currentTarget.value)} autoComplete="new-password" required />
+        <PasswordInput label="שוב, לאימות" value={again} onChange={(e) => setAgain(e.currentTarget.value)} autoComplete="new-password" required
+          error={again && password !== again ? 'שתי הסיסמאות לא זהות' : undefined} />
+        {error && <Alert color="red">{error}</Alert>}
+        <Button type="submit" loading={busy} disabled={!!problem}>שמירה וכניסה</Button>
+        <Button variant="subtle" onClick={() => supabase.auth.signOut()}>יציאה</Button>
+      </Stack>
+    </form>
+  );
 }
 
 function Frame({ children }: { children: ReactNode }) {
