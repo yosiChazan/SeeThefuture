@@ -59,8 +59,11 @@ async function call(body: Record<string, unknown>): Promise<Record<string, unkno
 }
 
 // The user replaces a password an admin gave at the next sign-in (SPEC decision 87).
+// Checked: an update that reaches no row is not an error by itself, and a user created
+// without the flag would then sign in without being asked for a new password.
 async function requireChange(userId: string, on: boolean) {
-  must(await supabase.from('profiles').update({ must_change_password: on }).eq('user_id', userId));
+  const rows = must(await supabase.from('profiles').update({ must_change_password: on }).eq('user_id', userId).select('user_id')) as unknown[];
+  if (!rows.length) throw new Error('דרישת החלפת הסיסמה לא נשמרה. נסו שוב מכרטיס ההרשאות ("שליחת פרטי כניסה").');
 }
 
 function newPassword(): string {
@@ -69,12 +72,12 @@ function newPassword(): string {
   return [...v].map((n) => abc[n % abc.length]).join('');
 }
 
-function PasswordField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function PasswordField({ value, onChange, readOnly = false }: { value: string; onChange: (v: string) => void; readOnly?: boolean }) {
   return (
     <Group align="flex-end" gap="xs">
-      <PasswordInput label="סיסמה" description="10 תווים לפחות. מעבירים למשתמש בעל-פה או בהודעה נפרדת" value={value}
-        onChange={(e) => onChange(e.currentTarget.value)} style={{ flex: 1 }} visible />
-      <Button variant="light" onClick={() => onChange(newPassword())}>צור סיסמה</Button>
+      <PasswordInput label="סיסמה" description="10 תווים לפחות. סיסמה זמנית: המשתמש מחליף אותה בכניסה הראשונה" value={value}
+        onChange={(e) => onChange(e.currentTarget.value)} style={{ flex: 1 }} visible readOnly={readOnly} />
+      {!readOnly && <Button variant="light" onClick={() => onChange(newPassword())}>צור סיסמה</Button>}
       <CopyButton value={value}>{({ copied, copy }) => <Button variant="subtle" onClick={copy} disabled={!value}>{copied ? 'הועתק' : 'העתק'}</Button>}</CopyButton>
     </Group>
   );
@@ -85,37 +88,39 @@ function PasswordField({ value, onChange }: { value: string; onChange: (v: strin
 // sends only to the project's team and 2 an hour. Three ways to send it, because a mailto
 // link does nothing on a computer with no mail app set up: Gmail in a new tab, the
 // computer's mail app, or copying the text into any mail or WhatsApp.
-// The password goes in only when the admin ticks it; otherwise it is passed on separately.
-const MAIL_SUBJECT = 'משתמש חדש במערכת See the Future';
-function welcomeText(name: string, email: string, password: string | null, admin: boolean, temporary: boolean): string {
+// A temporary password (replaced at the next sign-in) goes in by default; the admin can
+// leave it out and pass it on separately.
+function mailSubject(reset: boolean) { return reset ? 'שחזור סיסמה במערכת See the Future' : 'משתמש חדש במערכת See the Future'; }
+function welcomeText(name: string, email: string, password: string | null, admin: boolean, temporary: boolean, reset: boolean): string {
   return [
     `שלום ${name},`, '',
-    'נפתח לך משתמש במערכת של See the Future.', '',
+    reset ? 'הסיסמה שלך במערכת של See the Future אופסה.' : 'נפתח לך משתמש במערכת של See the Future.', '',
     `כניסה: ${window.location.origin}`,
     `מייל: ${email}`,
     password ? `סיסמה${temporary ? ' זמנית' : ''}: ${password}` : `את הסיסמה${temporary ? ' הזמנית' : ''} אשלח לך בנפרד.`, '',
     admin
-      ? 'אחרי הסיסמה המערכת תבקש להגדיר אפליקציית אימות (Google Authenticator או דומה): סורקים את הקוד שעל המסך ומקלידים את 6 הספרות.'
+      ? (reset ? 'אחרי הסיסמה מקלידים את הקוד מאפליקציית האימות.' : 'אחרי הסיסמה המערכת תבקש להגדיר אפליקציית אימות (Google Authenticator או דומה): סורקים את הקוד שעל המסך ומקלידים את 6 הספרות.')
       : 'אחרי הסיסמה לוחצים "שליחת קוד למייל", ומקלידים את הקוד בן 6 הספרות שיגיע לכתובת הזאת.',
-    ...(temporary ? ['בכניסה הראשונה המערכת תבקש לבחור סיסמה אישית חדשה.'] : []),
+    ...(temporary ? [`${reset ? 'בכניסה הבאה' : 'בכניסה הראשונה'} המערכת תבקש לבחור סיסמה אישית חדשה.`] : []),
   ].join('\n');
 }
 
-function MailButton({ name, email, password, admin = false, temporary = false }: { name: string; email: string; password: string | null; admin?: boolean; temporary?: boolean }) {
-  const [withPassword, setWithPassword] = useState(false);
-  const body = welcomeText(name, email, password && withPassword ? password : null, admin, temporary);
-  const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${encodeURIComponent(MAIL_SUBJECT)}&body=${encodeURIComponent(body)}`;
-  const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(MAIL_SUBJECT)}&body=${encodeURIComponent(body)}`;
+function MailButton({ name, email, password, admin = false, temporary = false, reset = false }: { name: string; email: string; password: string | null; admin?: boolean; temporary?: boolean; reset?: boolean }) {
+  const [withPassword, setWithPassword] = useState(temporary);
+  const subject = mailSubject(reset);
+  const body = welcomeText(name, email, password && withPassword ? password : null, admin, temporary, reset);
+  const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   return (
     <Stack gap={6}>
-      <Text size="sm" fw={600}>מייל למשתמש עם פרטי הכניסה</Text>
+      <Text size="sm" fw={600}>{reset ? 'מייל למשתמש עם הסיסמה החדשה' : 'מייל למשתמש עם פרטי הכניסה'}</Text>
       {password && <Checkbox label="לכלול את הסיסמה במייל" checked={withPassword} onChange={(e) => setWithPassword(e.currentTarget.checked)} />}
       <Group gap="xs">
         <Button component="a" href={gmail} target="_blank" rel="noopener" leftSection={<IconMail size={16} />} variant="light">פתיחה ב-Gmail</Button>
         <Button component="a" href={mailto} variant="default">תוכנת מייל במחשב</Button>
-        <CopyButton value={`${MAIL_SUBJECT}\n\n${body}`}>{({ copied, copy }) => <Button variant="subtle" onClick={copy}>{copied ? 'הועתק' : 'העתקת ההודעה'}</Button>}</CopyButton>
+        <CopyButton value={`${subject}\n\n${body}`}>{({ copied, copy }) => <Button variant="subtle" onClick={copy}>{copied ? 'הועתק' : 'העתקת ההודעה'}</Button>}</CopyButton>
       </Group>
-      <Text size="xs" c="dimmed">המייל לא נשלח מהמערכת: נפתחת טיוטה מוכנה, ואתה שולח אותה מהתיבה שלך אל {email}. אם לא נפתח כלום, מעתיקים את ההודעה ומדביקים במייל או בוואטסאפ. {password && !withPassword && 'בלי הסיסמה, מעבירים אותה בנפרד (וואטסאפ או SMS): כך מי שרואה את המייל לא יכול להיכנס.'}</Text>
+      <Text size="xs" c="dimmed">המייל לא נשלח מהמערכת: נפתחת טיוטה מוכנה, ואתה שולח אותה מהתיבה שלך אל {email}. אם לא נפתח כלום, מעתיקים את ההודעה ומדביקים במייל או בוואטסאפ. {password && !withPassword && 'בלי הסיסמה, מעבירים אותה בנפרד (וואטסאפ או SMS).'}</Text>
     </Stack>
   );
 }
@@ -167,9 +172,8 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
   const [client, setClient] = useState<string | null>(user.profile?.client_party_id ?? null);
   const [roles, setRoles] = useState<Partial<Record<Country, Role>>>(Object.fromEntries(user.roles.map((r) => [r.country_code, r])));
   const [busy, setBusy] = useState<string | null>(null), [err, setErr] = useState<string | null>(null);
-  const [pw, setPw] = useState<string | null>(null);
   const [sentPw, setSentPw] = useState<string | null>(null);
-  const [pwMustChange, setPwMustChange] = useState(true);
+  const firstLogin = !user.last_sign_in_at;
   const clientOptions = useMemo(() => (clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name })).sort((a, b) => a.label.localeCompare(b.label, 'he')), [clients.data]);
   const self = user.user_id === me;
   const done = (msg: string) => { notifications.show({ color: 'teal', message: msg }); qc.invalidateQueries({ queryKey: ['admin-users'] }); };
@@ -229,8 +233,19 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
 
         <Paper withBorder p="sm" mt="sm">
           <Text fw={600} size="sm" mb="xs">כניסה למערכת</Text>
+          {/* Until the first sign-in: send the sign-in details again. After it: recover the password.
+              Either way a new temporary password is set (the old one is not kept anywhere). */}
+          <Text size="xs" c="dimmed" mb="xs">{firstLogin
+            ? 'המשתמש עוד לא נכנס. "שליחת פרטי כניסה" יוצרת סיסמה זמנית חדשה (הקודמת מפסיקה לעבוד) ופותחת מייל מוכן.'
+            : `נכנס לאחרונה ב-${date(user.last_sign_in_at)}. "שחזור סיסמה" יוצר סיסמה זמנית חדשה, שהמשתמש יחליף בכניסה הבאה.`}</Text>
           <Group gap="xs">
-            <Button size="xs" variant="light" leftSection={<IconKey size={14} />} onClick={() => setPw(newPassword())}>סיסמה חדשה</Button>
+            <Button size="xs" variant="light" leftSection={<IconKey size={14} />} disabled={self || !user.profile} loading={busy === 'pw'}
+              onClick={() => window.confirm(firstLogin ? 'ליצור סיסמה זמנית חדשה ולשלוח פרטי כניסה?' : 'לאפס את הסיסמה של המשתמש? הסיסמה הנוכחית תפסיק לעבוד.') && run('pw', async () => {
+                const p = newPassword();
+                await call({ action: 'set_password', user_id: user.user_id, password: p });
+                await requireChange(user.user_id, true);
+                done(firstLogin ? 'נוצרה סיסמה זמנית חדשה' : 'הסיסמה אופסה'); setSentPw(p);
+              })}>{firstLogin ? 'שליחת פרטי כניסה' : 'שחזור סיסמה'}</Button>
             <Button size="xs" variant="light" color="orange" leftSection={<IconShieldOff size={14} />} disabled={!user.has_totp || self} loading={busy === 'mfa'}
               onClick={() => window.confirm('להסיר את אפליקציית האימות? בכניסה הבאה המשתמש יגדיר חדשה.') && run('mfa', async () => { await call({ action: 'reset_mfa', user_id: user.user_id }); done('אפליקציית האימות הוסרה'); })}>
               איפוס אפליקציית אימות</Button>
@@ -238,16 +253,14 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
               onClick={() => window.confirm(`למחוק את ${user.email}? הכניסה וההרשאות יימחקו. מה שהמשתמש עשה נשאר ביומן השינויים.`) && run('delete', async () => { await call({ action: 'delete', user_id: user.user_id }); done('המשתמש נמחק'); onClose(); })}>
               מחיקת המשתמש</Button>
           </Group>
-          {pw !== null && (
-            <Stack gap="xs" mt="sm">
-              <PasswordField value={pw} onChange={setPw} />
-              <Checkbox label="לדרוש החלפת סיסמה בכניסה הבאה" checked={pwMustChange} onChange={(e) => setPwMustChange(e.currentTarget.checked)} />
-              <Group justify="flex-end"><Button size="xs" variant="default" onClick={() => setPw(null)}>ביטול</Button>
-                <Button size="xs" loading={busy === 'pw'} disabled={pw.length < 10}
-                  onClick={() => run('pw', async () => { await call({ action: 'set_password', user_id: user.user_id, password: pw }); if (pwMustChange && user.profile) await requireChange(user.user_id, true); done('הסיסמה עודכנה'); setSentPw(pw); setPw(null); })}>שמירת הסיסמה</Button></Group>
+          {!user.profile && <Text size="xs" c="orange" mt={4}>קודם נותנים הרשאות ושומרים, ואז שולחים פרטי כניסה.</Text>}
+          {sentPw && (
+            <Stack mt="sm" gap="xs">
+              <PasswordField value={sentPw} onChange={() => {}} readOnly />
+              <MailButton key={sentPw} name={user.profile?.display_name ?? name} email={user.email} password={sentPw}
+                admin={!!user.profile?.is_admin} temporary reset={!firstLogin} />
             </Stack>
           )}
-          <Stack mt="sm"><MailButton key={sentPw ?? ''} name={user.profile?.display_name ?? name} email={user.email} password={sentPw} admin={!!user.profile?.is_admin} temporary={!!sentPw && pwMustChange} /></Stack>
         </Paper>
       </Stack>
     </Modal>
