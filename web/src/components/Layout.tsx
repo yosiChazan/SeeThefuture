@@ -1,7 +1,7 @@
 import { AppShell, Badge, Burger, Group, Image, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconAddressBook, IconBuildingCommunity, IconChecklist, IconCrane, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUsers,
+  IconAddressBook, IconBuildingCommunity, IconChecklist, IconCrane, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUserShield, IconUsers,
 } from '@tabler/icons-react';
 import { NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { useAccess } from '../lib/access';
@@ -63,6 +63,9 @@ export function Layout() {
           </Stack>
         </AppShell.Section>
         <AppShell.Section>
+          {access.isAdmin && (
+            <NavLink component={RouterLink} to="/users" label="משתמשים" leftSection={<IconUserShield size={18} />} onClick={close} active={pathname.startsWith('/users')} />
+          )}
           {access.isAdmin && (
             <NavLink component={RouterLink} to="/settings" label="הגדרות" leftSection={<IconSettings size={18} />} onClick={close} active={pathname.startsWith('/settings')} />
           )}

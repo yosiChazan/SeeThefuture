@@ -6,7 +6,8 @@ create role authenticated nologin;
 create role service_role nologin bypassrls;
 
 create schema auth;
-create table auth.users (id uuid primary key, email text);
+create table auth.users (id uuid primary key, email text, created_at timestamptz default now(), last_sign_in_at timestamptz);
+create table auth.mfa_factors (id uuid primary key default gen_random_uuid(), user_id uuid references auth.users, factor_type text, status text);
 
 create function auth.uid() returns uuid
 language sql stable as $$
