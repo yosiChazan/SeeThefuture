@@ -1,4 +1,5 @@
-import { Alert, Badge, Center, Loader, SegmentedControl, type MantineSize } from '@mantine/core';
+import { Alert, Badge, Center, Group, Loader, SegmentedControl, Table, Text, UnstyledButton, type MantineSize } from '@mantine/core';
+import { IconChevronDown, IconChevronUp, IconSelector } from '@tabler/icons-react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useAccess } from '../lib/access';
@@ -26,5 +27,18 @@ export function CountryFilter({ value, onChange }: { value: string; onChange: (v
   return (
     <SegmentedControl value={value} onChange={onChange}
       data={[{ value: 'all', label: 'הכול' }, ...countries.map((c) => ({ value: c, label: COUNTRY_HE[c] }))]} />
+  );
+}
+
+// A column header that sorts the table (SPEC decision 73): a click sorts by it, a second
+// click reverses. The arrow shows the column and the direction.
+export function SortHeader<K extends string>({ label, k, sort, desc, onSort }: { label: string; k: K; sort: K; desc: boolean; onSort: (k: K) => void }) {
+  const Icon = sort !== k ? IconSelector : desc ? IconChevronDown : IconChevronUp;
+  return (
+    <Table.Th>
+      <UnstyledButton onClick={() => onSort(k)} aria-label={`מיון לפי ${label}`}>
+        <Group gap={4} wrap="nowrap"><Text size="sm" fw={700}>{label}</Text><Icon size={14} stroke={1.6} opacity={sort === k ? 1 : 0.5} /></Group>
+      </UnstyledButton>
+    </Table.Th>
   );
 }

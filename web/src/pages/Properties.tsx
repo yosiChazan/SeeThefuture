@@ -4,9 +4,37 @@ import { useMemo, useState } from 'react';
 import { PropertyForm } from '../components/PropertyForm';
 import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CountryBadge, CountryFilter, QueryState, StatusBadge } from '../components/common';
-import { buildingLabel, currentLease, money, owners, STATUS_HE } from '../lib/format';
+import { CountryBadge, CountryFilter, QueryState, SortHeader, StatusBadge } from '../components/common';
+import { buildingLabel, COUNTRY_HE, currentLease, money, owners, STATUS_HE } from '../lib/format';
+import type { Property } from '../lib/types';
 import { useProperties } from '../lib/queries';
+
+// Sorting by a column (like the clients list, SPEC decision 73): a click sorts A–Z / 1–∞,
+// a second click reverses. Empty values stay at the bottom either way. Rent is sorted by
+// currency and then by amount: amounts in different currencies are never compared.
+type SortKey = 'country' | 'city' | 'building' | 'unit' | 'owners' | 'status' | 'rent';
+const SORT_KEYS: SortKey[] = ['country', 'city', 'building', 'unit', 'owners', 'status', 'rent'];
+const COLUMNS: [SortKey, string][] = [['country', 'מדינה'], ['city', 'עיר'], ['building', 'בניין'], ['unit', 'דירה'], ['owners', 'בעלים'], ['status', 'סטטוס'], ['rent', 'שכירות נוכחית']];
+const he = (a: string, b: string) => a.localeCompare(b, 'he', { numeric: true });
+const natural = (a: Property, b: Property) => he(COUNTRY_HE[a.country_code], COUNTRY_HE[b.country_code])
+  || he(buildingLabel(a.building), buildingLabel(b.building)) || he(a.unit_no, b.unit_no);
+const SORT_VALUE: Record<SortKey, (p: Property) => string | [string, number] | null> = {
+  country: (p) => COUNTRY_HE[p.country_code],
+  city: (p) => p.building.city.name_he || null,
+  building: (p) => buildingLabel(p.building) || null,
+  unit: (p) => p.unit_no || null,
+  owners: (p) => owners(p) || null,
+  status: (p) => STATUS_HE[p.status],
+  rent: (p) => { const l = currentLease(p); return l && l.rent_amount !== null ? [l.rent_currency ?? '', Number(l.rent_amount)] : null; },
+};
+function compare(key: SortKey, desc: boolean) {
+  return (a: Property, b: Property) => {
+    const x = SORT_VALUE[key](a), y = SORT_VALUE[key](b);
+    if (x === null || y === null) return x === y ? natural(a, b) : x === null ? 1 : -1;
+    const d = Array.isArray(x) && Array.isArray(y) ? he(x[0], y[0]) || x[1] - y[1] : he(String(x), String(y));
+    return (desc ? -d : d) || natural(a, b);
+  };
+}
 
 export function Properties() {
   const [params, setParams] = useSearchParams();
@@ -14,6 +42,8 @@ export function Properties() {
   const status = params.get('status');
   const city = params.get('city');
   const search = params.get('q') ?? '';
+  const sort = (SORT_KEYS.includes(params.get('sort') as SortKey) ? params.get('sort') : 'country') as SortKey;
+  const desc = params.get('dir') === 'desc';
   const q = useProperties();
   const access = useAccess();
   const [adding, setAdding] = useState(false);
@@ -35,9 +65,9 @@ export function Properties() {
       .filter((p) => !status || p.status === status)
       .filter((p) => !city || p.building.city.name_he === city)
       .filter((p) => !s || [p.building.name, p.building.address, p.unit_no, owners(p), p.building.project?.name].some((x) => x?.toLowerCase().includes(s)))
-      .sort((a, b) => a.country_code.localeCompare(b.country_code) || buildingLabel(a.building).localeCompare(buildingLabel(b.building))
-        || a.unit_no.localeCompare(b.unit_no, undefined, { numeric: true }));
-  }, [q.data, country, status, city, search]);
+      .sort(compare(sort, desc));
+  }, [q.data, country, status, city, search, sort, desc]);
+  const onSort = (k: SortKey) => update({ sort: k, dir: k === sort && !desc ? 'desc' : 'asc' });
 
   return (
     <Stack>
@@ -59,13 +89,7 @@ export function Properties() {
             <Table striped highlightOnHover verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>מדינה</Table.Th>
-                  <Table.Th>עיר</Table.Th>
-                  <Table.Th>בניין</Table.Th>
-                  <Table.Th>דירה</Table.Th>
-                  <Table.Th>בעלים</Table.Th>
-                  <Table.Th>סטטוס</Table.Th>
-                  <Table.Th>שכירות נוכחית</Table.Th>
+                  {COLUMNS.map(([k, label]) => <SortHeader key={k} label={label} k={k} sort={sort} desc={desc} onSort={onSort} />)}
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
