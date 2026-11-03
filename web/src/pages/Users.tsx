@@ -195,7 +195,7 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
         )}
         {(kind === 'staff' || kind === 'management') && (
           <Table verticalSpacing={4}>
-            <Table.Thead><Table.Tr><Table.Th>מדינה</Table.Th><Table.Th>הרשאה</Table.Th><Table.Th>מסמכים רגישים ות"ז</Table.Th></Table.Tr></Table.Thead>
+            <Table.Thead><Table.Tr><Table.Th>מדינה</Table.Th><Table.Th>הרשאה</Table.Th><Table.Th>מסמכים רגישים</Table.Th></Table.Tr></Table.Thead>
             <Table.Tbody>{COUNTRIES.map((c) => (
               <Table.Tr key={c}>
                 <Table.Td>{COUNTRY_HE[c]}</Table.Td>
@@ -275,7 +275,7 @@ export function Users() {
                           {k === 'admin' && <Text size="sm">כולן</Text>}
                           {k === 'management' && <Text size="sm">כולן (צפייה)</Text>}
                           {u.roles.map((r) => (
-                            <Tooltip key={r.country_code} label={r.can_view_sensitive ? 'כולל מסמכים רגישים ות"ז' : 'בלי מסמכים רגישים'}>
+                            <Tooltip key={r.country_code} label={r.can_view_sensitive ? 'כולל מסמכים רגישים (דרכונים, צילומי ת"ז, ייפויי כוח, חוזי רכישה)' : 'בלי מסמכים רגישים'}>
                               <Badge variant="outline" size="sm">{COUNTRY_HE[r.country_code]}: {LEVEL_HE[r.level].split(' ')[0]}{r.can_view_sensitive ? ' 🔒' : ''}</Badge>
                             </Tooltip>
                           ))}
