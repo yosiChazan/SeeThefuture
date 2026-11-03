@@ -100,6 +100,10 @@
 
 ## 5. מחכה ליוסי
 
+- **אימות במייל (החלטה 88):** (1) לפרוס את פונקציית ה-Edge `email-code` (הקוד ב-`supabase/functions/email-code/index.ts`,
+  Verify JWT דלוק). (2) בתבנית Magic Link להוסיף `{{ .Token }}`. (3) לחבר SMTP ב-Supabase (Authentication → Emails → SMTP),
+  אחרת הקוד מגיע רק לחברי הצוות של הפרויקט ועד 2 מיילים בשעה.
+
 
 - להוסיף ב-Supabase → Authentication → Emails → **Magic Link** את השורה `הקוד שלך: {{ .Token }}`,
   אחרת איפוס דוחות איתי לא יקבל קוד במייל. שירות המייל המובנה שולח רק 2 מיילים בשעה.
