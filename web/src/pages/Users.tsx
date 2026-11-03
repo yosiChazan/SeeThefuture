@@ -87,22 +87,23 @@ function PasswordField({ value, onChange }: { value: string; onChange: (v: strin
 // computer's mail app, or copying the text into any mail or WhatsApp.
 // The password goes in only when the admin ticks it; otherwise it is passed on separately.
 const MAIL_SUBJECT = 'משתמש חדש במערכת See the Future';
-function welcomeText(name: string, email: string, password: string | null): string {
+function welcomeText(name: string, email: string, password: string | null, admin: boolean, temporary: boolean): string {
   return [
     `שלום ${name},`, '',
     'נפתח לך משתמש במערכת של See the Future.', '',
     `כניסה: ${window.location.origin}`,
     `מייל: ${email}`,
-    password ? `סיסמה: ${password}` : 'את הסיסמה אשלח לך בנפרד.', '',
-    'בכניסה הראשונה המערכת תבקש להגדיר אפליקציית אימות (Google Authenticator או דומה):',
-    'סורקים את הקוד שמופיע על המסך ומקלידים את 6 הספרות.',
-    ...(password ? ['', 'אחרי הכניסה הראשונה כדאי למחוק את המייל הזה.'] : []),
+    password ? `סיסמה${temporary ? ' זמנית' : ''}: ${password}` : `את הסיסמה${temporary ? ' הזמנית' : ''} אשלח לך בנפרד.`, '',
+    admin
+      ? 'אחרי הסיסמה המערכת תבקש להגדיר אפליקציית אימות (Google Authenticator או דומה): סורקים את הקוד שעל המסך ומקלידים את 6 הספרות.'
+      : 'אחרי הסיסמה לוחצים "שליחת קוד למייל", ומקלידים את הקוד בן 6 הספרות שיגיע לכתובת הזאת.',
+    ...(temporary ? ['בכניסה הראשונה המערכת תבקש לבחור סיסמה אישית חדשה.'] : []),
   ].join('\n');
 }
 
-function MailButton({ name, email, password }: { name: string; email: string; password: string | null }) {
+function MailButton({ name, email, password, admin = false, temporary = false }: { name: string; email: string; password: string | null; admin?: boolean; temporary?: boolean }) {
   const [withPassword, setWithPassword] = useState(false);
-  const body = welcomeText(name, email, password && withPassword ? password : null);
+  const body = welcomeText(name, email, password && withPassword ? password : null, admin, temporary);
   const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${encodeURIComponent(MAIL_SUBJECT)}&body=${encodeURIComponent(body)}`;
   const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(MAIL_SUBJECT)}&body=${encodeURIComponent(body)}`;
   return (
@@ -137,7 +138,7 @@ function AddUser({ onClose, onCreated }: { onClose: () => void; onCreated: (id: 
     <Modal opened onClose={() => onCreated(created)} title="המשתמש נוצר" size="lg">
       <Stack>
         <Text>{name.trim()} ({email.trim()}) יכול/ה להיכנס. עכשיו שולחים לו/לה את פרטי הכניסה, ואז נותנים הרשאות.</Text>
-        <MailButton name={name.trim()} email={email.trim()} password={password} />
+        <MailButton name={name.trim()} email={email.trim()} password={password} temporary={mustChange} />
         <Group justify="flex-end"><Button onClick={() => onCreated(created)}>המשך להרשאות</Button></Group>
       </Stack>
     </Modal>
@@ -246,7 +247,7 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
                   onClick={() => run('pw', async () => { await call({ action: 'set_password', user_id: user.user_id, password: pw }); if (pwMustChange && user.profile) await requireChange(user.user_id, true); done('הסיסמה עודכנה'); setSentPw(pw); setPw(null); })}>שמירת הסיסמה</Button></Group>
             </Stack>
           )}
-          <Stack mt="sm"><MailButton key={sentPw ?? ''} name={user.profile?.display_name ?? name} email={user.email} password={sentPw} /></Stack>
+          <Stack mt="sm"><MailButton key={sentPw ?? ''} name={user.profile?.display_name ?? name} email={user.email} password={sentPw} admin={!!user.profile?.is_admin} temporary={!!sentPw && pwMustChange} /></Stack>
         </Paper>
       </Stack>
     </Modal>

@@ -4,13 +4,16 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { AccessProvider, useAccessQuery } from '../lib/access';
 import { supabase } from '../lib/supabase';
 
-type Aal = { current: string | null; next: string | null };
+// The second step after the password (SPEC §3, decision 88): admins use an authenticator
+// app (aal2); everyone else may instead get a code by e-mail, which the database counts for
+// that session (app.mfa_verified()). Clients have no access to the office app at all.
+type Second = { ok: boolean; admin: boolean; hasTotp: boolean };
 
-// Staff sign in with email and password, then a TOTP code (SPEC §3: 2FA for staff).
+// Staff sign in with email and password, then a second step (SPEC §3: 2FA for staff).
 // A user without a profile row has no access, whatever they signed up with.
 export function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
-  const [aal, setAal] = useState<Aal | null>(null);
+  const [second, setSecond] = useState<Second | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -18,19 +21,80 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  const sessionId = session?.access_token ? session.user.id + ':' + (session.expires_at ?? '') : null;
   useEffect(() => {
-    if (!session) { setAal(null); return; }
-    supabase.auth.mfa.getAuthenticatorAssuranceLevel().then(({ data }) =>
-      setAal({ current: data?.currentLevel ?? null, next: data?.nextLevel ?? null }));
-  }, [session]);
+    if (!session) { setSecond(null); return; }
+    (async () => {
+      const [aal, emailOk, admin, factors] = await Promise.all([
+        supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
+        supabase.rpc('mfa_verified'),
+        supabase.rpc('is_admin'),
+        supabase.auth.mfa.listFactors(),
+      ]);
+      setSecond({
+        ok: aal.data?.currentLevel === 'aal2' || emailOk.data === true,
+        admin: admin.data === true,
+        hasTotp: (factors.data?.totp ?? []).some((f) => f.status === 'verified'),
+      });
+    })();
+  }, [sessionId]);
 
-  if (session === undefined || (session && !aal)) return <Center h="100vh"><Loader /></Center>;
+  if (session === undefined || (session && !second)) return <Center h="100vh"><Loader /></Center>;
   if (!session) return <Frame><SignIn /></Frame>;
-  if (aal!.current !== 'aal2') {
-    return <Frame>{aal!.next === 'aal2' ? <Verify onDone={() => setAal({ current: 'aal2', next: 'aal2' })} />
-      : <Enroll onDone={() => setAal({ current: 'aal2', next: 'aal2' })} />}</Frame>;
+  if (!second!.ok) {
+    const done = () => setSecond({ ...second!, ok: true });
+    const app = second!.hasTotp ? <Verify onDone={done} /> : <Enroll onDone={done} />;
+    return <Frame>{second!.admin ? app : <SecondStep email={session.user.email ?? ''} app={app} onDone={done} />}</Frame>;
   }
   return <WithAccess userId={session.user.id}>{children}</WithAccess>;
+}
+
+// Not an admin: a code by e-mail, or the authenticator app for whoever prefers it.
+function SecondStep({ email, app, onDone }: { email: string; app: ReactNode; onDone: () => void }) {
+  const [useApp, setUseApp] = useState(false);
+  if (useApp) return <Stack gap="xs">{app}<Button variant="subtle" size="xs" onClick={() => setUseApp(false)}>קבלת קוד במייל במקום</Button></Stack>;
+  return <Stack gap="xs"><EmailCode email={email} onDone={onDone} /><Button variant="subtle" size="xs" onClick={() => setUseApp(true)}>יש לי אפליקציית אימות</Button></Stack>;
+}
+
+async function emailCode(body: Record<string, unknown>): Promise<string | null> {
+  const { error } = await supabase.functions.invoke('email-code', { body });
+  if (!error) return null;
+  const ctx = (error as { context?: Response }).context;
+  return (ctx && typeof ctx.json === 'function' ? (await ctx.json().catch(() => null))?.error : null) ?? error.message;
+}
+
+function EmailCode({ email, onDone }: { email: string; onDone: () => void }) {
+  const [sent, setSent] = useState<'no' | 'sending' | 'yes'>('no');
+  const [wait, setWait] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    setSent('sending'); setError(null);
+    const err = await emailCode({ action: 'send' });
+    if (err) { setSent('no'); setError(/second|seconds|rate/i.test(err) ? 'נשלח קוד ממש עכשיו. אפשר לבקש שוב בעוד דקה' : `השליחה נכשלה: ${err}`); return; }
+    setSent('yes'); setWait(60);
+  };
+  useEffect(() => { if (wait <= 0) return; const t = setTimeout(() => setWait((w) => w - 1), 1000); return () => clearTimeout(t); }, [wait]);
+  return (
+    <Stack>
+      <Title order={3}>אימות דו-שלבי</Title>
+      {sent !== 'yes' ? <>
+        <Text size="sm">נשלח קוד בן 6 ספרות אל <b dir="ltr">{email}</b>.</Text>
+        {error && <Alert color="red">{error}</Alert>}
+        <Button onClick={send} loading={sent === 'sending'}>שליחת קוד למייל</Button>
+        <Button variant="subtle" size="xs" onClick={() => supabase.auth.signOut()}>יציאה</Button>
+      </> : <>
+        <Text size="sm">שלחנו קוד אל <b dir="ltr">{email}</b>. הקוד בתוקף לזמן קצר. אם הוא לא מגיע, כדאי לבדוק בספאם.</Text>
+        <CodeForm busy={busy} error={error} onSubmit={async (code) => {
+          setBusy(true); setError(null);
+          const err = await emailCode({ action: 'verify', code });
+          setBusy(false);
+          if (err) setError('הקוד שגוי או שפג תוקפו'); else onDone();
+        }} />
+        <Button variant="subtle" size="xs" disabled={wait > 0} onClick={send}>{wait > 0 ? `שליחה שוב בעוד ${wait} שניות` : 'שליחת קוד חדש'}</Button>
+      </>}
+    </Stack>
+  );
 }
 
 function WithAccess({ userId, children }: { userId: string; children: ReactNode }) {

@@ -19,7 +19,7 @@
 
 | רכיב | איפה | הערות |
 |---|---|---|
-| מסד נתונים | Supabase, project ref `oqvanprfxsdonzldgtnq` | סכמה `app` (חשופה ב-API). מיגרציות 1–30 הוחלו |
+| מסד נתונים | Supabase, project ref `oqvanprfxsdonzldgtnq` | סכמה `app` (חשופה ב-API). מיגרציות 1–32 הוחלו |
 | ממשק המשרד | https://seethefuture-office.pages.dev | Cloudflare Pages, נבנה אוטומטית מ-`main`. משתנים: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `NODE_VERSION=22` |
 | כניסה | מייל + סיסמה, ואז TOTP חובה לעובדים (aal2) | הרשמה עצמית כבויה. משתמש חדש: admin נותן שורה ב-`app.profiles` ו-`app.user_country_roles` |
 | דרופבוקס של איתי | אפליקציית Dropbox ציבורית (PKCE), App key `b7vd5tnnmgj61op`, redirect `/dropbox` | ה-refresh token והקישור לתיקייה ב-`app.integrations` (admin בלבד) |
@@ -99,6 +99,10 @@
 - **סגנון:** הודעות למשתמש בעברית, קצרות, עם קישור ל-PR המלא. כל החלטה חדשה נרשמת ב-SPEC §10.
 
 ## 5. מחכה ליוסי
+
+- **אימות במייל (החלטה 88):** (1) לפרוס את פונקציית ה-Edge `email-code` (הקוד ב-`supabase/functions/email-code/index.ts`,
+  Verify JWT דלוק). (2) בתבנית Magic Link להוסיף `{{ .Token }}`. (3) לחבר SMTP ב-Supabase (Authentication → Emails → SMTP),
+  אחרת הקוד מגיע רק לחברי הצוות של הפרויקט ועד 2 מיילים בשעה.
 
 
 - להוסיף ב-Supabase → Authentication → Emails → **Magic Link** את השורה `הקוד שלך: {{ .Token }}`,

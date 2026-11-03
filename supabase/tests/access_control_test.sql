@@ -766,6 +766,45 @@ select pg_temp.check(not (select must_change_password from app.profiles where us
   and (select must_change_password from app.profiles where user_id = '00000000-0000-0000-0000-00000000000c'), 'password_changed clears only the caller''s own flag');
 update app.profiles set must_change_password = false;
 
+-- Second factor by e-mail (decision 88) ---------------------------------
+
+create function pg_temp.as_session(u text, sid text) returns void language plpgsql as $$
+begin
+  perform set_config('request.jwt.claim.sub', u, false);
+  perform set_config('request.jwt.claims', json_build_object('sub', u, 'aal', 'aal1', 'session_id', sid)::text, false);
+  execute 'set role authenticated';
+end $$;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '50000000-0000-0000-0000-000000000001');
+select pg_temp.check(not app.mfa_verified() and (select count(*) from app.properties) = 0, 'after the password only, an editor sees nothing');
+reset role;
+set role service_role;
+insert into app.email_mfa_sessions (session_id, user_id) values
+  ('50000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-00000000000b'),
+  ('50000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-00000000000a');
+reset role;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '50000000-0000-0000-0000-000000000001');
+select pg_temp.check(app.mfa_verified() and (select count(*) from app.properties) > 0, 'with the e-mail code on this session, the editor sees their country');
+reset role;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '50000000-0000-0000-0000-000000000009');
+select pg_temp.check(not app.mfa_verified(), 'the code counts only for the session it was entered in');
+reset role;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000c', '50000000-0000-0000-0000-000000000001');
+select pg_temp.check(not app.mfa_verified(), 'another user cannot use someone else''s verified session');
+reset role;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000a', '50000000-0000-0000-0000-000000000002');
+select pg_temp.check(not app.mfa_verified(), 'an admin is never verified by e-mail');
+reset role;
+update app.email_mfa_sessions set verified_at = now() - interval '13 hours' where session_id = '50000000-0000-0000-0000-000000000001';
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '50000000-0000-0000-0000-000000000001');
+select pg_temp.check(not app.mfa_verified(), 'an e-mail verification lasts 12 hours');
+do $$ begin
+  insert into app.email_mfa_sessions (session_id, user_id) values ('50000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-00000000000b');
+  raise exception 'FAILED: a user marked their own session verified';
+exception when insufficient_privilege then raise notice 'ok - only the function records a verified session';
+end $$;
+reset role;
+delete from app.email_mfa_sessions;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
