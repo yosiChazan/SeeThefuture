@@ -748,6 +748,24 @@ reset role;
 select pg_temp.check(not exists (select 1 from app.profiles where user_id = '00000000-0000-0000-0000-00000000000f'), 'the admin-users function (service role) adds and removes a profile');
 delete from auth.users where id = '00000000-0000-0000-0000-00000000000f';
 
+-- Changing the first password (decision 87) -----------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+update app.profiles set must_change_password = true where user_id in ('00000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-00000000000c');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  update app.profiles set must_change_password = false where user_id = '00000000-0000-0000-0000-00000000000b';
+end $$;
+reset role;
+select pg_temp.check((select must_change_password from app.profiles where user_id = '00000000-0000-0000-0000-00000000000b'), 'a user cannot clear the flag by writing the profile');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select app.password_changed();
+reset role;
+select pg_temp.check(not (select must_change_password from app.profiles where user_id = '00000000-0000-0000-0000-00000000000b')
+  and (select must_change_password from app.profiles where user_id = '00000000-0000-0000-0000-00000000000c'), 'password_changed clears only the caller''s own flag');
+update app.profiles set must_change_password = false;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

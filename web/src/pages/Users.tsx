@@ -24,7 +24,7 @@ const KIND_COLOR: Record<Kind, string> = { none: 'gray', staff: 'blue', manageme
 interface Role { country_code: Country; level: Level; can_view_sensitive: boolean }
 interface UserRow {
   user_id: string; email: string; created_at: string; last_sign_in_at: string | null; has_totp: boolean;
-  profile: { display_name: string; is_admin: boolean; is_management: boolean; client_party_id: string | null } | null;
+  profile: { display_name: string; is_admin: boolean; is_management: boolean; client_party_id: string | null; must_change_password: boolean } | null;
   roles: Role[];
 }
 const kindOf = (u: UserRow): Kind => !u.profile ? 'none' : u.profile.is_admin ? 'admin' : u.profile.is_management ? 'management'
@@ -36,7 +36,7 @@ function useUsers() {
     queryFn: async (): Promise<UserRow[]> => {
       const [users, profiles, roles] = await Promise.all([
         supabase.rpc('admin_users'),
-        supabase.from('profiles').select('user_id, display_name, is_admin, is_management, client_party_id'),
+        supabase.from('profiles').select('user_id, display_name, is_admin, is_management, client_party_id, must_change_password'),
         supabase.from('user_country_roles').select('user_id, country_code, level, can_view_sensitive'),
       ]);
       const us = must(users) as Omit<UserRow, 'profile' | 'roles'>[];
@@ -56,6 +56,11 @@ async function call(body: Record<string, unknown>): Promise<Record<string, unkno
     throw new Error(msg ?? error.message);
   }
   return data as Record<string, unknown>;
+}
+
+// The user replaces a password an admin gave at the next sign-in (SPEC decision 87).
+async function requireChange(userId: string, on: boolean) {
+  must(await supabase.from('profiles').update({ must_change_password: on }).eq('user_id', userId));
 }
 
 function newPassword(): string {
@@ -118,10 +123,12 @@ function AddUser({ onClose, onCreated }: { onClose: () => void; onCreated: (id: 
   const [name, setName] = useState(''), [email, setEmail] = useState(''), [password, setPassword] = useState(newPassword());
   const [busy, setBusy] = useState(false), [err, setErr] = useState<string | null>(null);
   const [created, setCreated] = useState<string | null>(null);
+  const [mustChange, setMustChange] = useState(true);
   const save = async () => {
     setBusy(true); setErr(null);
     try {
       const r = await call({ action: 'create', email: email.trim(), password, display_name: name.trim() });
+      if (mustChange) await requireChange(String(r.user_id), true);
       notifications.show({ color: 'teal', message: `${name} נוסף/ה` });
       setCreated(String(r.user_id));
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
@@ -141,6 +148,7 @@ function AddUser({ onClose, onCreated }: { onClose: () => void; onCreated: (id: 
         <TextInput label="שם" value={name} onChange={(e) => setName(e.currentTarget.value)} required />
         <TextInput label="מייל" dir="ltr" value={email} onChange={(e) => setEmail(e.currentTarget.value)} required />
         <PasswordField value={password} onChange={setPassword} />
+        <Checkbox label="לדרוש החלפת סיסמה בכניסה הראשונה" checked={mustChange} onChange={(e) => setMustChange(e.currentTarget.checked)} />
         <Text size="xs" c="dimmed">בכניסה הראשונה עובד/ת יתבקש/ו להגדיר אפליקציית אימות (TOTP). אחרי היצירה אפשר לשלוח לו/לה מייל עם פרטי הכניסה, ואז נפתח מסך ההרשאות, כי בלי הרשאות המשתמש לא רואה כלום.</Text>
         {err && <Alert color="red">{err}</Alert>}
         <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
@@ -160,6 +168,7 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
   const [busy, setBusy] = useState<string | null>(null), [err, setErr] = useState<string | null>(null);
   const [pw, setPw] = useState<string | null>(null);
   const [sentPw, setSentPw] = useState<string | null>(null);
+  const [pwMustChange, setPwMustChange] = useState(true);
   const clientOptions = useMemo(() => (clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name })).sort((a, b) => a.label.localeCompare(b.label, 'he')), [clients.data]);
   const self = user.user_id === me;
   const done = (msg: string) => { notifications.show({ color: 'teal', message: msg }); qc.invalidateQueries({ queryKey: ['admin-users'] }); };
@@ -231,9 +240,10 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
           {pw !== null && (
             <Stack gap="xs" mt="sm">
               <PasswordField value={pw} onChange={setPw} />
+              <Checkbox label="לדרוש החלפת סיסמה בכניסה הבאה" checked={pwMustChange} onChange={(e) => setPwMustChange(e.currentTarget.checked)} />
               <Group justify="flex-end"><Button size="xs" variant="default" onClick={() => setPw(null)}>ביטול</Button>
                 <Button size="xs" loading={busy === 'pw'} disabled={pw.length < 10}
-                  onClick={() => run('pw', async () => { await call({ action: 'set_password', user_id: user.user_id, password: pw }); done('הסיסמה עודכנה'); setSentPw(pw); setPw(null); })}>שמירת הסיסמה</Button></Group>
+                  onClick={() => run('pw', async () => { await call({ action: 'set_password', user_id: user.user_id, password: pw }); if (pwMustChange && user.profile) await requireChange(user.user_id, true); done('הסיסמה עודכנה'); setSentPw(pw); setPw(null); })}>שמירת הסיסמה</Button></Group>
             </Stack>
           )}
           <Stack mt="sm"><MailButton key={sentPw ?? ''} name={user.profile?.display_name ?? name} email={user.email} password={sentPw} /></Stack>
@@ -288,7 +298,8 @@ export function Users() {
                           ))}
                         </Group>
                       </Table.Td>
-                      <Table.Td>{u.has_totp ? <Badge color="teal" variant="light" size="sm">מוגדר</Badge> : <Text size="sm" c="dimmed">עוד לא</Text>}</Table.Td>
+                      <Table.Td>{u.has_totp ? <Badge color="teal" variant="light" size="sm">מוגדר</Badge> : <Text size="sm" c="dimmed">עוד לא</Text>}
+                        {u.profile?.must_change_password && <Badge color="orange" variant="light" size="sm" mt={4}>סיסמה זמנית</Badge>}</Table.Td>
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{u.last_sign_in_at ? date(u.last_sign_in_at) : 'אף פעם'}</Table.Td>
                       <Table.Td><Button size="xs" variant="subtle" leftSection={<IconUserCog size={14} />} onClick={() => setEditing(u.user_id)}>הרשאות</Button></Table.Td>
                     </Table.Tr>
