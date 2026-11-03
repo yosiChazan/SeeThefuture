@@ -1,10 +1,10 @@
-import { Anchor, Button, Group, Paper, Stack, Table, Text, TextInput, Title, UnstyledButton } from '@mantine/core';
-import { IconChevronDown, IconChevronUp, IconPlus, IconSearch, IconSelector } from '@tabler/icons-react';
+import { Anchor, Button, Group, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { IconPlus, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { ClientForm } from '../components/ClientForm';
 import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CountryBadge, CountryFilter, QueryState } from '../components/common';
+import { CountryBadge, CountryFilter, QueryState, SortHeader } from '../components/common';
 import { idNumberOf, RELATION_HE, useClients, usePartyLinks, type ClientRow } from '../lib/queries';
 import { COUNTRY_HE } from '../lib/format';
 import type { Country } from '../lib/types';
@@ -32,17 +32,6 @@ function compare(key: SortKey, desc: boolean) {
     const d = typeof x === 'number' && typeof y === 'number' ? x - y : he(String(x), String(y));
     return (desc ? -d : d) || byName(a, b);
   };
-}
-
-function SortHeader({ label, k, sort, desc, onSort }: { label: string; k: SortKey; sort: SortKey; desc: boolean; onSort: (k: SortKey) => void }) {
-  const Icon = sort !== k ? IconSelector : desc ? IconChevronDown : IconChevronUp;
-  return (
-    <Table.Th>
-      <UnstyledButton onClick={() => onSort(k)} aria-label={`מיון לפי ${label}`}>
-        <Group gap={4} wrap="nowrap"><Text size="sm" fw={700}>{label}</Text><Icon size={14} stroke={1.6} opacity={sort === k ? 1 : 0.5} /></Group>
-      </UnstyledButton>
-    </Table.Th>
-  );
 }
 
 export function Clients() {
