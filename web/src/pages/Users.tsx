@@ -76,11 +76,14 @@ function PasswordField({ value, onChange }: { value: string; onChange: (v: strin
 }
 
 
-// A welcome e-mail written in the admin's own mail app (mailto), sent from the admin's own
-// address: Supabase's built-in mail sends only to the project's team and 2 an hour.
+// A welcome e-mail sent by the admin from their own mailbox: Supabase's built-in mail
+// sends only to the project's team and 2 an hour. Three ways to send it, because a mailto
+// link does nothing on a computer with no mail app set up: Gmail in a new tab, the
+// computer's mail app, or copying the text into any mail or WhatsApp.
 // The password goes in only when the admin ticks it; otherwise it is passed on separately.
-function welcomeMail(name: string, email: string, password: string | null): string {
-  const lines = [
+const MAIL_SUBJECT = 'משתמש חדש במערכת See the Future';
+function welcomeText(name: string, email: string, password: string | null): string {
+  return [
     `שלום ${name},`, '',
     'נפתח לך משתמש במערכת של See the Future.', '',
     `כניסה: ${window.location.origin}`,
@@ -88,21 +91,25 @@ function welcomeMail(name: string, email: string, password: string | null): stri
     password ? `סיסמה: ${password}` : 'את הסיסמה אשלח לך בנפרד.', '',
     'בכניסה הראשונה המערכת תבקש להגדיר אפליקציית אימות (Google Authenticator או דומה):',
     'סורקים את הקוד שמופיע על המסך ומקלידים את 6 הספרות.',
-    password ? 'אחרי הכניסה הראשונה כדאי למחוק את המייל הזה.' : '',
-  ].filter((l, i, a) => l !== '' || a[i - 1] !== '');
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent('משתמש חדש במערכת See the Future')}&body=${encodeURIComponent(lines.join('\n'))}`;
+    ...(password ? ['', 'אחרי הכניסה הראשונה כדאי למחוק את המייל הזה.'] : []),
+  ].join('\n');
 }
 
 function MailButton({ name, email, password }: { name: string; email: string; password: string | null }) {
   const [withPassword, setWithPassword] = useState(false);
+  const body = welcomeText(name, email, password && withPassword ? password : null);
+  const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${encodeURIComponent(MAIL_SUBJECT)}&body=${encodeURIComponent(body)}`;
+  const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(MAIL_SUBJECT)}&body=${encodeURIComponent(body)}`;
   return (
     <Stack gap={6}>
+      <Text size="sm" fw={600}>מייל למשתמש עם פרטי הכניסה</Text>
+      {password && <Checkbox label="לכלול את הסיסמה במייל" checked={withPassword} onChange={(e) => setWithPassword(e.currentTarget.checked)} />}
       <Group gap="xs">
-        <Button component="a" href={welcomeMail(name, email, password && withPassword ? password : null)} leftSection={<IconMail size={16} />} variant="light">
-          שליחת מייל למשתמש</Button>
-        {password && <Checkbox label="לכלול את הסיסמה במייל" checked={withPassword} onChange={(e) => setWithPassword(e.currentTarget.checked)} />}
+        <Button component="a" href={gmail} target="_blank" rel="noopener" leftSection={<IconMail size={16} />} variant="light">פתיחה ב-Gmail</Button>
+        <Button component="a" href={mailto} variant="default">תוכנת מייל במחשב</Button>
+        <CopyButton value={`${MAIL_SUBJECT}\n\n${body}`}>{({ copied, copy }) => <Button variant="subtle" onClick={copy}>{copied ? 'הועתק' : 'העתקת ההודעה'}</Button>}</CopyButton>
       </Group>
-      <Text size="xs" c="dimmed">נפתח מייל מוכן בתוכנת המייל שלך (Gmail, Outlook), ונשלח מהכתובת שלך. {password && !withPassword && 'בלי הסיסמה, מעבירים אותה בנפרד (וואטסאפ או SMS): כך מי שרואה את המייל לא יכול להיכנס.'}</Text>
+      <Text size="xs" c="dimmed">המייל לא נשלח מהמערכת: נפתחת טיוטה מוכנה, ואתה שולח אותה מהתיבה שלך אל {email}. אם לא נפתח כלום, מעתיקים את ההודעה ומדביקים במייל או בוואטסאפ. {password && !withPassword && 'בלי הסיסמה, מעבירים אותה בנפרד (וואטסאפ או SMS): כך מי שרואה את המייל לא יכול להיכנס.'}</Text>
     </Stack>
   );
 }
@@ -195,7 +202,7 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
         )}
         {(kind === 'staff' || kind === 'management') && (
           <Table verticalSpacing={4}>
-            <Table.Thead><Table.Tr><Table.Th>מדינה</Table.Th><Table.Th>הרשאה</Table.Th><Table.Th>מסמכים רגישים ות"ז</Table.Th></Table.Tr></Table.Thead>
+            <Table.Thead><Table.Tr><Table.Th>מדינה</Table.Th><Table.Th>הרשאה</Table.Th><Table.Th>מסמכים רגישים</Table.Th></Table.Tr></Table.Thead>
             <Table.Tbody>{COUNTRIES.map((c) => (
               <Table.Tr key={c}>
                 <Table.Td>{COUNTRY_HE[c]}</Table.Td>
@@ -275,7 +282,7 @@ export function Users() {
                           {k === 'admin' && <Text size="sm">כולן</Text>}
                           {k === 'management' && <Text size="sm">כולן (צפייה)</Text>}
                           {u.roles.map((r) => (
-                            <Tooltip key={r.country_code} label={r.can_view_sensitive ? 'כולל מסמכים רגישים ות"ז' : 'בלי מסמכים רגישים'}>
+                            <Tooltip key={r.country_code} label={r.can_view_sensitive ? 'כולל מסמכים רגישים (דרכונים, צילומי ת"ז, ייפויי כוח, חוזי רכישה)' : 'בלי מסמכים רגישים'}>
                               <Badge variant="outline" size="sm">{COUNTRY_HE[r.country_code]}: {LEVEL_HE[r.level].split(' ')[0]}{r.can_view_sensitive ? ' 🔒' : ''}</Badge>
                             </Tooltip>
                           ))}
