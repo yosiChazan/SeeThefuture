@@ -25,6 +25,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session) { setSecond(null); return; }
     (async () => {
+      // A session kept in the browser can belong to a user since deleted, or be revoked.
+      // Ask the server; if it does not know the user, sign out and show the sign-in form.
+      const me = await supabase.auth.getUser();
+      if (me.error || !me.data.user) { await supabase.auth.signOut({ scope: 'local' }); return; }
       const [aal, emailOk, admin, factors] = await Promise.all([
         supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
         supabase.rpc('mfa_verified'),
