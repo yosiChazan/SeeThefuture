@@ -59,8 +59,11 @@ async function call(body: Record<string, unknown>): Promise<Record<string, unkno
 }
 
 // The user replaces a password an admin gave at the next sign-in (SPEC decision 87).
+// Checked: an update that reaches no row is not an error by itself, and a user created
+// without the flag would then sign in without being asked for a new password.
 async function requireChange(userId: string, on: boolean) {
-  must(await supabase.from('profiles').update({ must_change_password: on }).eq('user_id', userId));
+  const rows = must(await supabase.from('profiles').update({ must_change_password: on }).eq('user_id', userId).select('user_id')) as unknown[];
+  if (!rows.length) throw new Error('דרישת החלפת הסיסמה לא נשמרה. נסו שוב מכרטיס ההרשאות ("שליחת פרטי כניסה").');
 }
 
 function newPassword(): string {
