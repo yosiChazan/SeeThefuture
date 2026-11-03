@@ -2,7 +2,7 @@ import {
   Alert, Badge, Button, Checkbox, CopyButton, Group, Modal, Paper, PasswordInput, Radio, Select, Stack, Table, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconKey, IconPlus, IconShieldOff, IconTrash, IconUserCog } from '@tabler/icons-react';
+import { IconKey, IconMail, IconPlus, IconShieldOff, IconTrash, IconUserCog } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
@@ -75,24 +75,66 @@ function PasswordField({ value, onChange }: { value: string; onChange: (v: strin
   );
 }
 
+
+// A welcome e-mail written in the admin's own mail app (mailto), sent from the admin's own
+// address: Supabase's built-in mail sends only to the project's team and 2 an hour.
+// The password goes in only when the admin ticks it; otherwise it is passed on separately.
+function welcomeMail(name: string, email: string, password: string | null): string {
+  const lines = [
+    `שלום ${name},`, '',
+    'נפתח לך משתמש במערכת של See the Future.', '',
+    `כניסה: ${window.location.origin}`,
+    `מייל: ${email}`,
+    password ? `סיסמה: ${password}` : 'את הסיסמה אשלח לך בנפרד.', '',
+    'בכניסה הראשונה המערכת תבקש להגדיר אפליקציית אימות (Google Authenticator או דומה):',
+    'סורקים את הקוד שמופיע על המסך ומקלידים את 6 הספרות.',
+    password ? 'אחרי הכניסה הראשונה כדאי למחוק את המייל הזה.' : '',
+  ].filter((l, i, a) => l !== '' || a[i - 1] !== '');
+  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent('משתמש חדש במערכת See the Future')}&body=${encodeURIComponent(lines.join('\n'))}`;
+}
+
+function MailButton({ name, email, password }: { name: string; email: string; password: string | null }) {
+  const [withPassword, setWithPassword] = useState(false);
+  return (
+    <Stack gap={6}>
+      <Group gap="xs">
+        <Button component="a" href={welcomeMail(name, email, password && withPassword ? password : null)} leftSection={<IconMail size={16} />} variant="light">
+          שליחת מייל למשתמש</Button>
+        {password && <Checkbox label="לכלול את הסיסמה במייל" checked={withPassword} onChange={(e) => setWithPassword(e.currentTarget.checked)} />}
+      </Group>
+      <Text size="xs" c="dimmed">נפתח מייל מוכן בתוכנת המייל שלך (Gmail, Outlook), ונשלח מהכתובת שלך. {password && !withPassword && 'בלי הסיסמה, מעבירים אותה בנפרד (וואטסאפ או SMS): כך מי שרואה את המייל לא יכול להיכנס.'}</Text>
+    </Stack>
+  );
+}
+
 function AddUser({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
   const [name, setName] = useState(''), [email, setEmail] = useState(''), [password, setPassword] = useState(newPassword());
   const [busy, setBusy] = useState(false), [err, setErr] = useState<string | null>(null);
+  const [created, setCreated] = useState<string | null>(null);
   const save = async () => {
     setBusy(true); setErr(null);
     try {
-      const r = await call({ action: 'create', email, password, display_name: name });
-      notifications.show({ color: 'teal', message: `${name} נוסף/ה. עכשיו בוחרים הרשאות.` });
-      onCreated(String(r.user_id));
+      const r = await call({ action: 'create', email: email.trim(), password, display_name: name.trim() });
+      notifications.show({ color: 'teal', message: `${name} נוסף/ה` });
+      setCreated(String(r.user_id));
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
+  if (created) return (
+    <Modal opened onClose={() => onCreated(created)} title="המשתמש נוצר" size="lg">
+      <Stack>
+        <Text>{name.trim()} ({email.trim()}) יכול/ה להיכנס. עכשיו שולחים לו/לה את פרטי הכניסה, ואז נותנים הרשאות.</Text>
+        <MailButton name={name.trim()} email={email.trim()} password={password} />
+        <Group justify="flex-end"><Button onClick={() => onCreated(created)}>המשך להרשאות</Button></Group>
+      </Stack>
+    </Modal>
+  );
   return (
     <Modal opened onClose={onClose} title="משתמש חדש" size="lg">
       <Stack>
         <TextInput label="שם" value={name} onChange={(e) => setName(e.currentTarget.value)} required />
         <TextInput label="מייל" dir="ltr" value={email} onChange={(e) => setEmail(e.currentTarget.value)} required />
         <PasswordField value={password} onChange={setPassword} />
-        <Text size="xs" c="dimmed">בכניסה הראשונה עובד/ת יתבקש/ו להגדיר אפליקציית אימות (TOTP). בלי הרשאות המשתמש לא רואה כלום, ולכן אחרי השמירה נפתח מסך ההרשאות.</Text>
+        <Text size="xs" c="dimmed">בכניסה הראשונה עובד/ת יתבקש/ו להגדיר אפליקציית אימות (TOTP). אחרי היצירה אפשר לשלוח לו/לה מייל עם פרטי הכניסה, ואז נפתח מסך ההרשאות, כי בלי הרשאות המשתמש לא רואה כלום.</Text>
         {err && <Alert color="red">{err}</Alert>}
         <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
           <Button onClick={save} loading={busy} disabled={!name.trim() || !email.trim() || password.length < 10}>יצירה</Button></Group>
@@ -110,6 +152,7 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
   const [roles, setRoles] = useState<Partial<Record<Country, Role>>>(Object.fromEntries(user.roles.map((r) => [r.country_code, r])));
   const [busy, setBusy] = useState<string | null>(null), [err, setErr] = useState<string | null>(null);
   const [pw, setPw] = useState<string | null>(null);
+  const [sentPw, setSentPw] = useState<string | null>(null);
   const clientOptions = useMemo(() => (clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name })).sort((a, b) => a.label.localeCompare(b.label, 'he')), [clients.data]);
   const self = user.user_id === me;
   const done = (msg: string) => { notifications.show({ color: 'teal', message: msg }); qc.invalidateQueries({ queryKey: ['admin-users'] }); };
@@ -183,9 +226,10 @@ function EditUser({ user, me, onClose }: { user: UserRow; me: string; onClose: (
               <PasswordField value={pw} onChange={setPw} />
               <Group justify="flex-end"><Button size="xs" variant="default" onClick={() => setPw(null)}>ביטול</Button>
                 <Button size="xs" loading={busy === 'pw'} disabled={pw.length < 10}
-                  onClick={() => run('pw', async () => { await call({ action: 'set_password', user_id: user.user_id, password: pw }); done('הסיסמה עודכנה'); setPw(null); })}>שמירת הסיסמה</Button></Group>
+                  onClick={() => run('pw', async () => { await call({ action: 'set_password', user_id: user.user_id, password: pw }); done('הסיסמה עודכנה'); setSentPw(pw); setPw(null); })}>שמירת הסיסמה</Button></Group>
             </Stack>
           )}
+          <Stack mt="sm"><MailButton key={sentPw ?? ''} name={user.profile?.display_name ?? name} email={user.email} password={sentPw} /></Stack>
         </Paper>
       </Stack>
     </Modal>
