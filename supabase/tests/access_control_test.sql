@@ -740,6 +740,13 @@ do $$ begin
 exception when check_violation then raise notice 'ok - the last admin cannot be removed';
 end $$;
 select pg_temp.check((select is_admin from app.profiles where user_id = '00000000-0000-0000-0000-00000000000a'), 'the admin is still an admin');
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000f', 'new@example.test');
+set role service_role;
+insert into app.profiles (user_id, display_name) values ('00000000-0000-0000-0000-00000000000f', 'New');
+delete from app.profiles where user_id = '00000000-0000-0000-0000-00000000000f';
+reset role;
+select pg_temp.check(not exists (select 1 from app.profiles where user_id = '00000000-0000-0000-0000-00000000000f'), 'the admin-users function (service role) adds and removes a profile');
+delete from auth.users where id = '00000000-0000-0000-0000-00000000000f';
 
 -- Audit -----------------------------------------------------------------
 

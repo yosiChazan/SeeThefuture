@@ -19,7 +19,7 @@
 
 | רכיב | איפה | הערות |
 |---|---|---|
-| מסד נתונים | Supabase, project ref `oqvanprfxsdonzldgtnq` | סכמה `app` (חשופה ב-API). מיגרציות 1–29 הוחלו |
+| מסד נתונים | Supabase, project ref `oqvanprfxsdonzldgtnq` | סכמה `app` (חשופה ב-API). מיגרציות 1–30 הוחלו |
 | ממשק המשרד | https://seethefuture-office.pages.dev | Cloudflare Pages, נבנה אוטומטית מ-`main`. משתנים: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `NODE_VERSION=22` |
 | כניסה | מייל + סיסמה, ואז TOTP חובה לעובדים (aal2) | הרשמה עצמית כבויה. משתמש חדש: admin נותן שורה ב-`app.profiles` ו-`app.user_country_roles` |
 | דרופבוקס של איתי | אפליקציית Dropbox ציבורית (PKCE), App key `b7vd5tnnmgj61op`, redirect `/dropbox` | ה-refresh token והקישור לתיקייה ב-`app.integrations` (admin בלבד) |
@@ -100,8 +100,6 @@
 
 ## 5. מחכה ליוסי
 
-- **מסך משתמשים:** לפרוס את פונקציית ה-Edge `admin-users` (הקוד ב-`supabase/functions/admin-users/index.ts`,
-  Verify JWT דלוק). בלי הפונקציה המסך מציג ועורך הרשאות, אבל לא מוסיף משתמשים ולא מאפס סיסמה.
 
 - להוסיף ב-Supabase → Authentication → Emails → **Magic Link** את השורה `הקוד שלך: {{ .Token }}`,
   אחרת איפוס דוחות איתי לא יקבל קוד במייל. שירות המייל המובנה שולח רק 2 מיילים בשעה.
