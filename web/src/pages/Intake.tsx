@@ -72,6 +72,10 @@ function NewReport({ onClose }: { onClose: () => void }) {
           <FileInput label="קובץ" placeholder={`למשל ${ADAPTERS[source.adapter].example}`} accept={ADAPTERS[source.adapter].accept}
             value={file} onChange={read} leftSection={<IconFileSpreadsheet size={16} />} clearable />
         )}
+        {source && ADAPTERS[source.adapter]?.drive && (
+          <Text size="sm">הקובץ ב-Drive? <Anchor href={ADAPTERS[source.adapter].drive} target="_blank" rel="noopener">פתיחת התיקייה של הדוחות</Anchor>
+            {' '}(לשונית חדשה). מורידים משם את הקובץ של החודש, ובוחרים אותו כאן.</Text>
+        )}
         {error && <Alert color="red" title="הקובץ לא נקלט">{error}</Alert>}
         {preview && (
           <Alert color={preview.warnings.length ? 'orange' : 'teal'} title={`דוח ${monthLabel(preview.period)}`}>
