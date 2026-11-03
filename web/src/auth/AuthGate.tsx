@@ -93,7 +93,7 @@ function EmailCode({ email, onDone }: { email: string; onDone: () => void }) {
           setBusy(true); setError(null);
           const err = await emailCode({ action: 'verify', code });
           setBusy(false);
-          if (err) setError('הקוד שגוי או שפג תוקפו'); else onDone();
+          if (err) setError(/wrong|expired|bad code/i.test(err) ? 'הקוד שגוי או שפג תוקפו' : `האימות נכשל: ${err}`); else onDone();
         }} />
         <Button variant="subtle" size="xs" disabled={wait > 0} onClick={send}>{wait > 0 ? `שליחה שוב בעוד ${wait} שניות` : 'שליחת קוד חדש'}</Button>
       </>}

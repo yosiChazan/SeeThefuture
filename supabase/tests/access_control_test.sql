@@ -803,6 +803,12 @@ do $$ begin
 exception when insufficient_privilege then raise notice 'ok - only the function records a verified session';
 end $$;
 reset role;
+set role service_role;
+insert into app.email_mfa_sessions (session_id, user_id) values ('50000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-00000000000b')
+  on conflict (session_id) do update set verified_at = excluded.verified_at;
+reset role;
+select pg_temp.check((select verified_at > now() - interval '1 minute' from app.email_mfa_sessions where session_id = '50000000-0000-0000-0000-000000000001'),
+  'the email-code function renews a verified session (upsert)');
 delete from app.email_mfa_sessions;
 
 -- Audit -----------------------------------------------------------------
