@@ -704,6 +704,43 @@ reset role;
 select pg_temp.check(exists (select 1 from app.audit_log where table_name = 'activities'), 'activities are audited');
 delete from app.contact_assignments; delete from app.activities; delete from app.company_partners;
 
+-- Users screen (decision 86) --------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check((select count(*) from app.admin_users()) = 5, 'an admin lists who can sign in');
+insert into app.user_country_roles (user_id, country_code, level, can_view_sensitive) values ('00000000-0000-0000-0000-00000000000e', 'GE', 'viewer', true);
+update app.profiles set display_name = 'Management 2' where user_id = '00000000-0000-0000-0000-00000000000e';
+select pg_temp.check((select level from app.user_country_roles where user_id = '00000000-0000-0000-0000-00000000000e' and country_code = 'GE') = 'viewer',
+  'an admin gives a country role');
+delete from app.user_country_roles where user_id = '00000000-0000-0000-0000-00000000000e' and country_code = 'GE';
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'aal1');
+do $$ begin
+  perform app.admin_users();
+  raise exception 'FAILED: the user list without TOTP';
+exception when insufficient_privilege then raise notice 'ok - listing users needs TOTP';
+end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  perform app.admin_users();
+  raise exception 'FAILED: a non-admin listed users';
+exception when insufficient_privilege then raise notice 'ok - only an admin lists users';
+end $$;
+do $$ begin
+  insert into app.user_country_roles (user_id, country_code, level) values ('00000000-0000-0000-0000-00000000000b', 'UA', 'finance');
+  raise exception 'FAILED: a non-admin gave themself a role';
+exception when insufficient_privilege then raise notice 'ok - a non-admin cannot give themself a role';
+end $$;
+reset role;
+do $$ begin
+  update app.profiles set is_admin = false where user_id = '00000000-0000-0000-0000-00000000000a';
+  set constraints all immediate;
+  raise exception 'FAILED: the last admin was removed';
+exception when check_violation then raise notice 'ok - the last admin cannot be removed';
+end $$;
+select pg_temp.check((select is_admin from app.profiles where user_id = '00000000-0000-0000-0000-00000000000a'), 'the admin is still an admin');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
