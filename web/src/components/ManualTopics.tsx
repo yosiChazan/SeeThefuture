@@ -16,7 +16,7 @@ import { gmailLink, mailtoLink, topicMail } from '../lib/topicMail';
 export interface TopicLink { entity_type: string; entity_id: string }
 export interface Topic {
   id: string; title: string; notes: string | null; assignee_id: string | null; status: string; created_by: string | null;
-  created_at: string; reply: string | null; done_at: string | null; fix_url: string | null; task_links: TopicLink[];
+  created_at: string; reply: string | null; done_at: string | null; fix_url: string | null; edited_at?: string | null; task_links: TopicLink[];
 }
 export interface Option { value: string; label: string }
 export interface Lists { clients: Option[]; contacts: Option[]; properties: Option[] }
@@ -32,7 +32,8 @@ export function useTopics() {
   return useQuery({
     queryKey: ['manual-topics'],
     queryFn: async () => must(await supabase.from('tasks')
-      .select('id, title, notes, assignee_id, status, created_by, created_at, reply, done_at, fix_url, task_links(entity_type, entity_id)')
+      // '*' so that a column added later (edited_at) does not break the list before its migration.
+      .select('*, task_links(entity_type, entity_id)')
       .order('created_at', { ascending: false })) as Topic[],
   });
 }
@@ -128,12 +129,15 @@ function MailButton({ to, topic, from, opened, setOpened }: { to: Staff; topic: 
   );
 }
 
-export function NewTopic({ lists, onClose }: { lists: Lists; onClose: () => void }) {
+// A new topic, or (with `topic`) editing one: only its author or an admin gets here, and
+// the database checks the same (migration 39).
+export function NewTopic({ lists, onClose, topic }: { lists: Lists; onClose: () => void; topic?: Topic }) {
   const qc = useQueryClient();
   const staff = useStaff();
-  const [title, setTitle] = useState(''), [notes, setNotes] = useState(''), [assignee, setAssignee] = useState<string | null>(null);
-  const [about, setAbout] = useState<string[]>([]);
-  const [fix, setFix] = useState('');
+  const [title, setTitle] = useState(topic?.title ?? ''), [notes, setNotes] = useState(topic?.notes ?? '');
+  const [assignee, setAssignee] = useState<string | null>(topic?.assignee_id ?? null);
+  const [about, setAbout] = useState<string[]>(() => (topic?.task_links ?? []).map(keyOf));
+  const [fix, setFix] = useState(topic?.fix_url ?? '');
   const [busy, setBusy] = useState(false);
   const aboutOptions = useAboutOptions(lists);
   const fixUrl = appPath(fix, window.location.origin);
@@ -145,21 +149,29 @@ export function NewTopic({ lists, onClose }: { lists: Lists; onClose: () => void
   const save = async () => {
     setBusy(true);
     try {
-      const row = must(await supabase.from('tasks').insert({
-        title: title.trim(), notes: notes.trim() || null, assignee_id: assignee, fix_url: fix.trim() ? fixUrl : null,
-      }).select('id').single()) as { id: string };
-      if (about.length) {
-        must(await supabase.from('task_links').insert(about.map((a) => { const [entity_type, entity_id] = a.split(':'); return { task_id: row.id, entity_type, entity_id }; })));
+      const fields = { title: title.trim(), notes: notes.trim() || null, assignee_id: assignee, fix_url: fix.trim() ? fixUrl : null };
+      const id = topic
+        ? (must(await supabase.from('tasks').update(fields).eq('id', topic.id)), topic.id)
+        : (must(await supabase.from('tasks').insert(fields).select('id').single()) as { id: string }).id;
+      const before = new Set((topic?.task_links ?? []).map(keyOf));
+      const added = about.filter((a) => !before.has(a));
+      const removed = [...before].filter((a) => !about.includes(a));
+      if (added.length) {
+        must(await supabase.from('task_links').insert(added.map((a) => { const [entity_type, entity_id] = a.split(':'); return { task_id: id, entity_type, entity_id }; })));
       }
-      notifications.show({ color: 'teal', message: 'הנושא נוסף' });
+      for (const a of removed) {
+        const [entity_type, entity_id] = a.split(':');
+        must(await supabase.from('task_links').delete().match({ task_id: id, entity_type, entity_id }));
+      }
+      notifications.show({ color: 'teal', message: topic ? 'הנושא עודכן' : 'הנושא נוסף' });
       qc.invalidateQueries({ queryKey: ['manual-topics'] });
-      // With an employee chosen, the dialog stays open on the e-mail draft to them.
-      if (to) setSaved({ title: title.trim(), notes: notes.trim() || null, fix_url: fix.trim() ? fixUrl : null });
+      // With an employee newly chosen, the dialog stays open on the e-mail draft to them.
+      if (to && assignee !== (topic?.assignee_id ?? null)) setSaved({ title: title.trim(), notes: notes.trim() || null, fix_url: fix.trim() ? fixUrl : null });
       else onClose();
     } catch (e) { notifications.show({ color: 'red', message: (e as Error).message }); } finally { setBusy(false); }
   };
   return (
-    <Modal opened onClose={onClose} title="נושא חדש" size="lg">
+    <Modal opened onClose={onClose} title={topic ? 'עריכת הנושא' : 'נושא חדש'} size="lg">
       {saved && to ? (
         <Stack>
           <Text>הנושא נשמר ומופיע לכל העובדים. נשאר לשלוח מייל ל{to.display_name}:</Text>
@@ -188,9 +200,11 @@ export function NewTopic({ lists, onClose }: { lists: Lists; onClose: () => void
   );
 }
 
-function TopicCard({ t, names, about, me, isAdmin, staff, people }: {
-  t: Topic; names: Map<string, string>; about: Map<string, string>; me: string; isAdmin: boolean; staff: Option[]; people: Staff[];
+function TopicCard({ t, names, about, me, isAdmin, staff, people, lists }: {
+  t: Topic; names: Map<string, string>; about: Map<string, string>; me: string; isAdmin: boolean; staff: Option[]; people: Staff[]; lists: Lists;
 }) {
+  const [editing, setEditing] = useState(false);
+  const mine = t.created_by === me || isAdmin;
   const [mailOpen, setMailOpen] = useState(false);
   const to = people.find((p) => p.user_id === t.assignee_id);
   const qc = useQueryClient();
@@ -217,11 +231,13 @@ function TopicCard({ t, names, about, me, isAdmin, staff, people }: {
               {done && <Badge variant="light" color="teal">בוצע</Badge>}
               <Text fw={600}>{t.title}</Text>
             </Group>
-            <Text size="xs" c="dimmed">נשלח ע"י {names.get(t.created_by ?? '') ?? 'לא ידוע'} · {when(t.created_at)}{done && t.done_at ? ` · בוצע ${when(t.done_at)}` : ''}</Text>
+            <Text size="xs" c="dimmed">נשלח ע"י {names.get(t.created_by ?? '') ?? 'לא ידוע'} · {when(t.created_at)}{t.edited_at ? ` · נערך ${when(t.edited_at)}` : ''}{done && t.done_at ? ` · בוצע ${when(t.done_at)}` : ''}</Text>
+            {editing && <NewTopic topic={t} lists={lists} onClose={() => setEditing(false)} />}
           </Stack>
           <Group gap="xs" wrap="nowrap">
             {t.fix_url && <FixLink url={t.fix_url} />}
-            {(t.created_by === me || isAdmin) && <Button size="compact-xs" variant="subtle" color="red" onClick={remove}>מחיקה</Button>}
+            {mine && <Button size="compact-xs" variant="subtle" onClick={() => setEditing(true)}>עריכה</Button>}
+            {mine && <Button size="compact-xs" variant="subtle" color="red" onClick={remove}>מחיקה</Button>}
           </Group>
         </Group>
         {t.notes && <LinkedText text={t.notes} />}
@@ -279,7 +295,7 @@ export function ManualTopics({ lists, search }: { lists: Lists; search: string }
         <Switch label="כולל נושאים שבוצעו" checked={showDone} onChange={(e) => setShowDone(e.currentTarget.checked)} />
       </Group>
       <Text size="sm" c="dimmed">{list.length} נושאים</Text>
-      {list.map((t) => <TopicCard key={t.id} t={t} names={names} about={about} me={me} isAdmin={access.isAdmin} staff={staffOptions} people={staff.data ?? []} />)}
+      {list.map((t) => <TopicCard key={t.id} t={t} names={names} about={about} me={me} isAdmin={access.isAdmin} staff={staffOptions} people={staff.data ?? []} lists={lists} />)}
     </Stack>
   );
 }
