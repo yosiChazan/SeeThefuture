@@ -1,12 +1,12 @@
-import { Anchor, Badge, Button, Group, Modal, MultiSelect, Paper, Select, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
+import { Anchor, Badge, Button, Group, Modal, MultiSelect, Paper, Popover, Select, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { IconExternalLink, IconTool } from '@tabler/icons-react';
+import { IconExternalLink, IconLink, IconTool } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccess } from '../lib/access';
-import { appPath, fixLinkOk, splitLinks } from '../lib/links';
+import { appPath, fixLinkOk, namedLink, splitLinks } from '../lib/links';
 import { must, supabase } from '../lib/supabase';
 
 // Topics added by hand on the completeness page (SPEC decision 92): a question or a task,
@@ -44,16 +44,44 @@ const when = (s: string) => new Date(s).toLocaleDateString('he-IL');
 const keyOf = (l: TopicLink) => `${l.entity_type}:${l.entity_id}`;
 const pathOf = (l: TopicLink) => l.entity_type === 'property' ? `/properties/${l.entity_id}` : l.entity_type === 'lease' ? `/leases/${l.entity_id}` : `/clients/${l.entity_id}`;
 
-// Text with its web addresses as links, opening in a new tab.
+// Text with its links: a named link shows its name, a bare address shows itself. Web
+// addresses open in a new tab, pages of the app open in place.
 export function LinkedText({ text, size = 'sm' }: { text: string; size?: string }) {
   return (
     <Text size={size} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-      {splitLinks(text).map((p, i) => 'url' in p
-        ? <Anchor key={i} href={p.url} target="_blank" rel="noopener noreferrer" size={size}>{p.url}</Anchor>
-        : <Fragment key={i}>{p.text}</Fragment>)}
+      {splitLinks(text).map((p, i) => !('url' in p) ? <Fragment key={i}>{p.text}</Fragment>
+        : p.url.startsWith('/')
+          ? <Anchor key={i} component={Link} to={p.url} size={size}>{p.label ?? p.url}</Anchor>
+          : <Anchor key={i} href={p.url} target="_blank" rel="noopener noreferrer" size={size}>{p.label ?? p.url}</Anchor>)}
     </Text>
   );
 }
+
+// "Add a link": an address and, if wanted, the words to show instead of it. Appends
+// [words](address) to the text, or the bare address when no words are given.
+function AddLink({ onAdd }: { onAdd: (link: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState(''), [url, setUrl] = useState('');
+  const target = appPath(url, window.location.origin);
+  const bad = !!url.trim() && !fixLinkOk(target);
+  const add = () => { onAdd(namedLink(label, target)); setLabel(''); setUrl(''); setOpen(false); };
+  return (
+    <Popover opened={open} onChange={setOpen} position="bottom-start" withArrow trapFocus>
+      <Popover.Target>
+        <Button size="compact-xs" variant="subtle" leftSection={<IconLink size={14} />} onClick={() => setOpen((o) => !o)}>הוספת קישור</Button>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="xs" w={300}>
+          <TextInput size="xs" label="כתובת" dir="ltr" placeholder="https://…" value={url} onChange={(e) => setUrl(e.currentTarget.value)}
+            error={bad ? 'צריך להתחיל ב-https:// או להיות דף באתר' : undefined} data-autofocus />
+          <TextInput size="xs" label="טקסט להצגה (לא חובה)" description="ריק: תוצג הכתובת עצמה" placeholder="למשל: החוזה בדרייב" value={label} onChange={(e) => setLabel(e.currentTarget.value)} />
+          <Button size="xs" onClick={add} disabled={!url.trim() || bad}>הוספה</Button>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+const append = (text: string, link: string) => (text && !/\s$/.test(text) ? `${text} ` : text) + link;
 
 function FixLink({ url }: { url: string }) {
   const inApp = url.startsWith('/');
@@ -98,8 +126,11 @@ export function NewTopic({ lists, onClose }: { lists: Lists; onClose: () => void
     <Modal opened onClose={onClose} title="נושא חדש" size="lg">
       <Stack>
         <TextInput label="נושא" placeholder="למשל: לברר מי השוכר בדירה 23" value={title} onChange={(e) => setTitle(e.currentTarget.value)} required />
-        <Textarea label="פירוט או שאלה" description="קישורים שמדביקים כאן (https://…) יוצגו כקישורים" autosize minRows={3}
-          value={notes} onChange={(e) => setNotes(e.currentTarget.value)} />
+        <Stack gap={2}>
+          <Textarea label="פירוט או שאלה" description="כתובת שמדביקים (https://…) תוצג כקישור. כדי שיופיע טקסט במקום הכתובת: הוספת קישור" autosize minRows={3}
+            value={notes} onChange={(e) => setNotes(e.currentTarget.value)} />
+          <Group><AddLink onAdd={(l) => setNotes((n) => append(n, l))} /></Group>
+        </Stack>
         <TextInput label="קישור לתיקון (לא חובה)" description="כתובת של דף באתר (למשל כרטיס לקוח) או קישור חיצוני (Drive וכדומה)" dir="ltr"
           placeholder="https://…" value={fix} onChange={(e) => setFix(e.currentTarget.value)} error={fixBad ? 'צריך להתחיל ב-https:// או להיות דף באתר' : undefined} />
         <Select label="לשלוח לעובד/ת (לא חובה)" placeholder="בלי שיוך: פתוח לכולם" clearable searchable value={assignee} onChange={setAssignee}
@@ -162,6 +193,7 @@ function TopicCard({ t, names, about, me, isAdmin, staff }: {
         {t.reply && <Paper bg="gray.0" p="xs"><Text size="xs" c="dimmed">תשובה</Text><LinkedText text={t.reply} /></Paper>}
         <Textarea placeholder={t.reply ? 'עריכת התשובה' : 'תשובה (קישורים יוצגו כקישורים)'} autosize minRows={1} value={reply} onChange={(e) => setReply(e.currentTarget.value)} />
         <Group gap="xs">
+          <AddLink onAdd={(l) => setReply((r) => append(r, l))} />
           <Button size="xs" variant="light" disabled={reply === (t.reply ?? '')} loading={busy} onClick={() => update({ reply: reply.trim() || null }, 'התשובה נשמרה')}>שמירת התשובה</Button>
           {done
             ? <Button size="xs" variant="default" loading={busy} onClick={() => update({ status: 'open', done_at: null }, 'הנושא נפתח מחדש')}>פתיחה מחדש</Button>
