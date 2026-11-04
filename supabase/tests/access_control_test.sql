@@ -811,6 +811,21 @@ select pg_temp.check((select verified_at > now() - interval '1 minute' from app.
   'the email-code function renews a verified session (upsert)');
 delete from app.email_mfa_sessions;
 
+-- User activity (decision 90) -------------------------------------------
+
+select pg_temp.check(not exists (
+  select 1 from unnest(array['properties', 'documents', 'import_batches', 'party_roles', 'buildings']) t
+  where not exists (select 1 from pg_trigger g join pg_class c on c.oid = g.tgrelid where c.relname = t and g.tgname = 'audit')),
+  'properties, documents, report approvals and roles are audited');
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '60000000-0000-0000-0000-000000000001');
+select app.log_sign_in(); select app.log_sign_in();
+reset role;
+select pg_temp.check((select count(*) from app.audit_log where action = 'LOGIN' and user_id = '00000000-0000-0000-0000-00000000000b') = 1,
+  'a sign-in is recorded once per session');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.audit_log) = 0, 'only an admin reads the activity log');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

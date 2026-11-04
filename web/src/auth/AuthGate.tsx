@@ -103,6 +103,8 @@ function EmailCode({ email, onDone }: { email: string; onDone: () => void }) {
 
 function WithAccess({ userId, children }: { userId: string; children: ReactNode }) {
   const access = useAccessQuery(userId);
+  // The sign-in goes into the activity log once per session (SPEC decision 90).
+  useEffect(() => { if (access.data) supabase.rpc('log_sign_in').then(() => {}); }, [access.data]);
   if (access.isLoading) return <Center h="100vh"><Loader /></Center>;
   if (access.error) return <Frame><Alert color="red" title="שגיאה">{String(access.error.message)}</Alert></Frame>;
   if (!access.data || access.data.isClient) {
