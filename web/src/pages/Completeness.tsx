@@ -1,12 +1,13 @@
 import { Alert, Anchor, Badge, Button, Group, Loader, Modal, Paper, Select, Stack, Switch, Text, TextInput, Textarea, Title } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { IconEyeOff, IconSearch } from '@tabler/icons-react';
+import { IconEyeOff, IconPlus, IconSearch } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { IdFromScans } from '../components/IdFromScans';
+import { ManualTopics, NewTopic, useTopics } from '../components/ManualTopics';
 import { linkPartners } from '../components/Partners';
 import { useAccess } from '../lib/access';
 import { findItems, GROUP_HE, type Doc, type Fix, type Group as G, type Item } from '../lib/completeness';
@@ -83,7 +84,9 @@ export function Completeness() {
   const batches = useBatches();
   const extra = useExtra();
   const [params, setParams] = useSearchParams();
-  const group = (params.get('g') ?? 'all') as G | 'all';
+  const group = (params.get('g') ?? 'all') as G | 'all' | 'manual';
+  const topics = useTopics();
+  const [adding, setAdding] = useState(false);
   const check = params.get('check');
   const search = params.get('q') ?? '';
   const [showIgnored, setShowIgnored] = useState(false);
@@ -165,7 +168,15 @@ export function Completeness() {
   const counts = (g: G | 'all') => open.filter((i) => g === 'all' || i.group === g).length;
   return (
     <Stack>
-      <Title order={2}>השלמת פרטים</Title>
+      <Group justify="space-between">
+        <Title order={2}>השלמת פרטים</Title>
+        <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>נושא חדש</Button>
+      </Group>
+      {adding && (
+        <NewTopic onClose={() => { setAdding(false); setMany({ g: 'manual', check: null }); }}
+          clients={(clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name }))}
+          properties={(properties.data ?? []).map((p) => ({ value: p.id, label: propertyTitle(p) }))} />
+      )}
       <Text size="sm" c="dimmed">מה חסר אצל לקוחות, נכסים וחוזים, ומה כבר יש במערכת שיכול לעזור להשלים. "להתעלם" מסתיר פריט עם סיבה, ואפשר להחזיר אותו. דירות שנמכרו לא נבדקות.</Text>
       {!ready ? <Group><Loader size="sm" /><Text size="sm">בודק…</Text></Group> : (
         <>
@@ -175,7 +186,18 @@ export function Completeness() {
                 {g === 'all' ? 'הכול' : GROUP_HE[g]} · {counts(g)}
               </Badge>
             ))}
+            <Badge size="lg" color="violet" variant={group === 'manual' ? 'filled' : 'light'} style={{ cursor: 'pointer' }} onClick={() => setMany({ g: 'manual', check: null })}>
+              ידני · {(topics.data ?? []).filter((t) => t.status !== 'done').length}
+            </Badge>
           </Group>
+          {group === 'manual' ? (
+            <>
+              <TextInput placeholder="חיפוש בנושאים" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => set('q', e.currentTarget.value)} w={240} />
+              <ManualTopics search={search}
+                clients={(clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name }))}
+                properties={(properties.data ?? []).map((p) => ({ value: p.id, label: propertyTitle(p) }))} />
+            </>
+          ) : <>
           <Group>
             <Select placeholder="כל הבדיקות" data={checks.map(([value, label]) => ({ value, label: `${label} (${open.filter((i) => i.key === value).length})` }))} value={check} onChange={(v) => set('check', v)} clearable w={320} />
             <TextInput placeholder="חיפוש לקוח או נכס" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => set('q', e.currentTarget.value)} w={240} />
@@ -214,6 +236,7 @@ export function Completeness() {
             </Paper>
           ))}
           {shown.length > limit && <Button variant="default" onClick={() => setLimit((l) => l + PAGE)}>עוד {Math.min(PAGE, shown.length - limit)} פריטים</Button>}
+          </>}
         </>
       )}
       {ignoring && (
