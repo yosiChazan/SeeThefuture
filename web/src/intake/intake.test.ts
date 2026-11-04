@@ -72,6 +72,13 @@ test('Gershon: FX from the dollar fund, then building and legal fees', () => {
   const apt32 = r.rows.filter((x) => x.property.ref === '4(32)');
   assert.ok(apt32.every((x) => x.errors.some((e) => /3707\.06/.test(e) && /3710\.06/.test(e))));
 
+  // 3(44), 4(30) and 4(33) share one fund: each starts from the balance above it, so only
+  // the first proposes an opening balance (SPEC decision 91).
+  const openings = r.rows.filter((x) => x.proposed?.category === 'opening_balance').map((x) => x.property.ref);
+  assert.deepEqual(openings, ['3(50)', '3(44)', '4(31)']);
+  const apt430 = r.rows.filter((x) => x.property.ref === '4(30)');
+  assert.ok(apt430.find((x) => x.proposed?.category === 'fx')!.issues.some((i) => /קופה משותפת/.test(i) && /3\(44\)/.test(i)));
+
   const apt29 = r.rows.filter((x) => x.property.ref === '3(29)');
   assert.deepEqual(apt29.map((x) => x.proposed!.category), ['building_fees', 'legal_fees'], 'no dollars: no FX');
   assert.ok(apt29[0].issues.some((i) => /3692\.78/.test(i)));

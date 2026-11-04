@@ -826,6 +826,26 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
 select pg_temp.check((select count(*) from app.audit_log) = 0, 'only an admin reads the activity log');
 reset role;
 
+-- A shared fund (decision 91) -------------------------------------------
+
+-- Property ...01 belongs to Client One; its expense fund is Client Two's.
+insert into app.fund_owners (property_id, account_kind, party_id) values
+  ('30000000-0000-0000-0000-000000000001', 'expense_pool', '10000000-0000-0000-0000-000000000002');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('70000000-0000-0000-0000-000000000001', 'UA', '2026-01-31', '2026-01-01', 'building_fees', 'draft');
+select app.post_import_entry('70000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000003', 'UA', '2026-01-31', '{"amount": -100, "currency": "UAH", "account": {"kind": "expense_pool", "holder": "source"}}');
+select app.post_import_entry('70000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000003', 'UA', '2026-01-31', '{"amount": 100, "currency": "UAH", "account": {"kind": "rent_pool", "holder": "source"}}');
+select pg_temp.check(
+  (select a.beneficiary_party_id from app.entries e join app.accounts a on a.id = e.account_id
+   where e.transaction_id = '70000000-0000-0000-0000-000000000001' and a.kind = 'expense_pool') = '10000000-0000-0000-0000-000000000002'
+  and (select a.beneficiary_party_id from app.entries e join app.accounts a on a.id = e.account_id
+   where e.transaction_id = '70000000-0000-0000-0000-000000000001' and a.kind = 'rent_pool') = '10000000-0000-0000-0000-000000000001',
+  'an expense of a property with a fund owner goes to the fund owner; other accounts stay with the owners');
+delete from app.transactions where id = '70000000-0000-0000-0000-000000000001';
+delete from app.fund_owners;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
