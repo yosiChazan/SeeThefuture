@@ -1,13 +1,14 @@
-import { Anchor, Badge, Button, Group, Modal, MultiSelect, Paper, Popover, Select, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
+import { Anchor, Badge, Button, CopyButton, Group, Modal, MultiSelect, Paper, Popover, Select, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { IconExternalLink, IconLink, IconTool } from '@tabler/icons-react';
+import { IconExternalLink, IconLink, IconMail, IconTool } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccess } from '../lib/access';
 import { appPath, fixLinkOk, namedLink, splitLinks } from '../lib/links';
 import { must, supabase } from '../lib/supabase';
+import { gmailLink, mailtoLink, topicMail } from '../lib/topicMail';
 
 // Topics added by hand on the completeness page (SPEC decision 92): a question or a task,
 // sent to an employee (or to no one), about any number of clients, contacts and
@@ -20,10 +21,11 @@ export interface Topic {
 export interface Option { value: string; label: string }
 export interface Lists { clients: Option[]; contacts: Option[]; properties: Option[] }
 
+export interface Staff { user_id: string; display_name: string; email: string | null }
 export function useStaff() {
   return useQuery({
     queryKey: ['staff-directory'],
-    queryFn: async () => must(await supabase.rpc('staff_directory')) as { user_id: string; display_name: string }[],
+    queryFn: async () => must(await supabase.rpc('staff_directory')) as Staff[],
   });
 }
 export function useTopics() {
@@ -98,6 +100,34 @@ function useAboutOptions({ clients, contacts, properties }: Lists) {
   ], [clients, contacts, properties]);
 }
 
+// A ready-made e-mail to the employee a topic was sent to: Gmail, the computer's mail app,
+// or copy. The system sends nothing itself; the sender sends it from their own mailbox.
+function MailDraft({ to, topic, from }: { to: Staff; topic: { title: string; notes: string | null; fix_url: string | null }; from: string }) {
+  const { subject, body } = topicMail({ title: topic.title, notes: topic.notes, fixUrl: topic.fix_url, to: to.display_name, from, origin: window.location.origin });
+  if (!to.email) return <Text size="xs" c="dimmed">אין כתובת מייל ל{to.display_name}.</Text>;
+  return (
+    <Stack gap={6}>
+      <Group gap="xs">
+        <Button size="xs" component="a" href={gmailLink(to.email, subject, body)} target="_blank" rel="noopener" leftSection={<IconMail size={14} />} variant="light">פתיחה ב-Gmail</Button>
+        <Button size="xs" component="a" href={mailtoLink(to.email, subject, body)} variant="default">תוכנת מייל במחשב</Button>
+        <CopyButton value={`${subject}\n\n${body}`}>{({ copied, copy }) => <Button size="xs" variant="subtle" onClick={copy}>{copied ? 'הועתק' : 'העתקת ההודעה'}</Button>}</CopyButton>
+      </Group>
+      <Text size="xs" c="dimmed">נפתחת טיוטה מוכנה אל {to.email}, ושולחים אותה מהתיבה שלך. הנושא גלוי לכל העובדים בכל מקרה.</Text>
+    </Stack>
+  );
+}
+
+function MailButton({ to, topic, from, opened, setOpened }: { to: Staff; topic: Topic; from: string; opened: boolean; setOpened: (o: boolean) => void }) {
+  return (
+    <Popover opened={opened} onChange={setOpened} position="bottom-start" withArrow>
+      <Popover.Target>
+        <Button size="compact-xs" variant="subtle" leftSection={<IconMail size={14} />} onClick={() => setOpened(!opened)}>מייל ל{to.display_name}</Button>
+      </Popover.Target>
+      <Popover.Dropdown><MailDraft to={to} topic={topic} from={from} /></Popover.Dropdown>
+    </Popover>
+  );
+}
+
 export function NewTopic({ lists, onClose }: { lists: Lists; onClose: () => void }) {
   const qc = useQueryClient();
   const staff = useStaff();
@@ -108,6 +138,10 @@ export function NewTopic({ lists, onClose }: { lists: Lists; onClose: () => void
   const aboutOptions = useAboutOptions(lists);
   const fixUrl = appPath(fix, window.location.origin);
   const fixBad = !!fix.trim() && !fixLinkOk(fixUrl);
+  const me = useMe();
+  const [saved, setSaved] = useState<{ title: string; notes: string | null; fix_url: string | null } | null>(null);
+  const to = (staff.data ?? []).find((s) => s.user_id === assignee);
+  const from = (staff.data ?? []).find((s) => s.user_id === me)?.display_name ?? '';
   const save = async () => {
     setBusy(true);
     try {
@@ -117,13 +151,22 @@ export function NewTopic({ lists, onClose }: { lists: Lists; onClose: () => void
       if (about.length) {
         must(await supabase.from('task_links').insert(about.map((a) => { const [entity_type, entity_id] = a.split(':'); return { task_id: row.id, entity_type, entity_id }; })));
       }
-      notifications.show({ color: 'teal', message: assignee ? 'הנושא נשלח' : 'הנושא נוסף' });
+      notifications.show({ color: 'teal', message: 'הנושא נוסף' });
       qc.invalidateQueries({ queryKey: ['manual-topics'] });
-      onClose();
+      // With an employee chosen, the dialog stays open on the e-mail draft to them.
+      if (to) setSaved({ title: title.trim(), notes: notes.trim() || null, fix_url: fix.trim() ? fixUrl : null });
+      else onClose();
     } catch (e) { notifications.show({ color: 'red', message: (e as Error).message }); } finally { setBusy(false); }
   };
   return (
     <Modal opened onClose={onClose} title="נושא חדש" size="lg">
+      {saved && to ? (
+        <Stack>
+          <Text>הנושא נשמר ומופיע לכל העובדים. נשאר לשלוח מייל ל{to.display_name}:</Text>
+          <MailDraft to={to} topic={saved} from={from} />
+          <Group justify="flex-end"><Button variant="default" onClick={onClose}>סגירה</Button></Group>
+        </Stack>
+      ) : (
       <Stack>
         <TextInput label="נושא" placeholder="למשל: לברר מי השוכר בדירה 23" value={title} onChange={(e) => setTitle(e.currentTarget.value)} required />
         <Stack gap={2}>
@@ -133,20 +176,23 @@ export function NewTopic({ lists, onClose }: { lists: Lists; onClose: () => void
         </Stack>
         <TextInput label="קישור לתיקון (לא חובה)" description="כתובת של דף באתר (למשל כרטיס לקוח) או קישור חיצוני (Drive וכדומה)" dir="ltr"
           placeholder="https://…" value={fix} onChange={(e) => setFix(e.currentTarget.value)} error={fixBad ? 'צריך להתחיל ב-https:// או להיות דף באתר' : undefined} />
-        <Select label="לשלוח לעובד/ת (לא חובה)" placeholder="בלי שיוך: פתוח לכולם" clearable searchable value={assignee} onChange={setAssignee}
+        <Select label="עובד/ת אחראי/ת (לא חובה)" description="הנושא גלוי לכל העובדים. אחרי השמירה תיפתח טיוטת מייל אליו/ה" placeholder="בלי שיוך" clearable searchable value={assignee} onChange={setAssignee}
           data={(staff.data ?? []).map((s) => ({ value: s.user_id, label: s.display_name }))} nothingFoundMessage="לא נמצא" />
         <MultiSelect label="קשור ל (לא חובה)" description="אפשר לבחור כמה: לקוחות, אנשי קשר ונכסים" placeholder="חיפוש לפי שם" clearable searchable
           value={about} onChange={setAbout} data={aboutOptions} limit={50} nothingFoundMessage="לא נמצא" />
         <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
-          <Button onClick={save} loading={busy} disabled={!title.trim() || fixBad}>{assignee ? 'שליחה' : 'הוספה'}</Button></Group>
+          <Button onClick={save} loading={busy} disabled={!title.trim() || fixBad}>שמירה</Button></Group>
       </Stack>
+      )}
     </Modal>
   );
 }
 
-function TopicCard({ t, names, about, me, isAdmin, staff }: {
-  t: Topic; names: Map<string, string>; about: Map<string, string>; me: string; isAdmin: boolean; staff: Option[];
+function TopicCard({ t, names, about, me, isAdmin, staff, people }: {
+  t: Topic; names: Map<string, string>; about: Map<string, string>; me: string; isAdmin: boolean; staff: Option[]; people: Staff[];
 }) {
+  const [mailOpen, setMailOpen] = useState(false);
+  const to = people.find((p) => p.user_id === t.assignee_id);
   const qc = useQueryClient();
   const [reply, setReply] = useState(t.reply ?? '');
   const [busy, setBusy] = useState(false);
@@ -188,8 +234,9 @@ function TopicCard({ t, names, about, me, isAdmin, staff }: {
             ))}
           </Group>
         )}
-        <Select size="xs" w={260} label="נשלח אל" placeholder="לא שויך" clearable searchable data={staff} value={t.assignee_id}
-          onChange={(v) => update({ assignee_id: v }, v ? `נשלח אל ${names.get(v) ?? ''}` : 'השיוך הוסר')} />
+        <Select size="xs" w={260} label="אחראי/ת" placeholder="לא שויך" clearable searchable data={staff} value={t.assignee_id}
+          onChange={async (v) => { await update({ assignee_id: v }, v ? `שויך ל${names.get(v) ?? ''}` : 'השיוך הוסר'); if (v) setMailOpen(true); }} />
+        {to && <Group><MailButton to={to} topic={t} from={names.get(me) ?? ''} opened={mailOpen} setOpened={setMailOpen} /></Group>}
         {t.reply && <Paper bg="gray.0" p="xs"><Text size="xs" c="dimmed">תשובה</Text><LinkedText text={t.reply} /></Paper>}
         <Textarea placeholder={t.reply ? 'עריכת התשובה' : 'תשובה (קישורים יוצגו כקישורים)'} autosize minRows={1} value={reply} onChange={(e) => setReply(e.currentTarget.value)} />
         <Group gap="xs">
@@ -226,13 +273,13 @@ export function ManualTopics({ lists, search }: { lists: Lists; search: string }
     <Stack>
       <Group>
         <Select placeholder="כל העובדים" clearable value={who} onChange={setWho} w={240} data={[
-          { group: 'שלי', items: [{ value: 'mine', label: 'נשלחו אליי' }, { value: 'sent', label: 'שלחתי' }, { value: 'none', label: 'לא שויכו' }] },
+          { group: 'שלי', items: [{ value: 'mine', label: 'שויכו אליי' }, { value: 'sent', label: 'פתחתי' }, { value: 'none', label: 'לא שויכו' }] },
           { group: 'לפי עובד/ת', items: staffOptions },
         ]} />
         <Switch label="כולל נושאים שבוצעו" checked={showDone} onChange={(e) => setShowDone(e.currentTarget.checked)} />
       </Group>
       <Text size="sm" c="dimmed">{list.length} נושאים</Text>
-      {list.map((t) => <TopicCard key={t.id} t={t} names={names} about={about} me={me} isAdmin={access.isAdmin} staff={staffOptions} />)}
+      {list.map((t) => <TopicCard key={t.id} t={t} names={names} about={about} me={me} isAdmin={access.isAdmin} staff={staffOptions} people={staff.data ?? []} />)}
     </Stack>
   );
 }

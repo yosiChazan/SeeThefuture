@@ -851,6 +851,8 @@ delete from app.fund_owners;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
 select pg_temp.check((select count(*) from app.staff_directory()) >= 3 and not exists (select 1 from app.staff_directory() where display_name = 'Client One'),
   'every staff member sees the staff names, without clients');
+select pg_temp.check(not exists (select 1 from app.staff_directory() where email is null),
+  'the staff list carries each employee''s e-mail, for the topic e-mail draft');
 insert into app.tasks (title, notes, assignee_id) values ('לבדוק חוזה', 'שאלה', '00000000-0000-0000-0000-00000000000b');
 reset role;
 select pg_temp.check((select created_by from app.tasks where title = 'לבדוק חוזה') = '00000000-0000-0000-0000-00000000000e', 'a topic records who sent it');
