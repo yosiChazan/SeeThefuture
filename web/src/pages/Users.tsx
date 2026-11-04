@@ -2,7 +2,7 @@ import {
   Alert, Badge, Button, Checkbox, CopyButton, Group, Modal, Paper, PasswordInput, Radio, Select, Stack, Table, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconKey, IconMail, IconPlus, IconShieldOff, IconTrash, IconUserCog } from '@tabler/icons-react';
+import { IconHistory, IconKey, IconMail, IconPlus, IconShieldOff, IconTrash, IconUserCog } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
@@ -10,6 +10,7 @@ import { QueryState } from '../components/common';
 import { useAccess } from '../lib/access';
 import { COUNTRY_HE, date } from '../lib/format';
 import { useClients } from '../lib/queries';
+import { UserActivity } from '../components/UserActivity';
 import { must, supabase } from '../lib/supabase';
 import type { Country } from '../lib/types';
 
@@ -272,6 +273,7 @@ export function Users() {
   const q = useUsers();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [watching, setWatching] = useState<{ id: string; name: string } | null>(null);
   const [meId, setMeId] = useState('');
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setMeId(data.user?.id ?? '')); }, []);
   if (!access.isAdmin) return <Navigate to="/" replace />;
@@ -284,6 +286,7 @@ export function Users() {
       </Group>
       <Text size="sm" c="dimmed">מי יכול להיכנס לאפליקציה ומה כל אחד רואה. כל שינוי נרשם ביומן השינויים.</Text>
       {adding && <AddUser onClose={() => setAdding(false)} onCreated={(id) => { setAdding(false); q.refetch().then(() => setEditing(id)); }} />}
+      {watching && <UserActivity userId={watching.id} name={watching.name} onClose={() => setWatching(null)} />}
       {editUser && <EditUser user={editUser} me={meId} onClose={() => setEditing(null)} />}
       <QueryState q={q}>{(users) => (
         <Paper withBorder p="sm">
@@ -315,7 +318,10 @@ export function Users() {
                       <Table.Td>{u.has_totp ? <Badge color="teal" variant="light" size="sm">מוגדר</Badge> : <Text size="sm" c="dimmed">עוד לא</Text>}
                         {u.profile?.must_change_password && <Badge color="orange" variant="light" size="sm" mt={4}>סיסמה זמנית</Badge>}</Table.Td>
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{u.last_sign_in_at ? date(u.last_sign_in_at) : 'אף פעם'}</Table.Td>
-                      <Table.Td><Button size="xs" variant="subtle" leftSection={<IconUserCog size={14} />} onClick={() => setEditing(u.user_id)}>הרשאות</Button></Table.Td>
+                      <Table.Td><Group gap={4} wrap="nowrap">
+                        <Button size="xs" variant="subtle" leftSection={<IconUserCog size={14} />} onClick={() => setEditing(u.user_id)}>הרשאות</Button>
+                        <Button size="xs" variant="subtle" color="gray" leftSection={<IconHistory size={14} />} onClick={() => setWatching({ id: u.user_id, name: u.profile?.display_name ?? u.email })}>פעילות</Button>
+                      </Group></Table.Td>
                     </Table.Tr>
                   );
                 })}
