@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { appPath, fixLinkOk, splitLinks } from './links.ts';
+import { appPath, fixLinkOk, namedLink, splitLinks } from './links.ts';
 
 test('addresses in text become links, without the sentence punctuation', () => {
   assert.deepEqual(splitLinks('ראו https://drive.google.com/x?id=1. ותודה'), [
@@ -16,4 +16,14 @@ test('a fix link is a web address or a page of the app', () => {
   assert.ok(!fixLinkOk('javascript:alert(1)'));
   assert.ok(!fixLinkOk('drive.google.com'));
   assert.equal(appPath('https://seethefuture-office.pages.dev/properties/1', 'https://seethefuture-office.pages.dev'), '/properties/1');
+});
+
+test('a link can carry a name instead of its address', () => {
+  assert.deepEqual(splitLinks('ראו [החוזה](https://drive.google.com/x) ו-[הלקוח](/clients/1).'), [
+    { text: 'ראו ' }, { url: 'https://drive.google.com/x', label: 'החוזה' }, { text: ' ו-' },
+    { url: '/clients/1', label: 'הלקוח' }, { text: '.' },
+  ]);
+  assert.deepEqual(splitLinks('[x](javascript:alert(1))'), [{ text: '[x](javascript:alert(1))' }]);
+  assert.equal(namedLink('החוזה [חדש]', ' https://a.b/c '), '[החוזה חדש](https://a.b/c)');
+  assert.equal(namedLink('', 'https://a.b'), 'https://a.b');
 });
