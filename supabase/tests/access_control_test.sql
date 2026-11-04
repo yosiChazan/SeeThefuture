@@ -865,7 +865,20 @@ do $$ begin
 exception when insufficient_privilege then raise notice 'ok - clients do not see staff names';
 end $$;
 reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+insert into app.task_links (task_id, entity_type, entity_id)
+  select id, 'party', '10000000-0000-0000-0000-000000000001'::uuid from app.tasks where title = 'לבדוק חוזה'
+  union all select id, 'party', '10000000-0000-0000-0000-000000000003'::uuid from app.tasks where title = 'לבדוק חוזה';
+update app.tasks set fix_url = '/clients/10000000-0000-0000-0000-000000000001' where title = 'לבדוק חוזה';
+select pg_temp.check((select count(*) from app.task_links) = 2, 'a topic links several clients and contacts');
+do $$ begin
+  update app.tasks set fix_url = 'javascript:alert(1)' where title = 'לבדוק חוזה';
+  raise exception 'FAILED: a fix link that is not a web address';
+exception when check_violation then raise notice 'ok - a fix link is a web address or a page of the app';
+end $$;
+reset role;
 delete from app.tasks;
+select pg_temp.check(not exists (select 1 from app.task_links), 'deleting a topic deletes its links');
 
 -- Audit -----------------------------------------------------------------
 
