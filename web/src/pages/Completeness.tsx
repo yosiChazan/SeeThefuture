@@ -13,7 +13,7 @@ import { useAccess } from '../lib/access';
 import { findItems, GROUP_HE, type Doc, type Fix, type Group as G, type Item } from '../lib/completeness';
 import { propertyTitle } from '../lib/format';
 import { useBatches } from '../lib/intake';
-import { idNumberOf, setClientRole, useClients, usePartyLinks, useProperties } from '../lib/queries';
+import { idNumberOf, setClientRole, useClients, useContacts, usePartyLinks, useProperties } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
 
 const DOC_TYPES = [
@@ -81,6 +81,12 @@ export function Completeness() {
   const clients = useClients();
   const links = usePartyLinks();
   const properties = useProperties();
+  const contacts = useContacts();
+  const lists = useMemo(() => ({
+    clients: (clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name })),
+    contacts: (contacts.data ?? []).map((c) => ({ value: c.id, label: c.display_name })),
+    properties: (properties.data ?? []).map((p) => ({ value: p.id, label: propertyTitle(p) })),
+  }), [clients.data, contacts.data, properties.data]);
   const batches = useBatches();
   const extra = useExtra();
   const [params, setParams] = useSearchParams();
@@ -173,9 +179,7 @@ export function Completeness() {
         <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>נושא חדש</Button>
       </Group>
       {adding && (
-        <NewTopic onClose={() => { setAdding(false); setMany({ g: 'manual', check: null }); }}
-          clients={(clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name }))}
-          properties={(properties.data ?? []).map((p) => ({ value: p.id, label: propertyTitle(p) }))} />
+        <NewTopic onClose={() => { setAdding(false); setMany({ g: 'manual', check: null }); }} lists={lists} />
       )}
       <Text size="sm" c="dimmed">מה חסר אצל לקוחות, נכסים וחוזים, ומה כבר יש במערכת שיכול לעזור להשלים. "להתעלם" מסתיר פריט עם סיבה, ואפשר להחזיר אותו. דירות שנמכרו לא נבדקות.</Text>
       {!ready ? <Group><Loader size="sm" /><Text size="sm">בודק…</Text></Group> : (
@@ -193,9 +197,7 @@ export function Completeness() {
           {group === 'manual' ? (
             <>
               <TextInput placeholder="חיפוש בנושאים" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => set('q', e.currentTarget.value)} w={240} />
-              <ManualTopics search={search}
-                clients={(clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name }))}
-                properties={(properties.data ?? []).map((p) => ({ value: p.id, label: propertyTitle(p) }))} />
+              <ManualTopics search={search} lists={lists} />
             </>
           ) : <>
           <Group>
