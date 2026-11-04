@@ -846,6 +846,27 @@ select pg_temp.check(
 delete from app.transactions where id = '70000000-0000-0000-0000-000000000001';
 delete from app.fund_owners;
 
+-- Manual topics (decision 92) -------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.staff_directory()) >= 3 and not exists (select 1 from app.staff_directory() where display_name = 'Client One'),
+  'every staff member sees the staff names, without clients');
+insert into app.tasks (title, notes, assignee_id) values ('לבדוק חוזה', 'שאלה', '00000000-0000-0000-0000-00000000000b');
+reset role;
+select pg_temp.check((select created_by from app.tasks where title = 'לבדוק חוזה') = '00000000-0000-0000-0000-00000000000e', 'a topic records who sent it');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+update app.tasks set reply = 'נבדק', status = 'done', done_at = now() where title = 'לבדוק חוזה';
+reset role;
+select pg_temp.check((select reply from app.tasks where title = 'לבדוק חוזה') = 'נבדק', 'the employee it was sent to answers and closes it');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin
+  perform app.staff_directory();
+  raise exception 'FAILED: a client read the staff names';
+exception when insufficient_privilege then raise notice 'ok - clients do not see staff names';
+end $$;
+reset role;
+delete from app.tasks;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
