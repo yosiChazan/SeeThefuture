@@ -1,4 +1,4 @@
-import { Anchor, Badge, Button, CopyButton, Group, Modal, MultiSelect, Paper, Popover, Select, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
+import { Anchor, Badge, Button, Group, Modal, MultiSelect, Paper, Popover, Select, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconExternalLink, IconLink, IconMail, IconTool } from '@tabler/icons-react';
@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom';
 import { useAccess } from '../lib/access';
 import { appPath, fixLinkOk, namedLink, splitLinks } from '../lib/links';
 import { must, supabase } from '../lib/supabase';
-import { gmailLink, mailtoLink, topicMail } from '../lib/topicMail';
+import { gmailLink, mailtoLink, topicMail, topicMailHtml } from '../lib/topicMail';
 
 // Topics added by hand on the completeness page (SPEC decision 92): a question or a task,
 // sent to an employee (or to no one), about any number of clients, contacts and
@@ -104,16 +104,33 @@ function useAboutOptions({ clients, contacts, properties }: Lists) {
 // A ready-made e-mail to the employee a topic was sent to: Gmail, the computer's mail app,
 // or copy. The system sends nothing itself; the sender sends it from their own mailbox.
 function MailDraft({ to, topic, from }: { to: Staff; topic: { title: string; notes: string | null; fix_url: string | null }; from: string }) {
-  const { subject, body } = topicMail({ title: topic.title, notes: topic.notes, fixUrl: topic.fix_url, to: to.display_name, from, origin: window.location.origin });
+  const input = { title: topic.title, notes: topic.notes, fixUrl: topic.fix_url, to: to.display_name, from, origin: window.location.origin };
+  const { subject, body } = topicMail(input);
+  const [copied, setCopied] = useState(false);
   if (!to.email) return <Text size="xs" c="dimmed">אין כתובת מייל ל{to.display_name}.</Text>;
+  // A compose link carries plain text only, so the version with real links goes through the
+  // clipboard: copy it (as HTML, with the plain text beside it), then paste into the draft.
+  const copyRich = () => {
+    const done = navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([topicMailHtml(input)], { type: 'text/html' }),
+      'text/plain': new Blob([body], { type: 'text/plain' }),
+    })]);
+    done.then(() => setCopied(true), () => notifications.show({ color: 'red', message: 'ההעתקה נכשלה. נסה שוב עם "העתקה עם קישורים"' }));
+    return done;
+  };
+  const gmail = () => { copyRich(); window.open(gmailLink(to.email!, subject), '_blank', 'noopener'); };
   return (
     <Stack gap={6}>
       <Group gap="xs">
-        <Button size="xs" component="a" href={gmailLink(to.email, subject, body)} target="_blank" rel="noopener" leftSection={<IconMail size={14} />} variant="light">פתיחה ב-Gmail</Button>
-        <Button size="xs" component="a" href={mailtoLink(to.email, subject, body)} variant="default">תוכנת מייל במחשב</Button>
-        <CopyButton value={`${subject}\n\n${body}`}>{({ copied, copy }) => <Button size="xs" variant="subtle" onClick={copy}>{copied ? 'הועתק' : 'העתקת ההודעה'}</Button>}</CopyButton>
+        <Button size="xs" leftSection={<IconMail size={14} />} variant="light" onClick={gmail}>Gmail עם קישורים</Button>
+        <Button size="xs" variant="default" onClick={copyRich}>{copied ? 'הועתק' : 'העתקה עם קישורים'}</Button>
+        <Button size="xs" variant="subtle" component="a" href={mailtoLink(to.email, subject, body)}>תוכנת מייל (טקסט פשוט)</Button>
       </Group>
-      <Text size="xs" c="dimmed">נפתחת טיוטה מוכנה אל {to.email}, ושולחים אותה מהתיבה שלך. הנושא גלוי לכל העובדים בכל מקרה.</Text>
+      <Text size="xs" c={copied ? 'teal' : 'dimmed'}>
+        {copied
+          ? 'ההודעה הועתקה עם הקישורים. בטיוטה שנפתחה: לחץ בגוף ההודעה והדבק (Ctrl+V).'
+          : `נפתחת טיוטה אל ${to.email} עם הנושא, וגוף ההודעה מועתק עם קישורים להדבקה. שולחים מהתיבה שלך.`}
+      </Text>
     </Stack>
   );
 }
