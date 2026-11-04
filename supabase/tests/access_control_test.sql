@@ -878,9 +878,32 @@ do $$ begin
   raise exception 'FAILED: a fix link that is not a web address';
 exception when check_violation then raise notice 'ok - a fix link is a web address or a page of the app';
 end $$;
+update app.tasks set title = 'לבדוק את החוזה' where title = 'לבדוק חוזה';
 reset role;
-delete from app.tasks;
-select pg_temp.check(not exists (select 1 from app.task_links), 'deleting a topic deletes its links');
+select pg_temp.check((select edited_at is not null from app.tasks where title = 'לבדוק את החוזה'), 'the author edits a topic, and the edit is marked');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  update app.tasks set notes = 'שיניתי' where title = 'לבדוק את החוזה';
+  raise exception 'FAILED: someone else edited the topic';
+exception when insufficient_privilege then raise notice 'ok - only the author edits a topic';
+end $$;
+do $$ begin
+  delete from app.task_links where entity_id = '10000000-0000-0000-0000-000000000003';
+  raise exception 'FAILED: someone else changed the topic links';
+exception when insufficient_privilege then raise notice 'ok - only the author changes what a topic is linked to';
+end $$;
+do $$ begin
+  delete from app.tasks where title = 'לבדוק את החוזה';
+  raise exception 'FAILED: someone else deleted the topic';
+exception when insufficient_privilege then raise notice 'ok - only the author deletes a topic';
+end $$;
+update app.tasks set reply = 'עודכן', status = 'open', assignee_id = null where title = 'לבדוק את החוזה';
+reset role;
+select pg_temp.check((select reply from app.tasks where title = 'לבדוק את החוזה') = 'עודכן', 'anyone on staff still answers, reassigns and reopens');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+delete from app.tasks where title = 'לבדוק את החוזה';
+reset role;
+select pg_temp.check(not exists (select 1 from app.task_links), 'the author deletes the topic, and its links go with it');
 
 -- Audit -----------------------------------------------------------------
 
