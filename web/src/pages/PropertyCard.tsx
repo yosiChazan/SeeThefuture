@@ -104,7 +104,7 @@ export function PropertyCard() {
 
           <PropertyContacts propertyId={p.id} buildingId={p.building.id} countryCode={p.country_code} />
           <Activities entityType="property" entityId={p.id} />
-          <PropertyDeals propertyId={p.id} />
+          <PropertyDeals propertyId={p.id} country={p.country_code} canEdit={access.canEdit(p.country_code)} ownerId={ownerships.find((o) => !o.valid_to)?.party.id ?? null} />
 
           <Paper withBorder p="md">
             <Title order={4} mb="sm">חוזי שכירות</Title>
