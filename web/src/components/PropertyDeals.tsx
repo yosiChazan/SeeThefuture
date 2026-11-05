@@ -1,9 +1,13 @@
-import { Anchor, Badge, Group, Paper, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Button, Group, Paper, Stack, Text, Title } from '@mantine/core';
+import { IconPencil } from '@tabler/icons-react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { date } from '../lib/format';
 import { usePropertyDeals, usePurchasePayments, type DealRow } from '../lib/queries';
 import { QueryState } from './common';
 import { PurchaseOverview } from './PurchasePayments';
+import { PurchaseEdit } from './PurchaseEdit';
+import type { Country } from '../lib/types';
 
 export const DEAL_STATUS: Record<DealRow['status'], { label: string; color: string }> = {
   lead: { label: 'ליד', color: 'gray' }, in_progress: { label: 'בתהליך', color: 'orange' },
@@ -11,12 +15,19 @@ export const DEAL_STATUS: Record<DealRow['status'], { label: string; color: stri
 };
 
 // The purchase of the property: price, paid, remaining and every payment (SPEC decisions 70, 83, 84).
-export function PropertyDeals({ propertyId }: { propertyId: string }) {
+export function PropertyDeals({ propertyId, country, ownerId, canEdit = false }: { propertyId: string; country?: Country; ownerId?: string | null; canEdit?: boolean }) {
   const q = usePropertyDeals(propertyId);
   const pays = usePurchasePayments(propertyId);
+  const [editing, setEditing] = useState(false);
   return (
     <Paper withBorder p="md">
-      <Title order={4} mb="sm">רכישה</Title>
+      <Group justify="space-between" mb="sm">
+        <Title order={4}>רכישה</Title>
+        {canEdit && country && q.data && <Button size="xs" variant="light" leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>{q.data.length || (pays.data ?? []).length ? 'עריכת הרכישה' : 'הוספת פרטי רכישה'}</Button>}
+      </Group>
+      {editing && country && q.data && (
+        <PurchaseEdit propertyId={propertyId} country={country} deals={q.data} payments={pays.data ?? []} ownerId={ownerId ?? null} onClose={() => setEditing(false)} />
+      )}
       <QueryState q={q}>{(deals) => {
         const payments = pays.data ?? [];
         if (!deals.length && !payments.length) return <Text c="dimmed" size="sm">אין פרטי רכישה</Text>;
