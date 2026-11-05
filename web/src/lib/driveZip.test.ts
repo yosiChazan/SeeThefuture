@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { docTypeFor, groupByFolder, matchFolder, parseFolder, pathKey, skipReason } from './driveZip.ts';
+import { docTypeFor, folderGroup, foldersOf, groupByFolder, matchFolder, parseFolder, pathKey, skipReason } from './driveZip.ts';
 
 test('building and apartment from the folder name, in any order', () => {
   assert.deepEqual(parseFolder('דירה לוי 19 בנין2.2 LAKE CITY קייב'), { building: '2.2', unit: '19' });
@@ -70,4 +70,18 @@ test('categories added in Settings are groups of their own', async () => {
   assert.equal(isSensitive('cat:p1', g), false);
   assert.equal(typeLabel('cat:p1', g), 'היתרים');
   assert.equal(groupOf('cat:gone', g), 'other');
+});
+
+test('a property ZIP: every folder at every depth, under its root, and the group its name says', async () => {
+  const { FILE_GROUPS } = await import('./fileGroups.ts');
+  const f = foldersOf(['דירה 1/מסמכי רכישה ובעלות _/a.pdf', 'דירה 1/מסמכי רכישה ובעלות _/נוספים 6.9/b.pdf', 'דירה 1/תמונות /c.mp4', 'דירה 1/d.pdf']);
+  assert.deepEqual([...f.keys()], ['(בלי תיקייה)', 'מסמכי רכישה ובעלות _', 'מסמכי רכישה ובעלות _ / נוספים 6.9', 'תמונות']);
+  assert.equal(folderGroup('מסמכי רכישה ובעלות _', FILE_GROUPS), 'purchase');
+  assert.equal(folderGroup('מסמכי רכישה ובעלות _ / נוספים 6.9', FILE_GROUPS), 'purchase');
+  assert.equal(folderGroup('תמונות', FILE_GROUPS), 'photos');
+  assert.equal(folderGroup('קבלות חשמל', FILE_GROUPS), 'receipts');
+  assert.equal(folderGroup('שונות', FILE_GROUPS), null);
+  assert.equal(folderGroup('מסמכי רכישה ובעלות _ / מסמכים נוספים מ-6.9', FILE_GROUPS), 'purchase');
+  assert.equal(folderGroup('מסמכים נוספים', FILE_GROUPS), 'other');
+  assert.deepEqual([...foldersOf(['a.pdf', 'b.pdf']).keys()], ['(בלי תיקייה)']);
 });
