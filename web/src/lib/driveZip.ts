@@ -6,15 +6,14 @@ export interface ZipFile { path: string; size: number }
 export interface Target { id: string; building: string; unit: string; owners: string[] }
 
 // Folders and files that are never copied: bank account details, passwords and cards (they
-// belong in Bitwarden, CLAUDE.md), and videos (too large, not documents).
+// belong in Bitwarden, CLAUDE.md), and videos (not documents). No size limit (decision 110):
+// a file larger than the project's upload limit fails on upload and is reported.
 const SECRET = /(פרטי\s*חשבון|סיסמ|כרטיס\s*אשראי|password|passw|card|\bpin\b|ukrgasbank|privatbank|monobank|iban)/i;
 const VIDEO = /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i;
-export const MAX_BYTES = 50 * 1024 * 1024;
 
 export function skipReason(f: ZipFile): string | null {
   if (SECRET.test(f.path)) return 'פרטי חשבון בנק / סיסמאות / כרטיסים';
   if (VIDEO.test(f.path)) return 'סרטון';
-  if (f.size > MAX_BYTES) return 'קובץ גדול מ-50MB';
   if (/(^|\/)(\.|__MACOSX|desktop\.ini|thumbs\.db)/i.test(f.path)) return 'קובץ מערכת';
   return null;
 }
@@ -32,6 +31,39 @@ export function groupByFolder(files: ZipFile[]): Map<string, ZipFile[]> {
     out.set(folder, [...(out.get(folder) ?? []), { ...f, path: p.slice(strip).join('/') }]);
   });
   return out;
+}
+
+// The folders of one property's ZIP (SPEC decision 109): every folder at every depth is its
+// own row ("מסמכי רכישה / מסמכים נוספים"), under the ZIP's own root folder when it has one.
+export function foldersOf(paths: string[]): Map<string, string[]> {
+  const parts = paths.map((p) => p.split('/').filter(Boolean));
+  const roots = new Set(parts.map((p) => p[0]));
+  const strip = roots.size === 1 && parts.every((p) => p.length > 1) && parts.some((p) => p.length > 2) ? 1 : 0;
+  const out = new Map<string, string[]>();
+  paths.forEach((path, i) => {
+    const dir = parts[i].slice(strip, -1).map((x) => x.trim()).join(' / ') || '(בלי תיקייה)';
+    out.set(dir, [...(out.get(dir) ?? []), path]);
+  });
+  return new Map([...out].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+// The group a folder's name points to: its own name, else the nearest parent's
+// ("מסמכי רכישה ובעלות _" → purchase; "תמונות" → photos). Words, not punctuation, are
+// compared, and a short label must appear whole. Undecided: null.
+const norm = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase();
+export function folderGroup(dir: string, groups: { key: string; label: string }[]): string | null {
+  const levels = dir.split(' / ');
+  const hits = (g: { label: string }, level: string) => { const name = norm(level), label = norm(g.label);
+    return name === label || name.includes(label) || (label.includes(name) && name.length >= 4); };
+  // "Other documents" is the weakest hint: a subfolder called so inside a purchase folder
+  // stays with purchase.
+  for (const weak of [false, true]) {
+    for (let i = levels.length - 1; i >= 0; i--) {
+      const hit = groups.find((g) => (g.key === 'other') === weak && hits(g, levels[i]));
+      if (hit) return hit.key;
+    }
+  }
+  return null;
 }
 
 // "דירה בודיק 19 בנין2.2 LAKE CITY" → building 2.2, apartment 19; "בנין 2 דירה 25" → 2, 25.

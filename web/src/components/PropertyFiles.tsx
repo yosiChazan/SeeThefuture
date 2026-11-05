@@ -12,7 +12,7 @@ import type { Country } from '../lib/types';
 import { inViewer, viewerUrl } from '../lib/viewer';
 import { docTypeOptions, groupOf, isSensitive, typeInGroup, typeLabel, type FileGroup } from '../lib/fileGroups';
 import { useFileGroups } from '../lib/fileCategories';
-import { docTypeFor, groupByFolder, pathKey, skipReason } from '../lib/driveZip';
+import { docTypeFor, folderGroup, foldersOf, pathKey, skipReason } from '../lib/driveZip';
 
 // A property's files in groups with previews (SPEC decisions 102, 104, 106): purchase and
 // ownership documents, receipts, photos, floor plans, and every other document. Files are
@@ -69,7 +69,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
   const [name, setName] = useState('');
   const [zipOpen, setZipOpen] = useState(false);
   // The ZIP's folders, each with where its files go ('auto' or a group); a file may differ.
-  const [zip, setZip] = useState<{ bytes: Map<string, Uint8Array>; folders: { name: string; files: string[]; dest: string; perFile: Record<string, string> }[]; skipped: { path: string; why: string }[] } | null>(null);
+  const [zip, setZip] = useState<{ bytes: Map<string, Uint8Array>; folders: { name: string; files: string[]; skipped: { path: string; why: string }[]; dest: string; perFile: Record<string, string> }[]; skipped: { path: string; why: string }[] } | null>(null);
   const [zipProgress, setZipProgress] = useState<{ done: number; total: number; added: number; existed: number; failed: string[] } | null>(null);
   const canEdit = access.canEdit(country);
   const GROUPS = useFileGroups();
@@ -121,12 +121,13 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
       const why = skipReason({ path, size: b.length });
       if (why) skipped.push({ path, why }); else bytes.set(path, b);
     }
-    // Folders under the ZIP's own root folder ("דירה 5/תשלומי רכישה/…" → "תשלומי רכישה").
-    const groups = groupByFolder([...bytes.keys()].map((path) => ({ path, size: 0 })));
-    const original = [...bytes.keys()];
-    const folders = [...groups].map(([name, list]) => ({
-      name, dest: 'auto', perFile: {} as Record<string, string>,
-      files: list.map((x) => original.find((k) => k === x.path || k.endsWith(`/${x.path}`))!),
+    // Every folder at every depth, under the ZIP's own root folder; the category its name
+    // says is proposed ("מסמכי רכישה ובעלות" → purchase). A folder whose files are all
+    // skipped (only videos, say) still shows, with why.
+    const why = new Map(skipped.map((x) => [x.path, x.why]));
+    const folders = [...foldersOf([...bytes.keys(), ...why.keys()])].map(([name, list]) => ({
+      name, dest: folderGroup(name, GROUPS) ?? 'auto', perFile: {} as Record<string, string>,
+      files: list.filter((p) => bytes.has(p)), skipped: list.filter((p) => why.has(p)).map((p) => ({ path: p, why: why.get(p)! })),
     }));
     setZip({ bytes, folders, skipped });
   }
@@ -264,7 +265,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
               return (
                 <Stack gap="xs">
                   <Group justify="space-between">
-                    <Text size="sm">{zip.folders.length} תיקיות · {zipTotal} קבצים{zip.skipped.length ? ` · ${zip.skipped.length} לא יועלו (פרטי בנק, סיסמאות, סרטונים, מעל 50MB)` : ''}</Text>
+                    <Text size="sm">{zip.folders.length} תיקיות · {zipTotal} קבצים{zip.skipped.length ? ` · ${zip.skipped.length} לא יועלו (פרטי בנק, סיסמאות, סרטונים)` : ''}</Text>
                     <Select size="xs" w={200} placeholder="לאן, לכל התיקיות" data={dest} value={null}
                       onChange={(v) => v && setZip({ ...zip, folders: zip.folders.map((f) => ({ ...f, dest: v, perFile: {} })) })} />
                   </Group>
@@ -272,8 +273,9 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
                     <Table.Thead><Table.Tr><Table.Th>תיקייה</Table.Th><Table.Th>לאן</Table.Th><Table.Th>קבצים</Table.Th></Table.Tr></Table.Thead>
                     <Table.Tbody>{zip.folders.map((f, i) => (
                       <Table.Tr key={f.name}>
-                        <Table.Td><Text size="sm">{f.name}</Text></Table.Td>
-                        <Table.Td><Select size="xs" w={190} data={dest} value={f.dest} allowDeselect={false} onChange={(v) => v && setFolder(i, { dest: v, perFile: {} })} /></Table.Td>
+                        <Table.Td><Text size="sm">{f.name}</Text>
+                          {f.skipped.length > 0 && <Text size="xs" c="dimmed">{f.skipped.length} לא יועלו: {[...new Set(f.skipped.map((x) => x.why))].join(', ')}</Text>}</Table.Td>
+                        <Table.Td>{f.files.length ? <Select size="xs" w={190} data={dest} value={f.dest} allowDeselect={false} onChange={(v) => v && setFolder(i, { dest: v, perFile: {} })} /> : <Text size="xs" c="dimmed">אין מה להעלות</Text>}</Table.Td>
                         <Table.Td>
                           <details>
                             <summary><Text span size="sm">{f.files.length}</Text> <Text span size="xs" c="dimmed">{[...new Set(f.files.map((p) => typeLabel(zipType(f, p), GROUPS)))].join(', ')}</Text></summary>
@@ -288,7 +290,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
                       </Table.Tr>
                     ))}</Table.Tbody>
                   </Table>
-                  <Text size="xs" c="dimmed">בקטגוריה שנבחרה, קובץ שהשם שלו מתאים לסוג מסוים בה (למשל נסח) יישמר בסוג הזה.</Text>
+                  <Text size="xs" c="dimmed">הקטגוריה מוצעת לפי שם התיקייה (או התיקייה שמעליה); אפשר לשנות. בקטגוריה שנבחרה, קובץ שהשם שלו מתאים לסוג מסוים בה (למשל נסח) יישמר בסוג הזה.</Text>
                 </Stack>
               );
             })()}
