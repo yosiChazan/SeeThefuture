@@ -62,7 +62,8 @@ export function docTypeFor(path: string): string {
   if (/(שרטוט|תוכנית דירה|floor ?plan|план)/.test(p)) return 'floor_plan';
   if (/(ייפו?יי? כוח|יפוי כוח|довіреніст|доверенност|\bpoa\b)/.test(p)) return 'poa';
   if (/(דרכון|passport|паспорт)/.test(p)) return 'passport';
-  if (/(תשלומ|קבלה|אסמכתא|receipt|квитанц|платіж|payment)/.test(p)) return 'payment_proof';
+  if (/(קבלה|קבלות|receipt|квитанц|чек)/.test(p)) return 'receipt';
+  if (/(תשלומ|אסמכתא|платіж|payment)/.test(p)) return 'payment_proof';
   if (/(נסח|טאבו|витяг|выписк|extract)/.test(p)) return 'land_registry';
   if (/(חוזה|הסכם|договір|договор|contract|agreement)/.test(p)) return 'purchase_contract';
   if (/(בנק|bank)/.test(p)) return 'bank_document';

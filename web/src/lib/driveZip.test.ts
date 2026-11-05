@@ -48,6 +48,9 @@ test('the kind of document from its folder and name', () => {
 test('file groups: every type has one group, and a chosen group decides the type', async () => {
   const { groupOf, typeInGroup, isSensitive } = await import('./fileGroups.ts');
   assert.equal(groupOf('land_registry'), 'purchase');
+  assert.equal(groupOf('payment_proof'), 'receipts');
+  assert.equal(typeInGroup('receipts', 'attachment'), 'receipt');
+  assert.equal(docTypeFor('דירה/קבלה חשמל.pdf'), 'receipt');
   assert.equal(groupOf('lease_contract'), 'other');
   assert.equal(typeInGroup('purchase', 'land_registry'), 'land_registry');
   assert.equal(typeInGroup('purchase', 'attachment'), 'purchase_contract');

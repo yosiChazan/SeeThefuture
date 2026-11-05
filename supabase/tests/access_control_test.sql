@@ -941,6 +941,20 @@ select pg_temp.check((select array_agg(amount order by amount) from app.entries 
   'finance adds and posts a movement; it is split between the owners by their shares');
 delete from app.ownerships where property_id = '30000000-0000-0000-0000-000000000002';
 
+-- Deleting a receipt from the property card (decision 106) -----------------
+
+insert into app.documents (id, entity_type, entity_id, country_code, doc_type, storage_path, sensitive)
+  values ('72000000-0000-0000-0000-000000000001', 'property', '30000000-0000-0000-0000-000000000002', 'RO', 'receipt', 'RO/property/x/receipt.pdf', false);
+insert into app.charges (id, property_id, period, kind, amount, currency, document_id)
+  values ('72000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002', '2026-01-01', 'water', 10, 'RON', '72000000-0000-0000-0000-000000000001');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+delete from app.documents where id = '72000000-0000-0000-0000-000000000001';
+reset role;
+select pg_temp.check((select document_id from app.charges where id = '72000000-0000-0000-0000-000000000002') is null
+  and not exists (select 1 from app.documents where id = '72000000-0000-0000-0000-000000000001'),
+  'an editor deletes a receipt; the charge keeps its amount and loses only the link');
+delete from app.charges where id = '72000000-0000-0000-0000-000000000002';
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
