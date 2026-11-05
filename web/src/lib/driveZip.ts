@@ -59,6 +59,7 @@ export function matchFolder(name: string, targets: Target[]): { id: string | nul
 export function docTypeFor(path: string): string {
   const p = path.toLowerCase();
   if (/\.(jpe?g|png|heic|webp)$/.test(p) && /(תמונ|photo|img_|whatsapp image)/.test(p)) return 'photo';
+  if (/(שרטוט|תוכנית דירה|floor ?plan|план)/.test(p)) return 'floor_plan';
   if (/(ייפו?יי? כוח|יפוי כוח|довіреніст|доверенност|\bpoa\b)/.test(p)) return 'poa';
   if (/(דרכון|passport|паспорт)/.test(p)) return 'passport';
   if (/(תשלומ|קבלה|אסמכתא|receipt|квитанц|платіж|payment)/.test(p)) return 'payment_proof';
