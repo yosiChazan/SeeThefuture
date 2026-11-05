@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { CountryFilter } from '../components/common';
 import { CATEGORY_HE, COUNTRY_HE, money, propertyTitle, STATUS_HE } from '../lib/format';
 import { useClients, useProperties } from '../lib/queries';
-import { byCity, change, expensesByCategory, monthly, quiet, trend, yearBefore, type StatEntry } from '../lib/stats';
+import { byCity, change, contractRent, expensesByCategory, occupancy, monthly, quiet, trend, yearBefore, type StatEntry } from '../lib/stats';
 import { must, supabase } from '../lib/supabase';
 import type { Country, Currency } from '../lib/types';
 
@@ -143,7 +143,12 @@ export function Stats() {
   const active = inCountry.filter((p) => p.status !== 'sold');
   const today = dayjs().format('YYYY-MM-DD');
   const ownersNow = new Set(active.flatMap((p) => p.ownerships.filter((o) => o.valid_from <= today && (!o.valid_to || o.valid_to >= today)).map((o) => o.party.id)));
-  const earningNow = active.filter((p) => p.status === 'rented' || p.status === 'short_term').length;
+  const occ = useMemo(() => occupancy(inCountry.map((p) => ({ city: p.building.city.name_he, status: p.status }))), [inCountry]);
+  const occTotal = occ.reduce((t, r) => ({ ...t, total: t.total + r.total, construction: t.construction + r.construction, ownerUse: t.ownerUse + r.ownerUse, rentable: t.rentable + r.rentable, rented: t.rented + r.rented, notRented: t.notRented + r.notRented }),
+    { city: 'סה"כ', total: 0, construction: 0, ownerUse: 0, rentable: 0, rented: 0, notRented: 0, notRentedPct: 0 });
+  const ofRentable = (n: number) => (occTotal.rentable ? Math.round((n / occTotal.rentable) * 100) : 0);
+  const rentedIds = useMemo(() => new Set(active.filter((p) => p.status === 'rented' || p.status === 'short_term').map((p) => p.id)), [active]);
+  const leaseRent = useMemo(() => contractRent(active.map((p) => ({ city: p.building.city.name_he, status: p.status, leases: p.leases })), dayjs().format('YYYY-MM-DD')), [active]);
   const soon = dayjs().add(90, 'day').format('YYYY-MM-DD');
   const ending = active.flatMap((p) => p.leases).filter((l) => l.end_date && l.end_date >= today && l.end_date <= soon).length;
 
@@ -156,8 +161,7 @@ export function Stats() {
   const titleOf = useMemo(() => new Map((props.data ?? []).map((p) => [p.id, p])), [props.data]);
   const quietRows = useMemo(() => quiet(all.filter((e) => e.period < dayjs().format('YYYY-MM-01')), active.map((p) => ({ id: p.id, country: p.country_code, expected: p.status === 'rented' || p.status === 'short_term' })), Number(quietN)), [all, active, quietN]);
   const openCharges = (open.data?.charges ?? []).filter((c) => !country || titleOf.get(c.property_id)?.country_code === country);
-  const cities = useMemo(() => byCity(entries, cityOf, unitsIn), [entries, cityOf, unitsIn]);
-  const byStatus = Object.entries(STATUS_HE).map(([s, label]) => [label, inCountry.filter((p) => p.status === s).length] as const).filter(([, n]) => n);
+  const cities = useMemo(() => byCity(entries, cityOf, unitsIn, rentedIds), [entries, cityOf, unitsIn, rentedIds]);
   const byCountry = (['UA', 'RO', 'GE', 'GR'] as Country[]).map((c) => [c, (props.data ?? []).filter((p) => p.country_code === c && p.status !== 'sold').length] as const);
 
   return (
@@ -172,13 +176,14 @@ export function Stats() {
 
       {!props.data || !clients.data ? <Loader /> : (
         <>
-          <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }}>
+          <SimpleGrid cols={{ base: 2, sm: 4, lg: 7 }}>
             <Tile label="לקוחות עם דירה" value={ownersNow.size} hint={`${clients.data.length} לקוחות במערכת`} />
             <Tile label="דירות" value={active.length} hint={`בלי ${inCountry.length - active.length} שנמכרו`} />
-            <Tile label="מניבות היום" value={earningNow} hint={`${active.length ? Math.round((earningNow / active.length) * 100) : 0}% מהדירות (מושכרות + השכרה קצרה)`} />
+            <Tile label="בבנייה" value={occTotal.construction} hint={occTotal.ownerUse ? `ועוד ${occTotal.ownerUse} בשימוש הבעלים` : undefined} />
+            <Tile label="יכולות להיות מושכרות" value={occTotal.rentable} hint="בלי בבנייה ובשימוש הבעלים" />
+            <Tile label="מושכרות" value={occTotal.rented} hint={`${ofRentable(occTotal.rented)}% מאלו שיכולות (כולל השכרה קצרה)`} />
+            <Tile label="לא מושכרות" value={occTotal.notRented} hint={`${ofRentable(occTotal.notRented)}% מאלו שיכולות`} />
             <Tile label="חוזים שנגמרים ב-90 יום" value={ending} />
-            <Tile label="ערים" value={unitsIn.size} />
-            <Tile label="מדינות" value={byCountry.filter(([c, n]) => n && (!country || c === country)).length} />
           </SimpleGrid>
 
           <SimpleGrid cols={{ base: 1, md: 2 }}>
@@ -186,11 +191,27 @@ export function Stats() {
               <Title order={4} mb="sm">דירות לפי מדינה</Title>
               <Table><Table.Tbody>{byCountry.map(([c, n]) => <Table.Tr key={c}><Table.Td>{COUNTRY_HE[c]}</Table.Td><Table.Td>{n}</Table.Td></Table.Tr>)}</Table.Tbody></Table>
             </Paper>
-            <Paper withBorder p="md">
-              <Title order={4} mb="sm">דירות לפי סטטוס</Title>
-              <Table><Table.Tbody>{byStatus.map(([l, n]) => <Table.Tr key={l}><Table.Td>{l}</Table.Td><Table.Td>{n}</Table.Td></Table.Tr>)}</Table.Tbody></Table>
-            </Paper>
           </SimpleGrid>
+          <Paper withBorder p="md">
+            <Title order={4} mb={4}>תפוסה לפי עיר</Title>
+            <Text size="xs" c="dimmed" mb="sm">"לא מושכרות" והאחוז שלהן נספרים רק מתוך הדירות שיכולות להיות מושכרות: בלי דירות בבנייה ובשימוש הבעלים. שכר הדירה הממוצע: מהחוזים הפעילים של דירות מושכרות בלבד.</Text>
+            <Table.ScrollContainer minWidth={720}>
+              <Table striped>
+                <Table.Thead><Table.Tr><Table.Th>עיר</Table.Th><Table.Th>דירות</Table.Th><Table.Th>בבנייה</Table.Th><Table.Th>בשימוש הבעלים</Table.Th><Table.Th>יכולות להיות מושכרות</Table.Th>
+                  <Table.Th>מושכרות</Table.Th><Table.Th>לא מושכרות</Table.Th><Table.Th>% לא מושכרות</Table.Th><Table.Th>שכ"ד ממוצע בחוזה</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>{[...occ, occTotal].map((r) => {
+                  const total = r.city === 'סה"כ';
+                  const pctNR = r.rentable ? Math.round((r.notRented / r.rentable) * 1000) / 10 : 0;
+                  return (
+                    <Table.Tr key={r.city} fw={total ? 700 : undefined}><Table.Td>{r.city}</Table.Td><Table.Td>{r.total}</Table.Td><Table.Td>{r.construction}</Table.Td><Table.Td>{r.ownerUse}</Table.Td>
+                      <Table.Td>{r.rentable}</Table.Td><Table.Td>{r.rented}</Table.Td><Table.Td>{r.notRented}</Table.Td>
+                      <Table.Td c={pctNR >= 25 ? 'red' : undefined}>{r.rentable ? `${pctNR}%` : '—'}</Table.Td>
+                      <Table.Td>{total ? '' : leaseRent.filter((x) => x.city === r.city).map((x) => `${money(x.avg, x.currency as Currency)} (${x.leases})`).join(' · ') || '—'}</Table.Td></Table.Tr>
+                  );
+                })}</Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </Paper>
         </>
       )}
 
@@ -212,7 +233,7 @@ export function Stats() {
               <Tile label="ברוטו (הכנסות)" value={money(tot.gross, currency)} hint={`ממוצע ${money(tot.gross / rows.length, currency)} לחודש`} />
               <Tile label="הוצאות" value={money(tot.expenses, currency)} hint={`${tot.gross ? Math.round((tot.expenses / tot.gross) * 100) : 0}% מהברוטו`} />
               <Tile label="נטו ללקוחות" value={money(tot.net, currency)} hint={`ממוצע ${money(tot.net / rows.length, currency)} לחודש`} />
-              <Tile label="ממוצע לדירה מניבה בחודש" value={money(cityRows.reduce((a, c) => a + c.gross, 0) / Math.max(1, cityRows.reduce((a, c) => a + c.earning * c.months, 0)), currency)} />
+              <Tile label="ממוצע לדירה מושכרת בחודש (בפועל)" value={money(cityRows.reduce((a, c) => a + c.perUnit * c.earning * c.months, 0) / Math.max(1, cityRows.reduce((a, c) => a + c.earning * c.months, 0)), currency)} />
             </SimpleGrid>
             {(() => {
               const full = perMonthAll.get(cur) ?? [];
@@ -248,10 +269,10 @@ export function Stats() {
 
             <SimpleGrid cols={{ base: 1, md: 2 }} mt="lg" spacing="xl">
               <Stack gap="xs">
-                <Title order={5}>ממוצע לדירה מניבה בחודש, לפי עיר</Title>
-                <Bars currency={currency} rows={cityRows.map((c) => ({ label: c.city, value: c.perUnit, note: `${c.city}: ${c.earning} דירות עם הכנסה מתוך ${c.units}, ${c.months} חודשים` }))} />
+                <Title order={5}>ממוצע לדירה מושכרת בחודש, לפי עיר (הכנסה בפועל)</Title>
+                <Bars currency={currency} rows={cityRows.map((c) => ({ label: c.city, value: c.perUnit, note: `${c.city}: ${c.earning} דירות מושכרות עם הכנסה מתוך ${c.units}, ${c.months} חודשים` }))} />
                 <Table mt="xs">
-                  <Table.Thead><Table.Tr><Table.Th>עיר</Table.Th><Table.Th>דירות</Table.Th><Table.Th>עם הכנסה</Table.Th><Table.Th>ברוטו</Table.Th><Table.Th>נטו</Table.Th></Table.Tr></Table.Thead>
+                  <Table.Thead><Table.Tr><Table.Th>עיר</Table.Th><Table.Th>דירות</Table.Th><Table.Th>מושכרות עם הכנסה</Table.Th><Table.Th>ברוטו</Table.Th><Table.Th>נטו</Table.Th></Table.Tr></Table.Thead>
                   <Table.Tbody>{cityRows.map((c) => (
                     <Table.Tr key={c.city}><Table.Td>{c.city}</Table.Td><Table.Td>{c.units}</Table.Td><Table.Td>{c.earning}</Table.Td>
                       <Table.Td>{money(c.gross, currency)}</Table.Td><Table.Td>{money(c.net, currency)}</Table.Td></Table.Tr>

@@ -36,24 +36,61 @@ export function monthly(entries: StatEntry[]): Map<string, MonthRow[]> {
     .map((r) => ({ period: r.period, gross: round(r.gross), expenses: round(r.expenses), net: round(r.net) }))]));
 }
 
-// Per city and currency. "units": apartments in the city that are not sold; "earning":
-// those with any income in the range. perUnit = gross ÷ earning units ÷ months with
-// income in that city: what an apartment that earns brings in a month.
-export function byCity(entries: StatEntry[], cityOf: Map<string, string>, unitsIn: Map<string, number>): CityRow[] {
-  const acc = new Map<string, { city: string; currency: string; gross: number; expenses: number; earning: Set<string>; months: Set<string> }>();
+// Per city and currency. "units": apartments in the city that are not sold. The average
+// (decision 98) counts only apartments that are rented now (rented or short-term) and had
+// income: perUnit = their income ÷ how many of them ÷ months with income in that city.
+// Gross, expenses and net stay the whole city's.
+export function byCity(entries: StatEntry[], cityOf: Map<string, string>, unitsIn: Map<string, number>, rented?: Set<string>): CityRow[] {
+  const acc = new Map<string, { city: string; currency: string; gross: number; expenses: number; rentedGross: number; earning: Set<string>; months: Set<string> }>();
   for (const e of entries) {
     const flow = flowOf(e.category);
     const city = e.property_id ? cityOf.get(e.property_id) : undefined;
     if (!flow || !city) continue;
     const k = `${city}|${e.currency}`;
-    const a = acc.get(k) ?? acc.set(k, { city, currency: e.currency, gross: 0, expenses: 0, earning: new Set(), months: new Set() }).get(k)!;
-    if (flow === 'income') { a.gross += e.amount; if (e.amount > 0) { a.earning.add(e.property_id!); a.months.add(e.period); } } else a.expenses -= e.amount;
+    const a = acc.get(k) ?? acc.set(k, { city, currency: e.currency, gross: 0, expenses: 0, rentedGross: 0, earning: new Set(), months: new Set() }).get(k)!;
+    if (flow === 'expense') { a.expenses -= e.amount; continue; }
+    a.gross += e.amount;
+    if (rented && !rented.has(e.property_id!)) continue;
+    a.rentedGross += e.amount;
+    if (e.amount > 0) { a.earning.add(e.property_id!); a.months.add(e.period); }
   }
   return [...acc.values()].map((a) => ({
     city: a.city, currency: a.currency, units: unitsIn.get(a.city) ?? 0, earning: a.earning.size,
     gross: round(a.gross), expenses: round(a.expenses), net: round(a.gross - a.expenses), months: a.months.size,
-    perUnit: a.earning.size && a.months.size ? round(a.gross / a.earning.size / a.months.size) : 0,
+    perUnit: a.earning.size && a.months.size ? round(a.rentedGross / a.earning.size / a.months.size) : 0,
   })).sort((x, y) => x.currency.localeCompare(y.currency) || y.gross - x.gross);
+}
+
+// Occupancy per city (decision 98). Sold apartments are out; apartments under construction
+// or used by their owners cannot be rented, so "not rented" and its percent count only the
+// apartments that can be.
+export interface OccupancyRow { city: string; total: number; construction: number; ownerUse: number; rentable: number; rented: number; notRented: number; notRentedPct: number }
+export function occupancy(props: { city: string; status: string }[]): OccupancyRow[] {
+  const m = new Map<string, OccupancyRow>();
+  const add = (city: string, status: string) => {
+    const r = m.get(city) ?? m.set(city, { city, total: 0, construction: 0, ownerUse: 0, rentable: 0, rented: 0, notRented: 0, notRentedPct: 0 }).get(city)!;
+    r.total++;
+    if (status === 'under_construction') r.construction++;
+    else if (status === 'owner_use') r.ownerUse++;
+    else { r.rentable++; if (status === 'rented' || status === 'short_term') r.rented++; else r.notRented++; }
+  };
+  for (const p of props) if (p.status !== 'sold') add(p.city, p.status);
+  return [...m.values()].map((r) => ({ ...r, notRentedPct: r.rentable ? Math.round((r.notRented / r.rentable) * 1000) / 10 : 0 }))
+    .sort((a, b) => b.total - a.total);
+}
+
+// The average monthly rent in the contracts of apartments rented now, per city and currency.
+export function contractRent(props: { city: string; status: string; leases: { start_date: string | null; end_date: string | null; rent_amount: number | null; rent_currency: string | null }[] }[], today: string) {
+  const m = new Map<string, { city: string; currency: string; sum: number; n: number }>();
+  for (const p of props) {
+    if (p.status !== 'rented') continue;
+    const l = p.leases.find((x) => x.rent_amount && x.rent_currency && (!x.start_date || x.start_date <= today) && (!x.end_date || x.end_date >= today));
+    if (!l) continue;
+    const k = `${p.city}|${l.rent_currency}`;
+    const r = m.get(k) ?? m.set(k, { city: p.city, currency: l.rent_currency!, sum: 0, n: 0 }).get(k)!;
+    r.sum += Number(l.rent_amount); r.n++;
+  }
+  return [...m.values()].map((r) => ({ city: r.city, currency: r.currency, leases: r.n, avg: round(r.sum / r.n) }));
 }
 
 // Expenses by category within one currency, largest first.

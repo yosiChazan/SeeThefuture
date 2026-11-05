@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { byCity, change, expensesByCategory, flowOf, monthly, quiet, trend, yearBefore, type StatEntry } from './stats.ts';
+import { byCity, change, contractRent, occupancy, expensesByCategory, flowOf, monthly, quiet, trend, yearBefore, type StatEntry } from './stats.ts';
 
 const e = (period: string, category: string, amount: number, property_id: string | null = 'p1', currency = 'RON'): StatEntry => ({ period, category, amount, currency, property_id });
 
@@ -63,4 +63,28 @@ test('a year earlier: the same months, and the change', () => {
   assert.equal(change(150, undefined), null);
   assert.deepEqual(trend(rows, 2), { now: 270, before: 200, months: ['2026-07-01', '2026-08-01'] });
   assert.equal(trend(rows, 3)!.before, null);
+});
+
+test('the average counts only apartments rented now', () => {
+  const cityOf = new Map([['r', 'X'], ['v', 'X']]);
+  const rows = byCity([e('2026-01-01', 'rent', 1000, 'r'), e('2026-01-01', 'rent', 200, 'v')], cityOf, new Map([['X', 2]]), new Set(['r']));
+  assert.equal(rows[0].gross, 1200);
+  assert.equal(rows[0].earning, 1);
+  assert.equal(rows[0].perUnit, 1000);
+});
+
+test('occupancy: not rented out of the apartments that can be rented', () => {
+  const r = occupancy([
+    { city: 'X', status: 'rented' }, { city: 'X', status: 'short_term' }, { city: 'X', status: 'vacant' },
+    { city: 'X', status: 'under_construction' }, { city: 'X', status: 'owner_use' }, { city: 'X', status: 'sold' },
+  ]);
+  assert.deepEqual(r, [{ city: 'X', total: 5, construction: 1, ownerUse: 1, rentable: 3, rented: 2, notRented: 1, notRentedPct: 33.3 }]);
+});
+
+test('average contract rent of apartments rented now', () => {
+  const lease = (rent: number, end: string | null) => ({ start_date: '2025-01-01', end_date: end, rent_amount: rent, rent_currency: 'EUR' });
+  assert.deepEqual(contractRent([
+    { city: 'X', status: 'rented', leases: [lease(400, null)] }, { city: 'X', status: 'rented', leases: [lease(999, '2025-06-30'), lease(600, null)] },
+    { city: 'X', status: 'vacant', leases: [lease(5000, null)] },
+  ], '2026-01-01'), [{ city: 'X', currency: 'EUR', leases: 2, avg: 500 }]);
 });
