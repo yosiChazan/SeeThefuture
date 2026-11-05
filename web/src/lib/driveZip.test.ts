@@ -44,3 +44,16 @@ test('the kind of document from its folder and name', () => {
   assert.equal(pathKey('a/b'), pathKey('a/b'));
   assert.notEqual(pathKey('a/b'), pathKey('a/c'));
 });
+
+test('file groups: every type has one group, and a chosen group decides the type', async () => {
+  const { groupOf, typeInGroup, isSensitive } = await import('./fileGroups.ts');
+  assert.equal(groupOf('land_registry'), 'purchase');
+  assert.equal(groupOf('lease_contract'), 'other');
+  assert.equal(typeInGroup('purchase', 'land_registry'), 'land_registry');
+  assert.equal(typeInGroup('purchase', 'attachment'), 'purchase_contract');
+  assert.equal(typeInGroup('plans', 'photo'), 'floor_plan');
+  assert.equal(typeInGroup('other', 'bank_document'), 'bank_document');
+  assert.equal(typeInGroup('other', 'photo'), 'attachment');
+  assert.equal(isSensitive('photo'), false);
+  assert.equal(isSensitive('bank_document'), true);
+});

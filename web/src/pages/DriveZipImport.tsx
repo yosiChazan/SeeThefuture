@@ -4,6 +4,7 @@ import { unzip, type Unzipped } from 'fflate';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccess } from '../lib/access';
+import { DOC_TYPE_HE as TYPE_HE, FILE_GROUPS, isSensitive, typeInGroup, type FileGroup } from '../lib/fileGroups';
 import { docTypeFor, groupByFolder, matchFolder, pathKey, skipReason, type ZipFile } from '../lib/driveZip';
 import { isCurrentOwnership, propertyTitle } from '../lib/format';
 import { useProperties } from '../lib/queries';
@@ -14,16 +15,22 @@ import { supabase } from '../lib/supabase';
 // the apartment's documents; a passport goes to the owner's card when there is one owner.
 // Importing the same ZIP again skips what is already in.
 
-const TYPE_HE: Record<string, string> = {
-  poa: 'ייפוי כוח', passport: 'דרכון', payment_proof: 'הוכחת תשלום', land_registry: 'נסח טאבו', purchase_contract: 'חוזה רכישה',
-  bank_document: 'מסמך בנק', photo: 'תמונה', floor_plan: 'שרטוט', attachment: 'מסמך אחר',
-};
+type Dest = 'auto' | FileGroup['key'];
+const DEST = [{ value: 'auto', label: 'אוטומטי (לפי השם)' }, ...FILE_GROUPS.map((g) => ({ value: g.key, label: g.label }))];
 const MIME: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', doc: 'application/msword',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel' };
 const safeName = (s: string) => s.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-100);
 const readZip = (f: File) => f.arrayBuffer().then((b) => new Promise<Unzipped>((ok, bad) => unzip(new Uint8Array(b), (e, d) => (e ? bad(e) : ok(d)))));
 
-interface Folder { name: string; files: ZipFile[]; skipped: (ZipFile & { why: string })[]; target: string | null; sure: boolean; include: boolean }
+interface Folder { name: string; files: ZipFile[]; skipped: (ZipFile & { why: string })[]; target: string | null; sure: boolean; include: boolean; dest: Dest; perFile: Record<string, Dest> }
+
+// Where a file goes: its own choice, else its folder's; "auto" keeps the type its name says,
+// a group gives the guessed type when it is in that group and the group's own type otherwise.
+const typeOf = (f: Folder, file: ZipFile) => {
+  const dest = f.perFile[file.path] ?? f.dest;
+  const guessed = docTypeFor(file.path);
+  return dest === 'auto' ? guessed : typeInGroup(dest, guessed);
+};
 
 export function DriveZipImport() {
   const access = useAccess();
@@ -53,7 +60,7 @@ export function DriveZipImport() {
       setFolders([...groups].map(([name, list]) => {
         const skipped = list.map((f) => ({ ...f, why: skipReason(f) ?? '' })).filter((f) => f.why);
         const m = matchFolder(name, targets);
-        return { name, files: list.filter((f) => !skipReason(f)), skipped, target: m.id, sure: m.sure, include: !!m.id };
+        return { name, files: list.filter((f) => !skipReason(f)), skipped, target: m.id, sure: m.sure, include: !!m.id, dest: 'auto' as Dest, perFile: {} };
       }).sort((a, b) => Number(!!a.target) - Number(!!b.target) || a.name.localeCompare(b.name)));
     } catch (e) { setError(`לא הצלחתי לפתוח את הקובץ: ${(e as Error).message}`); } finally { setReading(false); }
   }
@@ -71,7 +78,7 @@ export function DriveZipImport() {
       const owners = p.ownerships.filter((o) => isCurrentOwnership(o));
       for (const file of f.files) {
         const name = file.path.split('/').pop()!;
-        const type = docTypeFor(file.path);
+        const type = typeOf(f, file);
         const toParty = type === 'passport' && owners.length === 1;
         const entityType = toParty ? 'party' : 'property';
         const entityId = toParty ? owners[0].party.id : p.id;
@@ -79,7 +86,7 @@ export function DriveZipImport() {
         const id = crypto.randomUUID();
         const row = await supabase.from('documents').insert({
           id, entity_type: entityType, entity_id: entityId, country_code: p.country_code, doc_type: type,
-          storage_path: path, sensitive: type !== 'photo' && type !== 'floor_plan', file_name: name, source: `drive-zip:${file.path}`.slice(0, 500),
+          storage_path: path, sensitive: isSensitive(type), file_name: name, source: `drive-zip:${file.path}`.slice(0, 500),
         });
         if (row.error?.code === '23505') state.existed++;
         else if (row.error) state.failed.push(`${file.path}: ${row.error.message}`);
@@ -116,6 +123,9 @@ export function DriveZipImport() {
         <Paper withBorder p="md">
           <Group justify="space-between" mb="sm">
             <Text fw={600}>{folders.length} תיקיות · {folders.filter((f) => f.target).length} הותאמו · {fileCount} קבצים להעלאה</Text>
+            <Group gap="xs">
+              <Select size="xs" w={200} placeholder="לאן, לכל התיקיות" data={DEST} value={null} onChange={(v) => v && setFolders((fs) => fs.map((f) => ({ ...f, dest: v as Dest, perFile: {} })))} />
+            </Group>
             <Button onClick={upload} disabled={!fileCount || (!!progress && progress.done < progress.total)}>העלאת {fileCount} קבצים</Button>
           </Group>
           {progress && (
@@ -125,9 +135,9 @@ export function DriveZipImport() {
               {progress.failed.length > 0 && <Alert color="red" p="xs">{progress.failed.slice(0, 10).map((x) => <div key={x}>{x}</div>)}</Alert>}
             </Stack>
           )}
-          <Table.ScrollContainer minWidth={760}>
+          <Table.ScrollContainer minWidth={1000}>
             <Table striped verticalSpacing={4}>
-              <Table.Thead><Table.Tr><Table.Th>להעלות</Table.Th><Table.Th>תיקייה בדרייב</Table.Th><Table.Th>דירה במערכת</Table.Th><Table.Th>קבצים</Table.Th></Table.Tr></Table.Thead>
+              <Table.Thead><Table.Tr><Table.Th>להעלות</Table.Th><Table.Th>תיקייה בדרייב</Table.Th><Table.Th>דירה במערכת</Table.Th><Table.Th>לאן בקבצים</Table.Th><Table.Th>קבצים</Table.Th></Table.Tr></Table.Thead>
               <Table.Tbody>{folders.map((f, i) => (
                 <Table.Tr key={f.name}>
                   <Table.Td><Switch checked={f.include} disabled={!f.target} onChange={(e) => set(i, { include: e.currentTarget.checked })} /></Table.Td>
@@ -140,8 +150,22 @@ export function DriveZipImport() {
                       {f.target && <Anchor component={Link} to={`/properties/${f.target}`} target="_blank" size="xs">פתיחה</Anchor>}
                     </Group>
                   </Table.Td>
-                  <Table.Td><Text size="sm">{f.files.length}{f.skipped.length ? <Text span c="dimmed" size="xs"> (+{f.skipped.length} לא יועלו)</Text> : null}</Text>
-                    <Text size="xs" c="dimmed">{[...new Set(f.files.map((x) => TYPE_HE[docTypeFor(x.path)]))].join(', ')}</Text></Table.Td>
+                  <Table.Td><Select size="xs" w={190} data={DEST} value={f.dest} allowDeselect={false} onChange={(v) => v && set(i, { dest: v as Dest, perFile: {} })} /></Table.Td>
+                  <Table.Td>
+                    <details>
+                      <summary><Text span size="sm">{f.files.length}{f.skipped.length ? <Text span c="dimmed" size="xs"> (+{f.skipped.length} לא יועלו)</Text> : null}</Text>
+                        <Text size="xs" c="dimmed">{[...new Set(f.files.map((x) => TYPE_HE[typeOf(f, x)] ?? typeOf(f, x)))].join(', ')}</Text></summary>
+                      <Stack gap={4} mt={6}>
+                        {f.files.map((x) => (
+                          <Group key={x.path} gap={6} wrap="nowrap">
+                            <Text size="xs" style={{ flex: 1, minWidth: 0 }} truncate title={x.path}>{x.path.split('/').slice(1).join('/')}</Text>
+                            <Select size="xs" w={170} data={DEST} value={f.perFile[x.path] ?? f.dest} allowDeselect={false}
+                              onChange={(v) => v && set(i, { perFile: { ...f.perFile, [x.path]: v as Dest } })} />
+                          </Group>
+                        ))}
+                      </Stack>
+                    </details>
+                  </Table.Td>
                 </Table.Tr>
               ))}</Table.Tbody>
             </Table>

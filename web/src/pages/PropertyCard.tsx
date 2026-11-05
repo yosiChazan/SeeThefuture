@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
 import { OwnershipChange, PropertyEdit } from '../components/PropertyEdit';
-import { EntityDocuments, type DocType } from '../components/EntityDocuments';
 import { PropertyFiles } from '../components/PropertyFiles';
 import { PropertyDeals } from '../components/PropertyDeals';
 import { Activities, PropertyContacts } from '../components/CardExtras';
@@ -17,12 +16,6 @@ import { usePropertyEntries, useProperty } from '../lib/queries';
 import { AccountLedger } from '../components/AccountLedger';
 import { PropertyEntries } from '../components/PropertyEntries';
 
-// Kinds of property documents (SPEC decision 70).
-const PROPERTY_DOC_TYPES: DocType[] = [
-  { value: 'purchase_contract', label: 'חוזה רכישה' }, { value: 'land_registry', label: 'נסח טאבו' }, { value: 'land_book', label: 'Land book' },
-  { value: 'poa', label: 'ייפוי כוח' }, { value: 'management_contract', label: 'חוזה ניהול' }, { value: 'caveat', label: 'הערת אזהרה' },
-  { value: 'payment_proof', label: 'הוכחת תשלום / קבלה' }, { value: 'bank_document', label: 'מסמך בנק' }, { value: 'lease_contract', label: 'חוזה שכירות' }, { value: 'e9', label: 'E9 (יוון)' }, { value: 'photo', label: 'תמונה' }, { value: 'floor_plan', label: 'שרטוט' }, { value: 'attachment', label: 'מסמך אחר' },
-];
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -117,7 +110,6 @@ export function PropertyCard() {
           <PropertyCharges propertyId={p.id} />
 
           <PropertyFiles propertyId={p.id} country={p.country_code} />
-          <EntityDocuments entityType="property" entityId={p.id} country={p.country_code} types={PROPERTY_DOC_TYPES} title="מסמכי הנכס" />
 
           <PropertyEntries propertyId={p.id} country={p.country_code} accounts={ledger.data?.accounts ?? []}>
             <QueryState q={ledger}>{(m) => <AccountLedger accounts={m.accounts} entries={m.entries} property />}</QueryState>
