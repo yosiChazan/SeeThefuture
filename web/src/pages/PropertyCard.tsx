@@ -1,8 +1,9 @@
 import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
-import { IconTrash } from '@tabler/icons-react';
+import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
+import { OwnershipChange, PropertyEdit } from '../components/PropertyEdit';
 import { EntityDocuments, type DocType } from '../components/EntityDocuments';
 import { PropertyDeals } from '../components/PropertyDeals';
 import { Activities, PropertyContacts } from '../components/CardExtras';
@@ -37,6 +38,8 @@ export function PropertyCard() {
   const access = useAccess();
   const navigate = useNavigate();
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [owning, setOwning] = useState(false);
   return (
     <QueryState q={q}>{(p) => {
       const leases = [...p.leases].sort((a, b) => (b.start_date ?? '9999').localeCompare(a.start_date ?? '9999'));
@@ -51,9 +54,12 @@ export function PropertyCard() {
             <Title order={2}>{propertyTitle(p)}</Title>
             <Group gap="xs">
               <CountryBadge code={p.country_code} /><StatusBadge status={p.status} size="md" />
+              {access.canEdit(p.country_code) && <Button size="xs" variant="light" leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>עריכה</Button>}
               {access.isAdmin && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={() => setDeleting(true)}>מחיקת נכס</Button>}
             </Group>
           </Group>
+          {editing && <PropertyEdit p={p} onClose={() => setEditing(false)} />}
+          {owning && <OwnershipChange propertyId={p.id} current={ownerships.filter((o) => !o.valid_to)} onClose={() => setOwning(false)} />}
           {deleting && (
             <DeleteRecord kind="property" id={p.id} name={propertyTitle(p)} onClose={() => setDeleting(false)}
               onDeleted={() => navigate('/properties', { replace: true })} />
@@ -74,7 +80,10 @@ export function PropertyCard() {
           </Paper>
 
           <Paper withBorder p="md">
-            <Title order={4} mb="sm">בעלים</Title>
+            <Group justify="space-between" mb="sm">
+              <Title order={4}>בעלים</Title>
+              {access.canEdit(p.country_code) && <Button size="xs" variant="light" onClick={() => setOwning(true)}>שינוי בעלות</Button>}
+            </Group>
             <Table verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr><Table.Th>שם</Table.Th><Table.Th>חלק</Table.Th><Table.Th>מתאריך</Table.Th><Table.Th>עד</Table.Th><Table.Th>הערות</Table.Th></Table.Tr>

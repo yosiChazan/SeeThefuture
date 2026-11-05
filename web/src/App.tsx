@@ -5,6 +5,7 @@ import { ClientCard } from './pages/ClientCard';
 import { Clients } from './pages/Clients';
 import { Contacts } from './pages/Contacts';
 import { Completeness } from './pages/Completeness';
+import { Stats } from './pages/Stats';
 import { Dashboard } from './pages/Dashboard';
 import { Intake } from './pages/Intake';
 import { IntakeBatch } from './pages/IntakeBatch';
@@ -30,6 +31,7 @@ export function App() {
             <Route path="contacts" element={<Contacts />} />
             <Route path="contacts/:id" element={<ClientCard />} />
             <Route path="completeness" element={<Completeness />} />
+            <Route path="stats" element={<Stats />} />
             <Route path="leases" element={<Leases />} />
             <Route path="leases/:id" element={<LeaseCard />} />
             <Route path="intake" element={<Intake />} />
