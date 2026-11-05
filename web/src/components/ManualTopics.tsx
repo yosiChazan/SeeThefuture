@@ -1,4 +1,4 @@
-import { Anchor, Badge, Button, Group, Modal, MultiSelect, Paper, Popover, Select, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Group, Modal, MultiSelect, Paper, Popover, Select, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconExternalLink, IconLink, IconMail, IconTool } from '@tabler/icons-react';
@@ -110,27 +110,36 @@ function MailDraft({ to, topic, from }: { to: Staff; topic: { title: string; not
   if (!to.email) return <Text size="xs" c="dimmed">אין כתובת מייל ל{to.display_name}.</Text>;
   // A compose link carries plain text only, so the version with real links goes through the
   // clipboard: copy it (as HTML, with the plain text beside it), then paste into the draft.
-  const copyRich = () => {
-    const done = navigator.clipboard.write([new ClipboardItem({
-      'text/html': new Blob([topicMailHtml(input)], { type: 'text/html' }),
-      'text/plain': new Blob([body], { type: 'text/plain' }),
-    })]);
-    done.then(() => setCopied(true), () => notifications.show({ color: 'red', message: 'ההעתקה נכשלה. נסה שוב עם "העתקה עם קישורים"' }));
-    return done;
+  const copyRich = async () => {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([topicMailHtml(input)], { type: 'text/html' }),
+        'text/plain': new Blob([body], { type: 'text/plain' }),
+      })]);
+      setCopied(true);
+      return true;
+    } catch { return false; }
   };
-  const gmail = () => { copyRich(); window.open(gmailLink(to.email!, subject), '_blank', 'noopener'); };
+  // Copy first, while this page has the focus, then open the draft. When the copy fails (a
+  // browser that refuses, a phone) the draft opens with the plain text, so it is never empty.
+  const gmail = async () => {
+    const ok = await copyRich();
+    const url = ok ? gmailLink(to.email!, subject) : gmailLink(to.email!, subject, body);
+    if (!window.open(url, '_blank', 'noopener')) window.location.assign(url);
+    if (!ok) notifications.show({ color: 'yellow', message: 'לא הצלחתי להעתיק עם קישורים, אז הטיוטה נפתחה עם טקסט רגיל' });
+  };
   return (
     <Stack gap={6}>
+      <Alert color="blue" variant="light" p="xs">
+        <Text size="sm">בטיוטה שתיפתח ב-Gmail גוף ההודעה ריק: <b>לחץ בגוף ההודעה והדבק (Ctrl+V)</b>. ההודעה כבר מועתקת, עם הקישורים.</Text>
+      </Alert>
       <Group gap="xs">
-        <Button size="xs" leftSection={<IconMail size={14} />} variant="light" onClick={gmail}>Gmail עם קישורים</Button>
-        <Button size="xs" variant="default" onClick={copyRich}>{copied ? 'הועתק' : 'העתקה עם קישורים'}</Button>
-        <Button size="xs" variant="subtle" component="a" href={mailtoLink(to.email, subject, body)}>תוכנת מייל (טקסט פשוט)</Button>
+        <Button size="xs" leftSection={<IconMail size={14} />} onClick={gmail}>פתיחת טיוטה ב-Gmail</Button>
+        <Button size="xs" variant="default" onClick={async () => { if (!(await copyRich())) notifications.show({ color: 'red', message: 'ההעתקה נכשלה' }); }}>{copied ? 'הועתק ✓' : 'העתקה עם קישורים'}</Button>
+        <Button size="xs" variant="subtle" component="a" href={gmailLink(to.email, subject, body)} target="_blank" rel="noopener">Gmail בטקסט רגיל</Button>
+        <Button size="xs" variant="subtle" component="a" href={mailtoLink(to.email, subject, body)}>תוכנת מייל</Button>
       </Group>
-      <Text size="xs" c={copied ? 'teal' : 'dimmed'}>
-        {copied
-          ? 'ההודעה הועתקה עם הקישורים. בטיוטה שנפתחה: לחץ בגוף ההודעה והדבק (Ctrl+V).'
-          : `נפתחת טיוטה אל ${to.email} עם הנושא, וגוף ההודעה מועתק עם קישורים להדבקה. שולחים מהתיבה שלך.`}
-      </Text>
+      <Text size="xs" c="dimmed">אל {to.email}. שולחים מהתיבה שלך. "Gmail בטקסט רגיל" פותח טיוטה מלאה, אבל עם כתובות במקום קישורים.</Text>
     </Stack>
   );
 }
