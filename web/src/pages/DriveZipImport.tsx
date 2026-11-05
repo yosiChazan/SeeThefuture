@@ -16,7 +16,7 @@ import { supabase } from '../lib/supabase';
 
 const TYPE_HE: Record<string, string> = {
   poa: 'ייפוי כוח', passport: 'דרכון', payment_proof: 'הוכחת תשלום', land_registry: 'נסח טאבו', purchase_contract: 'חוזה רכישה',
-  bank_document: 'מסמך בנק', photo: 'תמונה', attachment: 'מסמך אחר',
+  bank_document: 'מסמך בנק', photo: 'תמונה', floor_plan: 'שרטוט', attachment: 'מסמך אחר',
 };
 const MIME: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', doc: 'application/msword',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel' };
@@ -79,7 +79,7 @@ export function DriveZipImport() {
         const id = crypto.randomUUID();
         const row = await supabase.from('documents').insert({
           id, entity_type: entityType, entity_id: entityId, country_code: p.country_code, doc_type: type,
-          storage_path: path, sensitive: type !== 'photo', file_name: name, source: `drive-zip:${file.path}`.slice(0, 500),
+          storage_path: path, sensitive: type !== 'photo' && type !== 'floor_plan', file_name: name, source: `drive-zip:${file.path}`.slice(0, 500),
         });
         if (row.error?.code === '23505') state.existed++;
         else if (row.error) state.failed.push(`${file.path}: ${row.error.message}`);

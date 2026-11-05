@@ -40,6 +40,7 @@ test('the kind of document from its folder and name', () => {
   assert.equal(docTypeFor('דירה/חוזה רכישה.pdf'), 'purchase_contract');
   assert.equal(docTypeFor('דירה/Passport.jpg'), 'passport');
   assert.equal(docTypeFor('דירה/x.pdf'), 'attachment');
+  assert.equal(docTypeFor('דירה/שרטוט דירה.pdf'), 'floor_plan');
   assert.equal(pathKey('a/b'), pathKey('a/b'));
   assert.notEqual(pathKey('a/b'), pathKey('a/c'));
 });
