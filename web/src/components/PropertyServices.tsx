@@ -3,6 +3,7 @@ import { notifications } from '@mantine/notifications';
 import { IconReceipt } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { documentLink } from '../lib/viewer';
 import { useMemo, useState } from 'react';
 import { date, money } from '../lib/format';
 import { usePropertyCharges, usePropertyServices, type ChargeRow } from '../lib/queries';
@@ -50,8 +51,8 @@ async function openProof(id: string) {
   if (doc.error || !doc.data) { notifications.show({ color: 'red', message: doc.error?.message ?? 'אין הרשאה למסמך' }); return; }
   const log = await supabase.rpc('log_document_access', { doc: id });
   if (log.error) { notifications.show({ color: 'red', message: log.error.message }); return; }
-  const { data, error } = await supabase.storage.from('documents').createSignedUrl(doc.data.storage_path, 60);
-  if (error) notifications.show({ color: 'red', message: error.message }); else window.open(data.signedUrl, '_blank');
+  const link = await documentLink(doc.data.storage_path);
+  if (link.error) notifications.show({ color: 'red', message: link.error }); else window.open(link.url, '_blank');
 }
 
 export function ChargesTable({ rows: data, title = 'חיובים', note }: { rows: ChargeWithProperty[]; title?: string; note?: string }) {

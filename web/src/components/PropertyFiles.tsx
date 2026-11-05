@@ -7,6 +7,7 @@ import { useAccess } from '../lib/access';
 import { date } from '../lib/format';
 import { must, supabase } from '../lib/supabase';
 import type { Country } from '../lib/types';
+import { inViewer, viewerUrl } from '../lib/viewer';
 import { DOC_TYPE_HE as TYPE_HE, DOC_TYPE_OPTIONS, FILE_GROUPS, groupOf, isSensitive, type FileGroup } from '../lib/fileGroups';
 
 // A property's files in four groups with previews (SPEC decisions 102, 104): purchase and
@@ -18,7 +19,7 @@ interface Doc { id: string; doc_type: string; storage_path: string; sensitive: b
 
 const GROUPS = FILE_GROUPS;
 const isImage = (d: Doc) => /\.(jpe?g|png|webp|gif|heic)$/i.test(d.file_name ?? d.storage_path);
-const isPdf = (d: Doc) => /\.pdf$/i.test(d.file_name ?? d.storage_path);
+const isDoc = (d: Doc) => inViewer(d.file_name ?? d.storage_path);
 const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
 const PAGE = 24;
 
@@ -39,7 +40,7 @@ function useThumbs(docs: Doc[]) {
 
 function Preview({ doc, url, height }: { doc: Doc; url: string; height: number }) {
   if (isImage(doc)) return <Image src={url} h={height} fit="cover" radius="sm" alt={doc.file_name ?? ''} loading="lazy" />;
-  if (isPdf(doc)) return <iframe src={`${url}#toolbar=0&navpanes=0&view=FitH`} title={doc.file_name ?? ''} style={{ width: '100%', height, border: 0, borderRadius: 4, pointerEvents: 'none' }} />;
+  if (isDoc(doc)) return <iframe src={viewerUrl(url, true)} loading="lazy" title={doc.file_name ?? ''} style={{ width: '100%', height, border: 0, borderRadius: 4, pointerEvents: 'none' }} />;
   return <Stack h={height} align="center" justify="center"><IconFileText size={36} color="var(--mantine-color-gray-5)" /></Stack>;
 }
 
@@ -131,7 +132,10 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
         <Modal opened onClose={() => setViewing(null)} size="xl" title={viewing.doc.file_name ?? 'קובץ'}>
           <Stack>
             {isImage(viewing.doc) ? <Image src={viewing.url} fit="contain" mah="75vh" alt="" />
-              : isPdf(viewing.doc) ? <iframe src={viewing.url} title="" style={{ width: '100%', height: '75vh', border: 0 }} />
+              : isDoc(viewing.doc) ? <>
+                <iframe src={viewerUrl(viewing.url, true)} title="" style={{ width: '100%', height: '75vh', border: 0 }} />
+                <Text size="xs" c="dimmed">התצוגה של Google. אם היא לא נטענת, <a href={viewing.url} target="_blank" rel="noopener noreferrer">פתיחת הקובץ עצמו</a>.</Text>
+              </>
               : <Text size="sm">אין תצוגה מקדימה לסוג הקובץ הזה.</Text>}
             <Group justify="space-between">
               {access.canEdit(country) ? <Select size="xs" w={240} label="סוג (קובע את הלשונית)" data={DOC_TYPE_OPTIONS} value={viewing.doc.doc_type} allowDeselect={false}
@@ -144,7 +148,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
                   setViewing({ ...viewing, doc: { ...viewing.doc, doc_type: t, sensitive: isSensitive(t) } });
                   await qc.invalidateQueries({ queryKey: key });
                 }} /> : <span />}
-              <Button component="a" href={viewing.url} target="_blank" rel="noopener noreferrer" variant="light" leftSection={<IconExternalLink size={14} />}>פתיחה בלשונית חדשה</Button></Group>
+              <Button component="a" href={isDoc(viewing.doc) ? viewerUrl(viewing.url) : viewing.url} target="_blank" rel="noopener noreferrer" variant="light" leftSection={<IconExternalLink size={14} />}>פתיחה בלשונית חדשה</Button></Group>
           </Stack>
         </Modal>
       )}

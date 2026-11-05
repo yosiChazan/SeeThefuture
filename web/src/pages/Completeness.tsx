@@ -15,6 +15,7 @@ import { propertyTitle } from '../lib/format';
 import { useBatches } from '../lib/intake';
 import { idNumberOf, setClientRole, useClients, useContacts, usePartyLinks, useProperties } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
+import { documentLink } from '../lib/viewer';
 
 const DOC_TYPES = [
   { value: 'passport', label: 'דרכון' }, { value: 'id_card', label: 'תעודת זהות וספח' }, { value: 'poa', label: 'ייפוי כוח' },
@@ -56,8 +57,8 @@ function useExtra() {
 function DocLink({ d }: { d: Doc }) {
   async function open() {
     await supabase.rpc('log_document_access', { doc: d.id });
-    const { data, error } = await supabase.storage.from('documents').createSignedUrl(d.storage_path, 60);
-    if (error) notifications.show({ color: 'red', message: error.message }); else window.open(data.signedUrl, '_blank');
+    const link = await documentLink(d.storage_path, d.file_name);
+    if (link.error) notifications.show({ color: 'red', message: link.error }); else window.open(link.url, '_blank');
   }
   return <Anchor size="sm" dir="ltr" onClick={open}>{d.file_name ?? d.storage_path.split('/').pop()}</Anchor>;
 }
