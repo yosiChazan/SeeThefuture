@@ -6,14 +6,13 @@ export interface ZipFile { path: string; size: number }
 export interface Target { id: string; building: string; unit: string; owners: string[] }
 
 // Folders and files that are never copied: bank account details, passwords and cards (they
-// belong in Bitwarden, CLAUDE.md), and videos (not documents). No size limit (decision 110):
+// belong in Bitwarden, CLAUDE.md). Videos are copied, as photos (decision 111). No size limit (decision 110):
 // a file larger than the project's upload limit fails on upload and is reported.
 const SECRET = /(פרטי\s*חשבון|סיסמ|כרטיס\s*אשראי|password|passw|card|\bpin\b|ukrgasbank|privatbank|monobank|iban)/i;
-const VIDEO = /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i;
+export const VIDEO = /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i;
 
 export function skipReason(f: ZipFile): string | null {
   if (SECRET.test(f.path)) return 'פרטי חשבון בנק / סיסמאות / כרטיסים';
-  if (VIDEO.test(f.path)) return 'סרטון';
   if (/(^|\/)(\.|__MACOSX|desktop\.ini|thumbs\.db)/i.test(f.path)) return 'קובץ מערכת';
   return null;
 }
@@ -90,6 +89,7 @@ export function matchFolder(name: string, targets: Target[]): { id: string | nul
 // The kind of document, from its subfolder and name.
 export function docTypeFor(path: string): string {
   const p = path.toLowerCase();
+  if (VIDEO.test(p)) return 'photo';
   if (/\.(jpe?g|png|heic|webp)$/.test(p) && /(תמונ|photo|img_|whatsapp image)/.test(p)) return 'photo';
   if (/(שרטוט|תוכנית דירה|floor ?plan|план)/.test(p)) return 'floor_plan';
   if (/(ייפו?יי? כוח|יפוי כוח|довіреніст|доверенност|\bpoa\b)/.test(p)) return 'poa';

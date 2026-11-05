@@ -9,7 +9,7 @@ export interface FileCategory { id: string; label: string; sensitive: boolean; p
 const BUILT_IN: FileGroup[] = [
   { key: 'purchase', label: 'מסמכי רכישה ובעלות', types: ['purchase_contract', 'land_registry', 'land_book', 'caveat', 'poa', 'e9'], uploadType: 'purchase_contract', sensitive: true },
   { key: 'receipts', label: 'קבלות', types: ['receipt', 'payment_proof'], uploadType: 'receipt', sensitive: true },
-  { key: 'photos', label: 'תמונות', types: ['photo'], uploadType: 'photo', sensitive: false },
+  { key: 'photos', label: 'תמונות וסרטונים', types: ['photo'], uploadType: 'photo', sensitive: false },
   { key: 'plans', label: 'שרטוט', types: ['floor_plan'], uploadType: 'floor_plan', sensitive: false },
 ];
 const OTHER: FileGroup = { key: 'other', label: 'מסמכים נוספים', types: [], uploadType: 'attachment', sensitive: true };

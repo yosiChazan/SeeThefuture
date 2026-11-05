@@ -12,7 +12,7 @@ import type { Country } from '../lib/types';
 import { inViewer, viewerUrl } from '../lib/viewer';
 import { docTypeOptions, groupOf, isSensitive, typeInGroup, typeLabel, type FileGroup } from '../lib/fileGroups';
 import { useFileGroups } from '../lib/fileCategories';
-import { docTypeFor, folderGroup, foldersOf, pathKey, skipReason } from '../lib/driveZip';
+import { docTypeFor, folderGroup, foldersOf, pathKey, skipReason, VIDEO } from '../lib/driveZip';
 
 // A property's files in groups with previews (SPEC decisions 102, 104, 106): purchase and
 // ownership documents, receipts, photos, floor plans, and every other document. Files are
@@ -23,10 +23,11 @@ import { docTypeFor, folderGroup, foldersOf, pathKey, skipReason } from '../lib/
 interface Doc { id: string; doc_type: string; storage_path: string; sensitive: boolean; file_name: string | null; uploaded_at: string }
 
 const isImage = (d: Doc) => /\.(jpe?g|png|webp|gif|heic)$/i.test(d.file_name ?? d.storage_path);
+const isVideo = (d: Doc) => VIDEO.test(d.file_name ?? d.storage_path);
 const isDoc = (d: Doc) => inViewer(d.file_name ?? d.storage_path);
 const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
 const PAGE = 24;
-const MIME: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', doc: 'application/msword',
+const MIME: Record<string, string> = { mp4: 'video/mp4', mov: 'video/quicktime', m4v: 'video/mp4', webm: 'video/webm', avi: 'video/x-msvideo', mkv: 'video/x-matroska', '3gp': 'video/3gpp', pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', doc: 'application/msword',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel' };
 
 // Signed links for the files shown without opening (photos, plans), an hour at a time.
@@ -46,6 +47,8 @@ function useThumbs(docs: Doc[]) {
 
 function Preview({ doc, url, height }: { doc: Doc; url: string; height: number }) {
   if (isImage(doc)) return <Image src={url} h={height} fit="cover" radius="sm" alt={doc.file_name ?? ''} loading="lazy" />;
+  // The first frame of a video; it plays in the large view.
+  if (isVideo(doc)) return <video src={`${url}#t=0.5`} preload="metadata" muted style={{ width: '100%', height, objectFit: 'cover', borderRadius: 4, pointerEvents: 'none', background: '#000' }} />;
   if (isDoc(doc)) return <iframe src={viewerUrl(url, true)} loading="lazy" title={doc.file_name ?? ''} style={{ width: '100%', height, border: 0, borderRadius: 4, pointerEvents: 'none' }} />;
   return <Stack h={height} align="center" justify="center"><IconFileText size={36} color="var(--mantine-color-gray-5)" /></Stack>;
 }
@@ -227,6 +230,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
         <Modal opened onClose={() => setViewing(null)} size="xl" title={viewing.doc.file_name ?? 'קובץ'}>
           <Stack>
             {isImage(viewing.doc) ? <Image src={viewing.url} fit="contain" mah="75vh" alt="" />
+              : isVideo(viewing.doc) ? <video src={viewing.url} controls autoPlay style={{ width: '100%', maxHeight: '75vh', background: '#000' }} />
               : isDoc(viewing.doc) ? <>
                 <iframe src={viewerUrl(viewing.url, true)} title="" style={{ width: '100%', height: '75vh', border: 0 }} />
                 <Text size="xs" c="dimmed">התצוגה של Google. אם היא לא נטענת, <a href={viewing.url} target="_blank" rel="noopener noreferrer">פתיחת הקובץ עצמו</a>.</Text>
@@ -265,7 +269,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
               return (
                 <Stack gap="xs">
                   <Group justify="space-between">
-                    <Text size="sm">{zip.folders.length} תיקיות · {zipTotal} קבצים{zip.skipped.length ? ` · ${zip.skipped.length} לא יועלו (פרטי בנק, סיסמאות, סרטונים)` : ''}</Text>
+                    <Text size="sm">{zip.folders.length} תיקיות · {zipTotal} קבצים{zip.skipped.length ? ` · ${zip.skipped.length} לא יועלו (פרטי בנק, סיסמאות, כרטיסים)` : ''}</Text>
                     <Select size="xs" w={200} placeholder="לאן, לכל התיקיות" data={dest} value={null}
                       onChange={(v) => v && setZip({ ...zip, folders: zip.folders.map((f) => ({ ...f, dest: v, perFile: {} })) })} />
                   </Group>
@@ -313,7 +317,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
         <Modal opened onClose={() => setAdding(false)} title={`הוספה ל"${group.label}"`}>
           <Stack>
             <FileInput label="קבצים" multiple required value={files} onChange={setFiles} placeholder="אפשר לבחור כמה"
-              accept={group.key === 'photos' ? 'image/*' : 'image/*,application/pdf,.doc,.docx,.xls,.xlsx'} leftSection={<IconUpload size={16} />} />
+              accept={group.key === 'photos' ? 'image/*,video/*' : 'image/*,application/pdf,.doc,.docx,.xls,.xlsx'} leftSection={<IconUpload size={16} />} />
             <Text size="xs" c="dimmed">{group.sensitive ? `יישמרו כ"${typeLabel(group.uploadType, GROUPS)}" ורגישים; את הסוג משנים בלחיצה על הקובץ.` : 'לא רגישים: כל מי שרואה את הנכס יראה אותם.'}</Text>
             {error && <Alert color="red">{error}</Alert>}
             <Group justify="flex-end"><Button variant="default" onClick={() => setAdding(false)}>ביטול</Button><Button onClick={upload} loading={busy} disabled={!files.length}>הוספה</Button></Group>

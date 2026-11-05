@@ -18,7 +18,7 @@ import { supabase } from '../lib/supabase';
 
 type Dest = string;   // 'auto' or a group's key
 const destOptions = (groups: FileGroup[]) => [{ value: 'auto', label: 'אוטומטי (לפי השם)' }, ...groups.map((g) => ({ value: g.key, label: g.label }))];
-const MIME: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', doc: 'application/msword',
+const MIME: Record<string, string> = { mp4: 'video/mp4', mov: 'video/quicktime', m4v: 'video/mp4', webm: 'video/webm', avi: 'video/x-msvideo', mkv: 'video/x-matroska', '3gp': 'video/3gpp', pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', doc: 'application/msword',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel' };
 const safeName = (s: string) => s.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-100);
 const readZip = (f: File) => f.arrayBuffer().then((b) => new Promise<Unzipped>((ok, bad) => unzip(new Uint8Array(b), (e, d) => (e ? bad(e) : ok(d)))));
