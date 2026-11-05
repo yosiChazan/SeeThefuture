@@ -265,7 +265,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
               return (
                 <Stack gap="xs">
                   <Group justify="space-between">
-                    <Text size="sm">{zip.folders.length} תיקיות · {zipTotal} קבצים{zip.skipped.length ? ` · ${zip.skipped.length} לא יועלו (פרטי בנק, סיסמאות, סרטונים, מעל 50MB)` : ''}</Text>
+                    <Text size="sm">{zip.folders.length} תיקיות · {zipTotal} קבצים{zip.skipped.length ? ` · ${zip.skipped.length} לא יועלו (פרטי בנק, סיסמאות, סרטונים)` : ''}</Text>
                     <Select size="xs" w={200} placeholder="לאן, לכל התיקיות" data={dest} value={null}
                       onChange={(v) => v && setZip({ ...zip, folders: zip.folders.map((f) => ({ ...f, dest: v, perFile: {} })) })} />
                   </Group>

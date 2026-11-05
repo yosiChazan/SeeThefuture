@@ -6,15 +6,14 @@ export interface ZipFile { path: string; size: number }
 export interface Target { id: string; building: string; unit: string; owners: string[] }
 
 // Folders and files that are never copied: bank account details, passwords and cards (they
-// belong in Bitwarden, CLAUDE.md), and videos (too large, not documents).
+// belong in Bitwarden, CLAUDE.md), and videos (not documents). No size limit (decision 110):
+// a file larger than the project's upload limit fails on upload and is reported.
 const SECRET = /(פרטי\s*חשבון|סיסמ|כרטיס\s*אשראי|password|passw|card|\bpin\b|ukrgasbank|privatbank|monobank|iban)/i;
 const VIDEO = /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i;
-export const MAX_BYTES = 50 * 1024 * 1024;
 
 export function skipReason(f: ZipFile): string | null {
   if (SECRET.test(f.path)) return 'פרטי חשבון בנק / סיסמאות / כרטיסים';
   if (VIDEO.test(f.path)) return 'סרטון';
-  if (f.size > MAX_BYTES) return 'קובץ גדול מ-50MB';
   if (/(^|\/)(\.|__MACOSX|desktop\.ini|thumbs\.db)/i.test(f.path)) return 'קובץ מערכת';
   return null;
 }

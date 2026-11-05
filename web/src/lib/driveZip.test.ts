@@ -30,7 +30,7 @@ test('bank account details, passwords, videos and huge files are not copied', ()
   assert.ok(skipReason({ path: 'דירה/פרטי חשבון UKRGASBANK/a.pdf', size: 1 }));
   assert.ok(skipReason({ path: 'דירה/סיסמאות.txt', size: 1 }));
   assert.ok(skipReason({ path: 'דירה/סרטון.mp4', size: 1 }));
-  assert.ok(skipReason({ path: 'דירה/a.pdf', size: 60 * 1024 * 1024 }));
+  assert.equal(skipReason({ path: 'דירה/a.pdf', size: 600 * 1024 * 1024 }), null);
   assert.equal(skipReason({ path: 'דירה/מסמכים לבנק/חוזה.pdf', size: 1 }), null);
 });
 
