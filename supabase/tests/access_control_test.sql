@@ -905,6 +905,42 @@ delete from app.tasks where title = 'לבדוק את החוזה';
 reset role;
 select pg_temp.check(not exists (select 1 from app.task_links), 'the author deletes the topic, and its links go with it');
 
+-- A movement added from the property card (decision 103) -----------------
+
+insert into app.ownerships (property_id, party_id, share_pct, valid_from) values
+  ('30000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 100, '2023-01-01');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+insert into app.transactions (id, country_code, occurred_on, period, category, description, status)
+  values ('71000000-0000-0000-0000-000000000001', 'RO', '2026-03-05', '2026-03-01', 'repair', 'תיקון', 'draft');
+select app.post_import_entry('71000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', null, 'RO', '2026-03-05',
+  '{"amount": -120, "currency": "RON", "account": {"kind": "client_bank", "holder": "beneficiary"}}');
+reset role;
+select pg_temp.check((select count(*) from app.entries where transaction_id = '71000000-0000-0000-0000-000000000001') = 1,
+  'an editor adds a draft movement to a property, in the owner''s account');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  update app.transactions set status = 'posted' where id = '71000000-0000-0000-0000-000000000001';
+  raise exception 'FAILED: an editor posted a movement';
+exception when raise_exception then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - only finance posts a movement added on the property card';
+end $$;
+delete from app.transactions where id = '71000000-0000-0000-0000-000000000001';
+reset role;
+select pg_temp.check(not exists (select 1 from app.transactions where id = '71000000-0000-0000-0000-000000000001'), 'the editor deletes a draft');
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('71000000-0000-0000-0000-000000000002', 'UA', '2026-03-05', '2026-03-01', 'rent', 'draft');
+select app.post_import_entry('71000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000003', 'UA', '2026-03-05',
+  '{"amount": 1001, "currency": "UAH", "account": {"kind": "manager_cash", "holder": "source"}}');
+update app.transactions set status = 'posted' where id = '71000000-0000-0000-0000-000000000002';
+reset role;
+select pg_temp.check((select array_agg(amount order by amount) from app.entries where transaction_id = '71000000-0000-0000-0000-000000000002') = '{500.50,500.50}'::numeric[]
+  and (select status from app.transactions where id = '71000000-0000-0000-0000-000000000002') = 'posted',
+  'finance adds and posts a movement; it is split between the owners by their shares');
+delete from app.ownerships where property_id = '30000000-0000-0000-0000-000000000002';
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

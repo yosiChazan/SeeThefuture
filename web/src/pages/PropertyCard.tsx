@@ -15,6 +15,7 @@ import { LeaseTable } from '../components/LeaseTable';
 import { COUNTRY_HE, date, isCurrentOwnership, propertyTitle } from '../lib/format';
 import { usePropertyEntries, useProperty } from '../lib/queries';
 import { AccountLedger } from '../components/AccountLedger';
+import { PropertyEntries } from '../components/PropertyEntries';
 
 // Kinds of property documents (SPEC decision 70).
 const PROPERTY_DOC_TYPES: DocType[] = [
@@ -118,11 +119,9 @@ export function PropertyCard() {
           <PropertyFiles propertyId={p.id} country={p.country_code} />
           <EntityDocuments entityType="property" entityId={p.id} country={p.country_code} types={PROPERTY_DOC_TYPES} title="מסמכי הנכס" />
 
-          <Paper withBorder p="md">
-            <Title order={4} mb={4}>תנועות</Title>
-            <Text size="xs" c="dimmed" mb="sm">התנועות של הנכס הזה בכל חשבון, לפי הבעלים. רק תנועות שאושרו.</Text>
+          <PropertyEntries propertyId={p.id} country={p.country_code} accounts={ledger.data?.accounts ?? []}>
             <QueryState q={ledger}>{(m) => <AccountLedger accounts={m.accounts} entries={m.entries} property />}</QueryState>
-          </Paper>
+          </PropertyEntries>
         </Stack>
       );
     }}</QueryState>
