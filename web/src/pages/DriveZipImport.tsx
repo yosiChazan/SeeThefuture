@@ -4,7 +4,8 @@ import { unzip, type Unzipped } from 'fflate';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccess } from '../lib/access';
-import { DOC_TYPE_HE as TYPE_HE, FILE_GROUPS, isSensitive, typeInGroup, type FileGroup } from '../lib/fileGroups';
+import { isSensitive, typeInGroup, typeLabel, type FileGroup } from '../lib/fileGroups';
+import { useFileGroups } from '../lib/fileCategories';
 import { docTypeFor, groupByFolder, matchFolder, pathKey, skipReason, type ZipFile } from '../lib/driveZip';
 import { isCurrentOwnership, propertyTitle } from '../lib/format';
 import { useProperties } from '../lib/queries';
@@ -15,8 +16,8 @@ import { supabase } from '../lib/supabase';
 // the apartment's documents; a passport goes to the owner's card when there is one owner.
 // Importing the same ZIP again skips what is already in.
 
-type Dest = 'auto' | FileGroup['key'];
-const DEST = [{ value: 'auto', label: 'אוטומטי (לפי השם)' }, ...FILE_GROUPS.map((g) => ({ value: g.key, label: g.label }))];
+type Dest = string;   // 'auto' or a group's key
+const destOptions = (groups: FileGroup[]) => [{ value: 'auto', label: 'אוטומטי (לפי השם)' }, ...groups.map((g) => ({ value: g.key, label: g.label }))];
 const MIME: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', doc: 'application/msword',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel' };
 const safeName = (s: string) => s.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-100);
@@ -26,14 +27,16 @@ interface Folder { name: string; files: ZipFile[]; skipped: (ZipFile & { why: st
 
 // Where a file goes: its own choice, else its folder's; "auto" keeps the type its name says,
 // a group gives the guessed type when it is in that group and the group's own type otherwise.
-const typeOf = (f: Folder, file: ZipFile) => {
+const typeOf = (f: Folder, file: ZipFile, groups: FileGroup[]) => {
   const dest = f.perFile[file.path] ?? f.dest;
   const guessed = docTypeFor(file.path);
-  return dest === 'auto' ? guessed : typeInGroup(dest, guessed);
+  return dest === 'auto' ? guessed : typeInGroup(dest, guessed, groups);
 };
 
 export function DriveZipImport() {
   const access = useAccess();
+  const groups = useFileGroups();
+  const DEST = destOptions(groups);
   const qc = useQueryClient();
   const props = useProperties();
   const [zips, setZips] = useState<File[]>([]);
@@ -78,7 +81,7 @@ export function DriveZipImport() {
       const owners = p.ownerships.filter((o) => isCurrentOwnership(o));
       for (const file of f.files) {
         const name = file.path.split('/').pop()!;
-        const type = typeOf(f, file);
+        const type = typeOf(f, file, groups);
         const toParty = type === 'passport' && owners.length === 1;
         const entityType = toParty ? 'party' : 'property';
         const entityId = toParty ? owners[0].party.id : p.id;
@@ -86,7 +89,7 @@ export function DriveZipImport() {
         const id = crypto.randomUUID();
         const row = await supabase.from('documents').insert({
           id, entity_type: entityType, entity_id: entityId, country_code: p.country_code, doc_type: type,
-          storage_path: path, sensitive: isSensitive(type), file_name: name, source: `drive-zip:${file.path}`.slice(0, 500),
+          storage_path: path, sensitive: isSensitive(type, groups), file_name: name, source: `drive-zip:${file.path}`.slice(0, 500),
         });
         if (row.error?.code === '23505') state.existed++;
         else if (row.error) state.failed.push(`${file.path}: ${row.error.message}`);
@@ -154,7 +157,7 @@ export function DriveZipImport() {
                   <Table.Td>
                     <details>
                       <summary><Text span size="sm">{f.files.length}{f.skipped.length ? <Text span c="dimmed" size="xs"> (+{f.skipped.length} לא יועלו)</Text> : null}</Text>
-                        <Text size="xs" c="dimmed">{[...new Set(f.files.map((x) => TYPE_HE[typeOf(f, x)] ?? typeOf(f, x)))].join(', ')}</Text></summary>
+                        <Text size="xs" c="dimmed">{[...new Set(f.files.map((x) => typeLabel(typeOf(f, x, groups), groups)))].join(', ')}</Text></summary>
                       <Stack gap={4} mt={6}>
                         {f.files.map((x) => (
                           <Group key={x.path} gap={6} wrap="nowrap">

@@ -6,6 +6,7 @@ import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { QueryState } from '../components/common';
 import { ResetItai } from '../components/ResetItai';
+import { FileCategoriesSettings } from '../components/FileCategoriesSettings';
 import { SplitNames } from '../components/SplitNames';
 import { useAccess } from '../lib/access';
 import { listSharedFiles, loadDropbox, saveSettings, startConnect } from '../lib/dropbox';
@@ -63,6 +64,7 @@ export function Settings() {
           </Stack>
         </Paper>
       )}</QueryState>
+      <FileCategoriesSettings />
       <SplitNames />
       <ResetItai />
     </Stack>
