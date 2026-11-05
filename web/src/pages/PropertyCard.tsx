@@ -117,7 +117,7 @@ export function PropertyCard() {
           <EntityDocuments entityType="property" entityId={p.id} country={p.country_code} types={PROPERTY_DOC_TYPES} title="מסמכי הנכס" />
 
           <Paper withBorder p="md">
-            <Title order={4} mb={4}>תנועות</Title>
+            <Title order={4} mb={4}>תנועות שכירות</Title>
             <Text size="xs" c="dimmed" mb="sm">התנועות של הנכס הזה בכל חשבון, לפי הבעלים. רק תנועות שאושרו.</Text>
             <QueryState q={ledger}>{(m) => <AccountLedger accounts={m.accounts} entries={m.entries} property />}</QueryState>
           </Paper>
