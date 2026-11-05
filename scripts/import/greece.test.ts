@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { greekUnit, proposeMatch } from './greece.ts';
+import { greekUnit, proposeMatch, splitOwner } from './greece.ts';
 
 test('Greek apartments: building, apartment and floor from the address', () => {
   assert.deepEqual(greekUnit('BODA 3A', 'BODA'), { building: 'Boda', unit: '3A', floor: '3' });
@@ -31,4 +31,10 @@ test('a person matches an existing party by two shared words, never by one', () 
   assert.equal(proposeMatch('SHTEINBERG DANA', family), 'dana');
   assert.equal(proposeMatch('SHTEINBERG RUTH', family), 'ruth');
   assert.equal(proposeMatch('SHTEINBERG NOA', family), null);
+});
+
+test('one Airtable person naming two co-owners becomes two owners', () => {
+  const known = ['LEVI DANA +SHTEINBREG MOSHE', 'SHTEINBERG MOSHE', 'COHEN RUTH'];
+  assert.deepEqual(splitOwner('LEVI DANA +SHTEINBREG MOSHE', known), ['LEVI DANA', 'SHTEINBERG MOSHE']);
+  assert.deepEqual(splitOwner('COHEN RUTH', known), ['COHEN RUTH']);
 });

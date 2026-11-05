@@ -79,6 +79,19 @@ export function proposeMatch(name: string, parties: { id: string; display_name: 
   return best && !tie ? best.id : null;
 }
 
+// One Airtable person that is really two co-owners, "A B +C D": two owners. A part that is
+// another Airtable person under a misspelling ("BIYAMIN" for "BINYAMIN") becomes that person.
+export function splitOwner(name: string, known: string[]): string[] {
+  if (!name.includes('+')) return [name];
+  return name.split('+').map(cleanName).filter(Boolean).map((part) => {
+    const mine = words(part);
+    return known.find((k) => {
+      const theirs = words(k);
+      return k !== name && theirs.length === mine.length && mine.every((w) => theirs.some((t) => near(w, t)));
+    }) ?? part;
+  });
+}
+
 interface Choices { matches: Record<string, string | null> }
 
 async function main() {
@@ -98,6 +111,7 @@ async function main() {
       coalesce((select array_agg(r.external_key) from app.external_refs r where r.entity_type = 'party' and r.entity_id = p.id), '{}') as spellings
     from app.parties p`);
   const partyName = new Map(existing.map((p) => [p.id, p.display_name]));
+  const knownNames = people.map((p) => cleanName(str(p.fields.Name))).filter(Boolean);
 
   // Apartments ------------------------------------------------------------------------
   const skipped: string[] = [];
@@ -108,7 +122,7 @@ async function main() {
     const name = cleanName(str(f.ID));
     if (!name || !ids(f.Owners).length || /\bgeneral\b/i.test(name)) { if (name) skipped.push(`${name}: רשומה כללית של הבניין, לא דירה; לא יובאה`); continue; }
     if (f['NOT ACTIVE']) { skipped.push(`${name}: מסומנת NOT ACTIVE, לא יובאה (החלטה)`); continue; }
-    const owners = ids(f.Owners).map((id) => cleanName(str(person.get(id)?.fields.Name))).filter(Boolean);
+    const owners = [...new Set(ids(f.Owners).flatMap((id) => splitOwner(cleanName(str(person.get(id)?.fields.Name)), knownNames)))].filter(Boolean);
     const { building, unit: parsed, floor } = greekUnit(str(f.Address) || name, buildingName.get(ids(f.Building)[0]) ?? null);
     let unit = parsed;
     for (let n = 2; used.has(`${building}|${unit}`); n++) unit = `${parsed} ${n}`;
@@ -123,7 +137,7 @@ async function main() {
   for (const p of people) {
     const n = cleanName(str(p.fields.Name));
     if (!ids(p.fields.TYPE).length && !str(p.fields.TYPE)) continue;
-    if (str(p.fields.TYPE).includes('SUPPLIER') && n !== 'STF') roleOf.set(n, /keros|^ira$/i.test(n) ? 'manager' : 'supplier');
+    if (str(p.fields.TYPE).includes('SUPPLIER') && n !== 'STF') roleOf.set(n, /keros/i.test(n) ? 'contact' : /^ira$/i.test(n) ? 'manager' : 'supplier');
   }
   if (!existsSync(choicesPath)) {
     const matches = Object.fromEntries([...roleOf.keys()].sort().map((n) => [n, proposeMatch(n, existing)]));
