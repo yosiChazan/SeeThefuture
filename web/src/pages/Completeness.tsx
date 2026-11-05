@@ -20,7 +20,7 @@ const DOC_TYPES = [
   { value: 'passport', label: 'דרכון' }, { value: 'id_card', label: 'תעודת זהות וספח' }, { value: 'poa', label: 'ייפוי כוח' },
   { value: 'purchase_contract', label: 'חוזה רכישה' }, { value: 'land_registry', label: 'נסח טאבו' }, { value: 'land_book', label: 'Land book' },
   { value: 'lease_contract', label: 'חוזה שכירות חתום' }, { value: 'lease_appendix', label: 'נספח / הארכה' }, { value: 'payment_proof', label: 'הוכחת תשלום / קבלה' },
-  { value: 'bank_document', label: 'מסמך בנק' }, { value: 'management_contract', label: 'חוזה ניהול' }, { value: 'caveat', label: 'הערת אזהרה' },
+  { value: 'bank_document', label: 'מסמך בנק' }, { value: 'e9', label: 'E9 (יוון)' }, { value: 'photo', label: 'תמונה' }, { value: 'management_contract', label: 'חוזה ניהול' }, { value: 'caveat', label: 'הערת אזהרה' },
   { value: 'attachment', label: 'מסמך אחר' },
 ];
 const PAGE = 60;

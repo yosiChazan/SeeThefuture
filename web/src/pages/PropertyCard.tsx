@@ -18,7 +18,7 @@ import { AccountLedger } from '../components/AccountLedger';
 const PROPERTY_DOC_TYPES: DocType[] = [
   { value: 'purchase_contract', label: 'חוזה רכישה' }, { value: 'land_registry', label: 'נסח טאבו' }, { value: 'land_book', label: 'Land book' },
   { value: 'poa', label: 'ייפוי כוח' }, { value: 'management_contract', label: 'חוזה ניהול' }, { value: 'caveat', label: 'הערת אזהרה' },
-  { value: 'payment_proof', label: 'הוכחת תשלום / קבלה' }, { value: 'bank_document', label: 'מסמך בנק' }, { value: 'attachment', label: 'מסמך אחר' },
+  { value: 'payment_proof', label: 'הוכחת תשלום / קבלה' }, { value: 'bank_document', label: 'מסמך בנק' }, { value: 'lease_contract', label: 'חוזה שכירות' }, { value: 'e9', label: 'E9 (יוון)' }, { value: 'photo', label: 'תמונה' }, { value: 'attachment', label: 'מסמך אחר' },
 ];
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
