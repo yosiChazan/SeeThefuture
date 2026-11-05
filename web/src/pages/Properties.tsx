@@ -73,7 +73,12 @@ export function Properties() {
     <Stack>
       <Group justify="space-between">
         <Title order={2}>נכסים</Title>
-        {access.countries.some((c) => access.canEdit(c)) && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>נכס חדש</Button>}
+        {access.countries.some((c) => access.canEdit(c)) && (
+          <Group gap="xs">
+            <Button variant="default" component={Link} to="/documents-zip">ייבוא מסמכים מ-ZIP</Button>
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>נכס חדש</Button>
+          </Group>
+        )}
       </Group>
       {adding && <PropertyForm onClose={() => setAdding(false)} />}
       <Group>

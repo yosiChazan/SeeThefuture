@@ -6,6 +6,7 @@ import { Clients } from './pages/Clients';
 import { Contacts } from './pages/Contacts';
 import { Completeness } from './pages/Completeness';
 import { Stats } from './pages/Stats';
+import { DriveZipImport } from './pages/DriveZipImport';
 import { Dashboard } from './pages/Dashboard';
 import { Intake } from './pages/Intake';
 import { IntakeBatch } from './pages/IntakeBatch';
@@ -32,6 +33,7 @@ export function App() {
             <Route path="contacts/:id" element={<ClientCard />} />
             <Route path="completeness" element={<Completeness />} />
             <Route path="stats" element={<Stats />} />
+            <Route path="documents-zip" element={<DriveZipImport />} />
             <Route path="leases" element={<Leases />} />
             <Route path="leases/:id" element={<LeaseCard />} />
             <Route path="intake" element={<Intake />} />
