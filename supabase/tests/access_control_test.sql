@@ -955,6 +955,31 @@ select pg_temp.check((select document_id from app.charges where id = '72000000-0
   'an editor deletes a receipt; the charge keeps its amount and loses only the link');
 delete from app.charges where id = '72000000-0000-0000-0000-000000000002';
 
+-- File categories added in Settings (decision 107) ------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+insert into app.file_categories (id, label, sensitive) values ('73000000-0000-0000-0000-000000000001', 'היתרי בנייה', true);
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.file_categories) = 1, 'staff see the file categories');
+do $$ begin
+  insert into app.file_categories (label) values ('x');
+  raise exception 'FAILED: an editor added a file category';
+exception when insufficient_privilege then raise notice 'ok - only an admin adds a file category';
+end $$;
+reset role;
+insert into app.documents (id, entity_type, entity_id, country_code, doc_type, storage_path)
+  values ('73000000-0000-0000-0000-000000000002', 'property', '30000000-0000-0000-0000-000000000002', 'RO', 'cat:73000000-0000-0000-0000-000000000001', 'RO/property/x/permit.pdf');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  delete from app.file_categories where id = '73000000-0000-0000-0000-000000000001';
+  raise exception 'FAILED: a category with files was removed';
+exception when foreign_key_violation then raise notice 'ok - a category with files is not removed';
+end $$;
+reset role;
+delete from app.documents where id = '73000000-0000-0000-0000-000000000002';
+delete from app.file_categories;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

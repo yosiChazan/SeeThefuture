@@ -60,3 +60,14 @@ test('file groups: every type has one group, and a chosen group decides the type
   assert.equal(isSensitive('photo'), false);
   assert.equal(isSensitive('bank_document'), true);
 });
+
+test('categories added in Settings are groups of their own', async () => {
+  const { buildGroups, groupOf, typeInGroup, isSensitive, typeLabel } = await import('./fileGroups.ts');
+  const g = buildGroups([{ id: 'p1', label: 'היתרים', sensitive: false, position: 1 }]);
+  assert.equal(g.at(-1)!.key, 'other');
+  assert.equal(groupOf('cat:p1', g), 'cat:p1');
+  assert.equal(typeInGroup('cat:p1', 'land_registry', g), 'cat:p1');
+  assert.equal(isSensitive('cat:p1', g), false);
+  assert.equal(typeLabel('cat:p1', g), 'היתרים');
+  assert.equal(groupOf('cat:gone', g), 'other');
+});

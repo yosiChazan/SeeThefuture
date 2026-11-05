@@ -10,7 +10,8 @@ import { date } from '../lib/format';
 import { must, supabase } from '../lib/supabase';
 import type { Country } from '../lib/types';
 import { inViewer, viewerUrl } from '../lib/viewer';
-import { DOC_TYPE_HE as TYPE_HE, DOC_TYPE_OPTIONS, FILE_GROUPS, groupOf, isSensitive, typeInGroup, type FileGroup } from '../lib/fileGroups';
+import { docTypeOptions, groupOf, isSensitive, typeInGroup, typeLabel, type FileGroup } from '../lib/fileGroups';
+import { useFileGroups } from '../lib/fileCategories';
 import { docTypeFor, pathKey, skipReason } from '../lib/driveZip';
 
 // A property's files in groups with previews (SPEC decisions 102, 104, 106): purchase and
@@ -21,7 +22,6 @@ import { docTypeFor, pathKey, skipReason } from '../lib/driveZip';
 
 interface Doc { id: string; doc_type: string; storage_path: string; sensitive: boolean; file_name: string | null; uploaded_at: string }
 
-const GROUPS = FILE_GROUPS;
 const isImage = (d: Doc) => /\.(jpe?g|png|webp|gif|heic)$/i.test(d.file_name ?? d.storage_path);
 const isDoc = (d: Doc) => inViewer(d.file_name ?? d.storage_path);
 const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
@@ -72,10 +72,11 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
   const [zipDest, setZipDest] = useState<string>('auto');
   const [zipProgress, setZipProgress] = useState<{ done: number; total: number; added: number; existed: number; failed: string[] } | null>(null);
   const canEdit = access.canEdit(country);
+  const GROUPS = useFileGroups();
 
   const all = docs.data ?? [];
-  const group = GROUPS.find((g) => g.key === tab)!;
-  const inGroup = (g: FileGroup) => all.filter((d) => groupOf(d.doc_type) === g.key);
+  const group = GROUPS.find((g) => g.key === tab) ?? GROUPS[0];
+  const inGroup = (g: FileGroup) => all.filter((d) => groupOf(d.doc_type, GROUPS) === g.key);
   const shown = inGroup(group).slice(0, limit);
   const free = shown.filter((d) => !d.sensitive);
   const thumbs = useThumbs(free);
@@ -129,11 +130,11 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
     for (const f of zip!.files) {
       const fileName = f.path.split('/').pop()!;
       const guessed = docTypeFor(f.path);
-      const type = zipDest === 'auto' ? guessed : typeInGroup(zipDest as FileGroup['key'], guessed);
+      const type = zipDest === 'auto' ? guessed : typeInGroup(zipDest, guessed, GROUPS);
       const path = `${country}/property/${propertyId}/zip_${pathKey(f.path)}_${safeName(fileName)}`;
       const id = crypto.randomUUID();
       const row = await supabase.from('documents').insert({ id, entity_type: 'property', entity_id: propertyId, country_code: country, doc_type: type,
-        storage_path: path, sensitive: isSensitive(type), file_name: fileName, source: `zip:${f.path}`.slice(0, 500) });
+        storage_path: path, sensitive: isSensitive(type, GROUPS), file_name: fileName, source: `zip:${f.path}`.slice(0, 500) });
       if (row.error?.code === '23505') state.existed++;
       else if (row.error) state.failed.push(`${f.path}: ${row.error.message}`);
       else {
@@ -192,7 +193,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
                   </Card.Section>
                   <Text size="xs" mt={6} lineClamp={1} dir="auto">{d.file_name ?? d.storage_path.split('/').pop()}</Text>
                   <Group gap={4} justify="space-between">
-                    <Badge size="xs" variant="light">{TYPE_HE[d.doc_type] ?? d.doc_type}</Badge>
+                    <Badge size="xs" variant="light">{typeLabel(d.doc_type, GROUPS)}</Badge>
                     <Group gap={2} wrap="nowrap">
                       <Text size="xs" c="dimmed">{date(d.uploaded_at.slice(0, 10))}</Text>
                       {canEdit && <ActionIcon size="xs" variant="subtle" color="red" aria-label="מחיקה" onClick={(e) => { e.stopPropagation(); remove(d); }}><IconTrash size={12} /></ActionIcon>}
@@ -224,14 +225,14 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
               </Group>
             )}
             <Group justify="space-between">
-              {canEdit ? <Select size="xs" w={240} label="סוג (קובע את הלשונית)" data={DOC_TYPE_OPTIONS} value={viewing.doc.doc_type} allowDeselect={false}
+              {canEdit ? <Select size="xs" w={240} label="סוג (קובע את הלשונית)" data={docTypeOptions(GROUPS)} value={viewing.doc.doc_type} allowDeselect={false}
                 onChange={async (t) => {
                   if (!t || t === viewing.doc.doc_type) return;
                   // A file moved to photos or plans stops being sensitive, and back.
-                  const r = await supabase.from('documents').update({ doc_type: t, sensitive: isSensitive(t) }).eq('id', viewing.doc.id);
+                  const r = await supabase.from('documents').update({ doc_type: t, sensitive: isSensitive(t, GROUPS) }).eq('id', viewing.doc.id);
                   if (r.error) { notifications.show({ color: 'red', message: r.error.message }); return; }
-                  notifications.show({ color: 'teal', message: `סומן כ${TYPE_HE[t] ?? t}` });
-                  setViewing({ ...viewing, doc: { ...viewing.doc, doc_type: t, sensitive: isSensitive(t) } });
+                  notifications.show({ color: 'teal', message: `סומן כ${typeLabel(t, GROUPS)}` });
+                  setViewing({ ...viewing, doc: { ...viewing.doc, doc_type: t, sensitive: isSensitive(t, GROUPS) } });
                   await qc.invalidateQueries({ queryKey: key });
                 }} /> : <span />}
               <Button component="a" href={isDoc(viewing.doc) ? viewerUrl(viewing.url) : viewing.url} target="_blank" rel="noopener noreferrer" variant="light" leftSection={<IconExternalLink size={14} />}>פתיחה בלשונית חדשה</Button></Group>
@@ -270,7 +271,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
           <Stack>
             <FileInput label="קבצים" multiple required value={files} onChange={setFiles} placeholder="אפשר לבחור כמה"
               accept={group.key === 'photos' ? 'image/*' : 'image/*,application/pdf,.doc,.docx,.xls,.xlsx'} leftSection={<IconUpload size={16} />} />
-            <Text size="xs" c="dimmed">{group.sensitive ? `יישמרו כ"${TYPE_HE[group.uploadType]}" ורגישים; את הסוג משנים בלחיצה על הקובץ.` : 'לא רגישים: כל מי שרואה את הנכס יראה אותם.'}</Text>
+            <Text size="xs" c="dimmed">{group.sensitive ? `יישמרו כ"${typeLabel(group.uploadType, GROUPS)}" ורגישים; את הסוג משנים בלחיצה על הקובץ.` : 'לא רגישים: כל מי שרואה את הנכס יראה אותם.'}</Text>
             {error && <Alert color="red">{error}</Alert>}
             <Group justify="flex-end"><Button variant="default" onClick={() => setAdding(false)}>ביטול</Button><Button onClick={upload} loading={busy} disabled={!files.length}>הוספה</Button></Group>
           </Stack>
