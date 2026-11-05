@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, FileInput, Group, Image, Modal, Paper, SimpleGrid, Stack, Tabs, Text, Title } from '@mantine/core';
+import { Alert, Badge, Button, Card, FileInput, Group, Image, Modal, Paper, Select, SimpleGrid, Stack, Tabs, Text, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconExternalLink, IconFileText, IconLock, IconUpload } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,24 +7,16 @@ import { useAccess } from '../lib/access';
 import { date } from '../lib/format';
 import { must, supabase } from '../lib/supabase';
 import type { Country } from '../lib/types';
+import { DOC_TYPE_HE as TYPE_HE, DOC_TYPE_OPTIONS, FILE_GROUPS, groupOf, isSensitive, type FileGroup } from '../lib/fileGroups';
 
-// A property's files in three groups with previews (SPEC decision 102): purchase and
-// ownership documents, photos, and floor plans. Photos and plans are not sensitive and
+// A property's files in four groups with previews (SPEC decisions 102, 104): purchase and
+// ownership documents, photos, floor plans, and every other document. Photos and plans are not sensitive and
 // show at once; a purchase document is sensitive, so it previews only when opened, and
 // every opening is logged (as for any document).
 
 interface Doc { id: string; doc_type: string; storage_path: string; sensitive: boolean; file_name: string | null; uploaded_at: string }
 
-export const PURCHASE_TYPES = ['purchase_contract', 'land_registry', 'land_book', 'caveat', 'poa', 'payment_proof', 'e9'];
-const GROUPS = [
-  { key: 'purchase', label: 'מסמכי רכישה ובעלות', types: PURCHASE_TYPES, uploadType: 'purchase_contract', sensitive: true },
-  { key: 'photos', label: 'תמונות', types: ['photo'], uploadType: 'photo', sensitive: false },
-  { key: 'plans', label: 'שרטוט', types: ['floor_plan'], uploadType: 'floor_plan', sensitive: false },
-] as const;
-const TYPE_HE: Record<string, string> = {
-  purchase_contract: 'חוזה רכישה', land_registry: 'נסח טאבו', land_book: 'Land book', caveat: 'הערת אזהרה', poa: 'ייפוי כוח',
-  payment_proof: 'הוכחת תשלום', e9: 'E9', photo: 'תמונה', floor_plan: 'שרטוט',
-};
+const GROUPS = FILE_GROUPS;
 const isImage = (d: Doc) => /\.(jpe?g|png|webp|gif|heic)$/i.test(d.file_name ?? d.storage_path);
 const isPdf = (d: Doc) => /\.pdf$/i.test(d.file_name ?? d.storage_path);
 const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
@@ -70,7 +62,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
 
   const all = docs.data ?? [];
   const group = GROUPS.find((g) => g.key === tab)!;
-  const inGroup = (g: (typeof GROUPS)[number]) => all.filter((d) => (g.types as readonly string[]).includes(d.doc_type));
+  const inGroup = (g: FileGroup) => all.filter((d) => groupOf(d.doc_type) === g.key);
   const shown = inGroup(group).slice(0, limit);
   const free = shown.filter((d) => !d.sensitive);
   const thumbs = useThumbs(free);
@@ -133,7 +125,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
           {inGroup(group).length > limit && <Button mt="sm" variant="subtle" size="xs" onClick={() => setLimit((n) => n + PAGE)}>עוד ({inGroup(group).length - limit})</Button>}
         </>
       )}
-      {tab === 'purchase' && <Text size="xs" c="dimmed" mt="xs">מסמכי רכישה הם רגישים: התצוגה נפתחת בלחיצה, וכל פתיחה נרשמת ביומן.</Text>}
+      {group.sensitive && <Text size="xs" c="dimmed" mt="xs">המסמכים כאן רגישים: התצוגה נפתחת בלחיצה, וכל פתיחה נרשמת ביומן.</Text>}
 
       {viewing && (
         <Modal opened onClose={() => setViewing(null)} size="xl" title={viewing.doc.file_name ?? 'קובץ'}>
@@ -141,7 +133,18 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
             {isImage(viewing.doc) ? <Image src={viewing.url} fit="contain" mah="75vh" alt="" />
               : isPdf(viewing.doc) ? <iframe src={viewing.url} title="" style={{ width: '100%', height: '75vh', border: 0 }} />
               : <Text size="sm">אין תצוגה מקדימה לסוג הקובץ הזה.</Text>}
-            <Group justify="flex-end"><Button component="a" href={viewing.url} target="_blank" rel="noopener noreferrer" variant="light" leftSection={<IconExternalLink size={14} />}>פתיחה בלשונית חדשה</Button></Group>
+            <Group justify="space-between">
+              {access.canEdit(country) ? <Select size="xs" w={240} label="סוג (קובע את הלשונית)" data={DOC_TYPE_OPTIONS} value={viewing.doc.doc_type} allowDeselect={false}
+                onChange={async (t) => {
+                  if (!t || t === viewing.doc.doc_type) return;
+                  // A file moved to photos or plans stops being sensitive, and back.
+                  const r = await supabase.from('documents').update({ doc_type: t, sensitive: isSensitive(t) }).eq('id', viewing.doc.id);
+                  if (r.error) { notifications.show({ color: 'red', message: r.error.message }); return; }
+                  notifications.show({ color: 'teal', message: `סומן כ${TYPE_HE[t] ?? t}` });
+                  setViewing({ ...viewing, doc: { ...viewing.doc, doc_type: t, sensitive: isSensitive(t) } });
+                  await qc.invalidateQueries({ queryKey: key });
+                }} /> : <span />}
+              <Button component="a" href={viewing.url} target="_blank" rel="noopener noreferrer" variant="light" leftSection={<IconExternalLink size={14} />}>פתיחה בלשונית חדשה</Button></Group>
           </Stack>
         </Modal>
       )}
@@ -151,7 +154,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
           <Stack>
             <FileInput label="קבצים" multiple required value={files} onChange={setFiles} placeholder="אפשר לבחור כמה"
               accept={group.key === 'photos' ? 'image/*' : 'image/*,application/pdf'} leftSection={<IconUpload size={16} />} />
-            <Text size="xs" c="dimmed">{group.sensitive ? 'יישמרו כ"חוזה רכישה" ורגישים; את הסוג אפשר לשנות בטבלת מסמכי הנכס.' : 'לא רגישים: כל מי שרואה את הנכס יראה אותם.'}</Text>
+            <Text size="xs" c="dimmed">{group.sensitive ? `יישמרו כ"${TYPE_HE[group.uploadType]}" ורגישים; את הסוג משנים בלחיצה על הקובץ.` : 'לא רגישים: כל מי שרואה את הנכס יראה אותם.'}</Text>
             {error && <Alert color="red">{error}</Alert>}
             <Group justify="flex-end"><Button variant="default" onClick={() => setAdding(false)}>ביטול</Button><Button onClick={upload} loading={busy} disabled={!files.length}>הוספה</Button></Group>
           </Stack>
