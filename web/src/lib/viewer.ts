@@ -4,7 +4,7 @@ import { supabase } from './supabase';
 // decision 105). The viewer reads the file through a temporary signed link (10 minutes);
 // images and other files open as they are.
 
-const VIEWABLE = /\.(pdf|docx?|xlsx?|pptx?|rtf|odt)$/i;
+const VIEWABLE = /\.(pdf|docx?|docm|xlsx?|xlsm|xlsb|csv|ods|pptx?|pps|odp|rtf|odt|txt)$/i;
 export const inViewer = (name: string) => VIEWABLE.test(name);
 export const viewerUrl = (signedUrl: string, embedded = false) =>
   `https://docs.google.com/viewer?url=${encodeURIComponent(signedUrl)}${embedded ? '&embedded=true' : ''}`;

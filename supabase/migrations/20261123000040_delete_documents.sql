@@ -10,7 +10,9 @@ alter table app.charges add constraint charges_document_id_fkey
 do $$
 begin
   if exists (select 1 from pg_namespace where nspname = 'storage') then
-    create policy documents_delete on storage.objects for delete to authenticated
+    -- documents_delete (migration 21) lets an admin remove a file left without a row; this one
+    -- removes a file together with its row. Policies add up.
+    create policy documents_delete_with_row on storage.objects for delete to authenticated
       using (bucket_id = 'documents' and app.mfa_verified()
              and exists (select 1 from app.documents d where d.storage_path = name
                          and app.can_edit_country(d.country_code)
