@@ -1,5 +1,8 @@
-import { Anchor, Badge, Group, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Group, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
+import { IconReceipt } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
 import { useMemo, useState } from 'react';
 import { date, money } from '../lib/format';
 import { usePropertyCharges, usePropertyServices, type ChargeRow } from '../lib/queries';
@@ -41,6 +44,16 @@ export interface ChargeWithProperty extends ChargeRow { propertyTitle?: string; 
 
 // Charges (bills), newest first, filtered by kind, year and, for a client, property
 // (SPEC decisions 71, 74). History only: not counted in the account ledger.
+// The proof of a payment (Greece, decision 94): opened like any document, the opening logged.
+async function openProof(id: string) {
+  const doc = await supabase.from('documents').select('storage_path').eq('id', id).maybeSingle();
+  if (doc.error || !doc.data) { notifications.show({ color: 'red', message: doc.error?.message ?? 'אין הרשאה למסמך' }); return; }
+  const log = await supabase.rpc('log_document_access', { doc: id });
+  if (log.error) { notifications.show({ color: 'red', message: log.error.message }); return; }
+  const { data, error } = await supabase.storage.from('documents').createSignedUrl(doc.data.storage_path, 60);
+  if (error) notifications.show({ color: 'red', message: error.message }); else window.open(data.signedUrl, '_blank');
+}
+
 export function ChargesTable({ rows: data, title = 'חיובים', note }: { rows: ChargeWithProperty[]; title?: string; note?: string }) {
   const [kind, setKind] = useState('all');
   const [year, setYear] = useState<string | null>(null);
@@ -75,7 +88,10 @@ export function ChargesTable({ rows: data, title = 'חיובים', note }: { row
                   <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(c.amount, c.currency)}</Table.Td>
                   <Table.Td>{c.payer === 'owner' ? 'בעלים' : 'שוכר'}</Table.Td>
                   <Table.Td>{CHARGE_STATUS_HE[c.status] ?? c.status}</Table.Td>
-                  <Table.Td><Text size="xs" c="dimmed" lineClamp={2} style={{ whiteSpace: 'pre-wrap' }}>{c.notes}</Text></Table.Td>
+                  <Table.Td><Group gap={4} wrap="nowrap" align="flex-start">
+                    {c.document_id && <ActionIcon size="sm" variant="subtle" title="הוכחת תשלום" onClick={() => openProof(c.document_id!)}><IconReceipt size={14} /></ActionIcon>}
+                    <Text size="xs" c="dimmed" lineClamp={2} style={{ whiteSpace: 'pre-wrap' }}>{c.notes}</Text>
+                  </Group></Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>

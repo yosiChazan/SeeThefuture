@@ -225,7 +225,7 @@ export function usePurchasePayments(propertyId: string) {
 
 // A property's services and its charges history (SPEC decision 71).
 export interface ServiceRow { id: string; kind: string; provider: string | null; client_code: string | null; status: string | null; deadline: string | null; notes: string | null }
-export interface ChargeRow { id: string; period: string; kind: string; amount: number; currency: Currency; due_date: string | null; payer: string; status: string; notes: string | null }
+export interface ChargeRow { id: string; period: string; kind: string; amount: number; currency: Currency; due_date: string | null; payer: string; status: string; notes: string | null; document_id?: string | null }
 export function usePropertyServices(propertyId: string) {
   return useQuery({
     queryKey: ['services', propertyId],
@@ -238,7 +238,7 @@ export function usePropertyCharges(propertyId: string) {
     queryFn: async () => {
       const out: ChargeRow[] = [];
       for (let from = 0; ; from += 1000) {
-        const page = must(await supabase.from('charges').select('id, period, kind, amount, currency, due_date, payer, status, notes')
+        const page = must(await supabase.from('charges').select('id, period, kind, amount, currency, due_date, payer, status, notes, document_id')
           .eq('property_id', propertyId).order('period', { ascending: false }).order('kind').range(from, from + 999)) as ChargeRow[];
         out.push(...page);
         if (page.length < 1000) return out;
@@ -260,7 +260,7 @@ export function useClientPropertyActivity(partyIds: string | string[]) {
       if (!ids.length) return { charges: [] as (ChargeRow & { property_id: string })[], deals: [] as (DealRow & { property_id: string })[], payments: [] as PurchasePaymentRow[], owned };
       const charges: (ChargeRow & { property_id: string })[] = [];
       for (let from = 0; ; from += 1000) {
-        const page = must(await supabase.from('charges').select('id, property_id, period, kind, amount, currency, due_date, payer, status, notes')
+        const page = must(await supabase.from('charges').select('id, property_id, period, kind, amount, currency, due_date, payer, status, notes, document_id')
           .in('property_id', ids).order('period', { ascending: false }).order('kind').range(from, from + 999)) as (ChargeRow & { property_id: string })[];
         charges.push(...page);
         if (page.length < 1000) break;
