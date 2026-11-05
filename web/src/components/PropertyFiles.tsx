@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Badge, Button, Card, FileInput, Group, Image, Modal, Paper, Progress, Select, SimpleGrid, Stack, Tabs, Text, TextInput, Title } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Button, Card, FileInput, Group, Image, Modal, Paper, Progress, Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput, Title } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { unzip, type Unzipped } from 'fflate';
 import { notifications } from '@mantine/notifications';
@@ -12,7 +12,7 @@ import type { Country } from '../lib/types';
 import { inViewer, viewerUrl } from '../lib/viewer';
 import { docTypeOptions, groupOf, isSensitive, typeInGroup, typeLabel, type FileGroup } from '../lib/fileGroups';
 import { useFileGroups } from '../lib/fileCategories';
-import { docTypeFor, pathKey, skipReason } from '../lib/driveZip';
+import { docTypeFor, groupByFolder, pathKey, skipReason } from '../lib/driveZip';
 
 // A property's files in groups with previews (SPEC decisions 102, 104, 106): purchase and
 // ownership documents, receipts, photos, floor plans, and every other document. Files are
@@ -68,8 +68,8 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [zipOpen, setZipOpen] = useState(false);
-  const [zip, setZip] = useState<{ files: { path: string; bytes: Uint8Array }[]; skipped: { path: string; why: string }[] } | null>(null);
-  const [zipDest, setZipDest] = useState<string>('auto');
+  // The ZIP's folders, each with where its files go ('auto' or a group); a file may differ.
+  const [zip, setZip] = useState<{ bytes: Map<string, Uint8Array>; folders: { name: string; files: string[]; dest: string; perFile: Record<string, string> }[]; skipped: { path: string; why: string }[] } | null>(null);
   const [zipProgress, setZipProgress] = useState<{ done: number; total: number; added: number; existed: number; failed: string[] } | null>(null);
   const canEdit = access.canEdit(country);
   const GROUPS = useFileGroups();
@@ -115,31 +115,45 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
     setZip(null); setZipProgress(null);
     if (!f) return;
     const out = await new Promise<Unzipped>((ok, bad) => f.arrayBuffer().then((b) => unzip(new Uint8Array(b), (e, d) => (e ? bad(e) : ok(d)))));
-    const files: { path: string; bytes: Uint8Array }[] = [], skipped: { path: string; why: string }[] = [];
-    for (const [path, bytes] of Object.entries(out)) {
+    const bytes = new Map<string, Uint8Array>(), skipped: { path: string; why: string }[] = [];
+    for (const [path, b] of Object.entries(out)) {
       if (path.endsWith('/')) continue;
-      const why = skipReason({ path, size: bytes.length });
-      if (why) skipped.push({ path, why }); else files.push({ path, bytes });
+      const why = skipReason({ path, size: b.length });
+      if (why) skipped.push({ path, why }); else bytes.set(path, b);
     }
-    setZip({ files, skipped });
+    // Folders under the ZIP's own root folder ("דירה 5/תשלומי רכישה/…" → "תשלומי רכישה").
+    const groups = groupByFolder([...bytes.keys()].map((path) => ({ path, size: 0 })));
+    const original = [...bytes.keys()];
+    const folders = [...groups].map(([name, list]) => ({
+      name, dest: 'auto', perFile: {} as Record<string, string>,
+      files: list.map((x) => original.find((k) => k === x.path || k.endsWith(`/${x.path}`))!),
+    }));
+    setZip({ bytes, folders, skipped });
   }
+  const zipType = (folder: { dest: string; perFile: Record<string, string> }, path: string) => {
+    const dest = folder.perFile[path] ?? folder.dest;
+    const guessed = docTypeFor(path);
+    return dest === 'auto' ? guessed : typeInGroup(dest, guessed, GROUPS);
+  };
+  const setFolder = (i: number, patch: Partial<NonNullable<typeof zip>['folders'][number]>) =>
+    setZip((z) => z && { ...z, folders: z.folders.map((f, j) => (j === i ? { ...f, ...patch } : f)) });
+  const zipTotal = zip?.folders.reduce((a, f) => a + f.files.length, 0) ?? 0;
 
   async function uploadZip() {
-    const state = { done: 0, total: zip!.files.length, added: 0, existed: 0, failed: [] as string[] };
+    const state = { done: 0, total: zipTotal, added: 0, existed: 0, failed: [] as string[] };
     setZipProgress({ ...state });
-    for (const f of zip!.files) {
-      const fileName = f.path.split('/').pop()!;
-      const guessed = docTypeFor(f.path);
-      const type = zipDest === 'auto' ? guessed : typeInGroup(zipDest, guessed, GROUPS);
-      const path = `${country}/property/${propertyId}/zip_${pathKey(f.path)}_${safeName(fileName)}`;
+    for (const folder of zip!.folders) for (const p of folder.files) {
+      const fileName = p.split('/').pop()!;
+      const type = zipType(folder, p);
+      const path = `${country}/property/${propertyId}/zip_${pathKey(p)}_${safeName(fileName)}`;
       const id = crypto.randomUUID();
       const row = await supabase.from('documents').insert({ id, entity_type: 'property', entity_id: propertyId, country_code: country, doc_type: type,
-        storage_path: path, sensitive: isSensitive(type, GROUPS), file_name: fileName, source: `zip:${f.path}`.slice(0, 500) });
+        storage_path: path, sensitive: isSensitive(type, GROUPS), file_name: fileName, source: `zip:${p}`.slice(0, 500) });
       if (row.error?.code === '23505') state.existed++;
-      else if (row.error) state.failed.push(`${f.path}: ${row.error.message}`);
+      else if (row.error) state.failed.push(`${p}: ${row.error.message}`);
       else {
-        const up = await supabase.storage.from('documents').upload(path, new Blob([f.bytes as Uint8Array<ArrayBuffer>]), { upsert: true, contentType: MIME[fileName.split('.').pop()?.toLowerCase() ?? ''] });
-        if (up.error) { await supabase.from('documents').delete().eq('id', id); state.failed.push(`${f.path}: ${up.error.message}`); } else state.added++;
+        const up = await supabase.storage.from('documents').upload(path, new Blob([zip!.bytes.get(p)! as Uint8Array<ArrayBuffer>]), { upsert: true, contentType: MIME[fileName.split('.').pop()?.toLowerCase() ?? ''] });
+        if (up.error) { await supabase.from('documents').delete().eq('id', id); state.failed.push(`${p}: ${up.error.message}`); } else state.added++;
       }
       state.done++;
       setZipProgress({ ...state });
@@ -169,7 +183,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
         <Title order={4}>קבצים</Title>
         {canEdit && (
           <Group gap="xs">
-            <Button size="xs" variant="default" leftSection={<IconFileZip size={14} />} onClick={() => { setZipOpen(true); setZipDest(tab); }}>העלאת ZIP</Button>
+            <Button size="xs" variant="default" leftSection={<IconFileZip size={14} />} onClick={() => setZipOpen(true)}>העלאת ZIP</Button>
             <Button size="xs" variant="light" leftSection={<IconUpload size={14} />} onClick={() => setAdding(true)}>הוספה ל"{group.label}"</Button>
           </Group>
         )}
@@ -241,16 +255,43 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
       )}
 
       {zipOpen && (
-        <Modal opened onClose={() => setZipOpen(false)} title="העלאת ZIP לנכס הזה" size="lg">
+        <Modal opened onClose={() => setZipOpen(false)} title="העלאת ZIP לנכס הזה" size="xl">
           <Stack>
             <FileInput label="קובץ ZIP" accept=".zip" placeholder="בחירת קובץ" leftSection={<IconFileZip size={16} />}
               onChange={(f) => readZip(f).catch((e) => notifications.show({ color: 'red', message: `לא הצלחתי לפתוח: ${(e as Error).message}` }))} disabled={!!zipProgress && zipProgress.done < zipProgress.total} />
-            <Select label="לאיזו קטגוריה" allowDeselect={false} value={zipDest} onChange={(v) => v && setZipDest(v)}
-              data={[{ value: 'auto', label: 'אוטומטי (לפי שם הקובץ)' }, ...GROUPS.map((g) => ({ value: g.key, label: g.label }))]} />
-            {zip && (
-              <Text size="sm">{zip.files.length} קבצים יועלו{zip.skipped.length ? ` · ${zip.skipped.length} לא (פרטי בנק, סיסמאות, סרטונים, גדולים מ-50MB)` : ''}.
-                {zipDest !== 'auto' && ' בקטגוריה שנבחרה, קובץ שהשם שלו מתאים לסוג מסוים בה (למשל נסח) יישמר בסוג הזה.'}</Text>
-            )}
+            {zip && (() => {
+              const dest = [{ value: 'auto', label: 'אוטומטי (לפי השם)' }, ...GROUPS.map((g) => ({ value: g.key, label: g.label }))];
+              return (
+                <Stack gap="xs">
+                  <Group justify="space-between">
+                    <Text size="sm">{zip.folders.length} תיקיות · {zipTotal} קבצים{zip.skipped.length ? ` · ${zip.skipped.length} לא יועלו (פרטי בנק, סיסמאות, סרטונים, מעל 50MB)` : ''}</Text>
+                    <Select size="xs" w={200} placeholder="לאן, לכל התיקיות" data={dest} value={null}
+                      onChange={(v) => v && setZip({ ...zip, folders: zip.folders.map((f) => ({ ...f, dest: v, perFile: {} })) })} />
+                  </Group>
+                  <Table striped verticalSpacing={4}>
+                    <Table.Thead><Table.Tr><Table.Th>תיקייה</Table.Th><Table.Th>לאן</Table.Th><Table.Th>קבצים</Table.Th></Table.Tr></Table.Thead>
+                    <Table.Tbody>{zip.folders.map((f, i) => (
+                      <Table.Tr key={f.name}>
+                        <Table.Td><Text size="sm">{f.name}</Text></Table.Td>
+                        <Table.Td><Select size="xs" w={190} data={dest} value={f.dest} allowDeselect={false} onChange={(v) => v && setFolder(i, { dest: v, perFile: {} })} /></Table.Td>
+                        <Table.Td>
+                          <details>
+                            <summary><Text span size="sm">{f.files.length}</Text> <Text span size="xs" c="dimmed">{[...new Set(f.files.map((p) => typeLabel(zipType(f, p), GROUPS)))].join(', ')}</Text></summary>
+                            <Stack gap={4} mt={6}>{f.files.map((p) => (
+                              <Group key={p} gap={6} wrap="nowrap">
+                                <Text size="xs" style={{ flex: 1, minWidth: 0 }} truncate title={p}>{p.split('/').pop()}</Text>
+                                <Select size="xs" w={170} data={dest} value={f.perFile[p] ?? f.dest} allowDeselect={false} onChange={(v) => v && setFolder(i, { perFile: { ...f.perFile, [p]: v } })} />
+                              </Group>
+                            ))}</Stack>
+                          </details>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}</Table.Tbody>
+                  </Table>
+                  <Text size="xs" c="dimmed">בקטגוריה שנבחרה, קובץ שהשם שלו מתאים לסוג מסוים בה (למשל נסח) יישמר בסוג הזה.</Text>
+                </Stack>
+              );
+            })()}
             {zipProgress && (
               <Stack gap={4}>
                 <Progress value={zipProgress.total ? (zipProgress.done / zipProgress.total) * 100 : 100} />
@@ -260,7 +301,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
             )}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setZipOpen(false)}>סגירה</Button>
-              <Button onClick={uploadZip} disabled={!zip?.files.length || (!!zipProgress && zipProgress.done < zipProgress.total)}>העלאה</Button>
+              <Button onClick={uploadZip} disabled={!zipTotal || (!!zipProgress && zipProgress.done < zipProgress.total)}>העלאה</Button>
             </Group>
           </Stack>
         </Modal>
