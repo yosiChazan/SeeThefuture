@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAccess } from '../lib/access';
 import { COUNTRY_HE, date } from '../lib/format';
 import { must, supabase } from '../lib/supabase';
+import { documentLink } from '../lib/viewer';
 import type { Country } from '../lib/types';
 import { QueryState } from './common';
 
@@ -138,8 +139,8 @@ export function ClientDocuments({ partyId, countries = [] }: { partyId: string; 
   async function open(d: Doc) {
     const log = await supabase.rpc('log_document_access', { doc: d.id });
     if (log.error) { notifications.show({ color: 'red', message: log.error.message }); return; }
-    const { data, error } = await supabase.storage.from('documents').createSignedUrl(d.storage_path, 60);
-    if (error) notifications.show({ color: 'red', message: error.message }); else window.open(data.signedUrl, '_blank');
+    const link = await documentLink(d.storage_path, d.file_name);
+    if (link.error) notifications.show({ color: 'red', message: link.error }); else window.open(link.url, '_blank');
   }
 
   // Moving to "other" files a passport as an attachment; a power of attorney stays one.
