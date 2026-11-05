@@ -1,11 +1,12 @@
-import { Alert, Badge, Group, Loader, Paper, SegmentedControl, SimpleGrid, Stack, Table, Text, Title, Tooltip } from '@mantine/core';
+import { Alert, Anchor, Badge, Group, Loader, Paper, SegmentedControl, SimpleGrid, Stack, Table, Text, Title, Tooltip } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CountryFilter } from '../components/common';
-import { CATEGORY_HE, COUNTRY_HE, money, STATUS_HE } from '../lib/format';
+import { CATEGORY_HE, COUNTRY_HE, money, propertyTitle, STATUS_HE } from '../lib/format';
 import { useClients, useProperties } from '../lib/queries';
-import { byCity, expensesByCategory, monthly, type StatEntry } from '../lib/stats';
+import { byCity, change, expensesByCategory, monthly, quiet, trend, yearBefore, type StatEntry } from '../lib/stats';
 import { must, supabase } from '../lib/supabase';
 import type { Country, Currency } from '../lib/types';
 
@@ -31,6 +32,34 @@ function useLedger(from: string) {
     },
   });
 }
+
+// Open charges (not paid) and tenants' deposits held by managers (decision 97).
+function useOpen() {
+  return useQuery({
+    queryKey: ['stats-open'],
+    queryFn: async () => {
+      const charges = must(await supabase.from('charges').select('id, property_id, period, kind, amount, currency, status, notes').in('status', ['due', 'partial']).order('period')) as
+        { id: string; property_id: string; period: string; kind: string; amount: number; currency: string; status: string; notes: string | null }[];
+      const deposits: { amount: number; currency: string; accounts: { id: string; holder: { display_name: string } | null } }[] = [];
+      for (let at = 0; ; at += 1000) {
+        const page = must(await supabase.from('entries')
+          .select('amount, currency, accounts!inner(id, kind, holder:parties!accounts_holder_party_id_fkey(display_name)), transactions!inner(status)')
+          .eq('accounts.kind', 'deposit_held').eq('transactions.status', 'posted').order('id').range(at, at + 999)) as unknown as typeof deposits;
+        deposits.push(...page);
+        if (page.length < 1000) break;
+      }
+      const held = new Map<string, { holder: string; currency: string; amount: number; accounts: Set<string> }>();
+      for (const d of deposits) {
+        const k = `${d.accounts.holder?.display_name ?? '?'}|${d.currency}`;
+        const h = held.get(k) ?? held.set(k, { holder: d.accounts.holder?.display_name ?? 'לא ידוע', currency: d.currency, amount: 0, accounts: new Set() }).get(k)!;
+        h.amount += Number(d.amount); h.accounts.add(d.accounts.id);
+      }
+      return { charges, held: [...held.values()].filter((h) => Math.abs(h.amount) >= 0.01) };
+    },
+  });
+}
+
+const pct = (x: number | null) => (x === null ? '—' : `${x > 0 ? '+' : ''}${x}%`);
 
 function Tile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -102,9 +131,13 @@ export function Stats() {
   const [months, setMonths] = useState('12');
   const [country, setCountry] = useState<Country | null>(null);
   const from = dayjs().startOf('month').subtract(Number(months) - 1, 'month').format('YYYY-MM-01');
+  // A year more than shown: for "a year earlier" and for apartments that went quiet.
+  const loadFrom = dayjs(from).subtract(12, 'month').format('YYYY-MM-01');
+  const [quietN, setQuietN] = useState('2');
+  const open = useOpen();
   const props = useProperties();
   const clients = useClients();
-  const ledger = useLedger(from);
+  const ledger = useLedger(loadFrom);
 
   const inCountry = useMemo(() => (props.data ?? []).filter((p) => !country || p.country_code === country), [props.data, country]);
   const active = inCountry.filter((p) => p.status !== 'sold');
@@ -116,8 +149,13 @@ export function Stats() {
 
   const cityOf = useMemo(() => new Map((props.data ?? []).map((p) => [p.id, p.building.city.name_he])), [props.data]);
   const unitsIn = useMemo(() => { const m = new Map<string, number>(); for (const p of active) m.set(p.building.city.name_he, (m.get(p.building.city.name_he) ?? 0) + 1); return m; }, [active]);
-  const entries = useMemo(() => (ledger.data ?? []).filter((e) => !country || e.country === country), [ledger.data, country]);
+  const all = useMemo(() => (ledger.data ?? []).filter((e) => !country || e.country === country), [ledger.data, country]);
+  const entries = useMemo(() => all.filter((e) => e.period >= from), [all, from]);
   const perMonth = useMemo(() => monthly(entries), [entries]);
+  const perMonthAll = useMemo(() => monthly(all), [all]);
+  const titleOf = useMemo(() => new Map((props.data ?? []).map((p) => [p.id, p])), [props.data]);
+  const quietRows = useMemo(() => quiet(all.filter((e) => e.period < dayjs().format('YYYY-MM-01')), active.map((p) => ({ id: p.id, country: p.country_code, expected: p.status === 'rented' || p.status === 'short_term' })), Number(quietN)), [all, active, quietN]);
+  const openCharges = (open.data?.charges ?? []).filter((c) => !country || titleOf.get(c.property_id)?.country_code === country);
   const cities = useMemo(() => byCity(entries, cityOf, unitsIn), [entries, cityOf, unitsIn]);
   const byStatus = Object.entries(STATUS_HE).map(([s, label]) => [label, inCountry.filter((p) => p.status === s).length] as const).filter(([, n]) => n);
   const byCountry = (['UA', 'RO', 'GE', 'GR'] as Country[]).map((c) => [c, (props.data ?? []).filter((p) => p.country_code === c && p.status !== 'sold').length] as const);
@@ -176,16 +214,35 @@ export function Stats() {
               <Tile label="נטו ללקוחות" value={money(tot.net, currency)} hint={`ממוצע ${money(tot.net / rows.length, currency)} לחודש`} />
               <Tile label="ממוצע לדירה מניבה בחודש" value={money(cityRows.reduce((a, c) => a + c.gross, 0) / Math.max(1, cityRows.reduce((a, c) => a + c.earning * c.months, 0)), currency)} />
             </SimpleGrid>
+            {(() => {
+              const full = perMonthAll.get(cur) ?? [];
+              const t3 = trend(full, 3);
+              const tAll = trend(full.filter((r) => r.period <= rows[rows.length - 1].period), rows.length);
+              return (
+                <SimpleGrid cols={{ base: 1, sm: 2 }} mb="md">
+                  <Tile label="3 החודשים האחרונים מול אשתקד (ברוטו)" value={t3?.before ? pct(change(t3.now, t3.before)) : 'אין נתוני אשתקד'}
+                    hint={t3 ? `${money(t3.now, currency)}${t3.before ? ` מול ${money(t3.before, currency)}` : ''}` : undefined} />
+                  <Tile label={`כל הטווח (${rows.length} חודשים) מול אשתקד`} value={tAll?.before ? pct(change(tAll.now, tAll.before)) : 'אין נתוני אשתקד'}
+                    hint={tAll?.before ? `${money(tAll.now, currency)} מול ${money(tAll.before, currency)}` : 'ההשוואה מופיעה כשיש נתונים לאותם חודשים שנה קודם'} />
+                </SimpleGrid>
+              );
+            })()}
 
             <Group justify="space-between"><Title order={5}>לפי חודש</Title><Legend /></Group>
             <MonthChart rows={rows} currency={currency} />
             <Table.ScrollContainer minWidth={480} mt="sm">
               <Table striped>
-                <Table.Thead><Table.Tr><Table.Th>חודש</Table.Th><Table.Th>ברוטו</Table.Th><Table.Th>הוצאות</Table.Th><Table.Th>נטו</Table.Th></Table.Tr></Table.Thead>
-                <Table.Tbody>{[...rows].reverse().map((r) => (
-                  <Table.Tr key={r.period}><Table.Td>{dayjs(r.period).format('MM.YYYY')}</Table.Td><Table.Td>{money(r.gross, currency)}</Table.Td>
-                    <Table.Td>{money(r.expenses, currency)}</Table.Td><Table.Td fw={600}>{money(r.net, currency)}</Table.Td></Table.Tr>
-                ))}</Table.Tbody>
+                <Table.Thead><Table.Tr><Table.Th>חודש</Table.Th><Table.Th>ברוטו</Table.Th><Table.Th>הוצאות</Table.Th><Table.Th>נטו</Table.Th><Table.Th>ברוטו אשתקד</Table.Th><Table.Th>שינוי</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>{[...rows].reverse().map((r) => {
+                  const ly = (perMonthAll.get(cur) ?? []).find((x) => x.period === yearBefore(r.period));
+                  const ch = change(r.gross, ly?.gross);
+                  return (
+                    <Table.Tr key={r.period}><Table.Td>{dayjs(r.period).format('MM.YYYY')}</Table.Td><Table.Td>{money(r.gross, currency)}</Table.Td>
+                      <Table.Td>{money(r.expenses, currency)}</Table.Td><Table.Td fw={600}>{money(r.net, currency)}</Table.Td>
+                      <Table.Td c="dimmed">{ly ? money(ly.gross, currency) : '—'}</Table.Td>
+                      <Table.Td c={ch === null ? 'dimmed' : ch < 0 ? 'red' : 'teal'}>{pct(ch)}</Table.Td></Table.Tr>
+                  );
+                })}</Table.Tbody>
               </Table>
             </Table.ScrollContainer>
 
@@ -209,6 +266,73 @@ export function Stats() {
           </Paper>
         );
       })}
+
+      <Paper withBorder p="md">
+        <Group justify="space-between" mb="xs">
+          <Title order={3}>דירות שקטות</Title>
+          <SegmentedControl size="xs" value={quietN} onChange={setQuietN} data={[{ value: '2', label: 'חודשיים' }, { value: '3', label: '3 חודשים' }]} />
+        </Group>
+        <Text size="sm" c="dimmed" mb="sm">דירות מושכרות או בהשכרה קצרה בלי שום הכנסה ב-{quietN} החודשים האחרונים שיש עליהם נתונים במדינה שלהן (בלי החודש הנוכחי, שעוד לא דווח). מדינה בלי הכנסות שאושרו עוד לא נבדקת.</Text>
+        {!quietRows.windowEnd.size ? <Text size="sm" c="dimmed">אין עדיין הכנסות שאושרו לבדוק מולן.</Text> : (
+          <>
+            <Text size="sm" mb="xs">נבדק עד: {[...quietRows.windowEnd].map(([c, m]) => `${COUNTRY_HE[c as Country]} ${dayjs(m).format('MM.YYYY')}`).join(' · ')}</Text>
+            {!quietRows.rows.length ? <Badge color="teal" variant="light">אין דירות שקטות</Badge> : (
+              <Table.ScrollContainer minWidth={480} mah={360}>
+                <Table striped>
+                  <Table.Thead><Table.Tr><Table.Th>דירה</Table.Th><Table.Th>סטטוס</Table.Th><Table.Th>הכנסה אחרונה</Table.Th></Table.Tr></Table.Thead>
+                  <Table.Tbody>{quietRows.rows.map((q) => {
+                    const p = titleOf.get(q.id)!;
+                    return (
+                      <Table.Tr key={q.id}><Table.Td><Anchor component={Link} to={`/properties/${q.id}`} size="sm">{propertyTitle(p)}</Anchor></Table.Td>
+                        <Table.Td>{STATUS_HE[p.status]}</Table.Td><Table.Td>{q.lastIncome ? dayjs(q.lastIncome).format('MM.YYYY') : `אין ב-${Number(months) + 12} החודשים האחרונים`}</Table.Td></Table.Tr>
+                    );
+                  })}</Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+            )}
+          </>
+        )}
+      </Paper>
+
+      <Paper withBorder p="md">
+        <Title order={3} mb="xs">חובות ותשלומים פתוחים</Title>
+        {open.isLoading ? <Loader size="sm" /> : open.error ? <Alert color="red">{(open.error as Error).message}</Alert> : (
+          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
+            <Stack gap="xs">
+              <Title order={5}>חיובים שלא שולמו ({openCharges.length})</Title>
+              {!openCharges.length ? <Text size="sm" c="dimmed">אין</Text> : (
+                <>
+                  <Text size="sm">{[...openCharges.reduce((m, c) => m.set(c.currency, (m.get(c.currency) ?? 0) + Number(c.amount)), new Map<string, number>())].map(([cur, sum]) => money(sum, cur as Currency)).join(' · ')}</Text>
+                  <Table.ScrollContainer minWidth={420} mah={300}>
+                    <Table striped>
+                      <Table.Thead><Table.Tr><Table.Th>דירה</Table.Th><Table.Th>חודש</Table.Th><Table.Th>סכום</Table.Th></Table.Tr></Table.Thead>
+                      <Table.Tbody>{openCharges.map((c) => {
+                        const p = titleOf.get(c.property_id);
+                        return (
+                          <Table.Tr key={c.id}><Table.Td>{p ? <Anchor component={Link} to={`/properties/${c.property_id}`} size="sm">{propertyTitle(p)}</Anchor> : '—'}</Table.Td>
+                            <Table.Td>{dayjs(c.period).format('MM.YYYY')}</Table.Td><Table.Td>{money(Number(c.amount), c.currency as Currency)}</Table.Td></Table.Tr>
+                        );
+                      })}</Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                </>
+              )}
+            </Stack>
+            <Stack gap="xs">
+              <Title order={5}>פיקדונות של שוכרים שמוחזקים אצל מנהלים</Title>
+              {!open.data?.held.length ? <Text size="sm" c="dimmed">אין</Text> : (
+                <Table>
+                  <Table.Thead><Table.Tr><Table.Th>מנהל</Table.Th><Table.Th>חשבונות פיקדון</Table.Th><Table.Th>מוחזק</Table.Th></Table.Tr></Table.Thead>
+                  <Table.Tbody>{open.data.held.map((h) => (
+                    <Table.Tr key={h.holder + h.currency}><Table.Td>{h.holder}</Table.Td><Table.Td>{h.accounts.size}</Table.Td><Table.Td fw={600}>{money(h.amount, h.currency as Currency)}</Table.Td></Table.Tr>
+                  ))}</Table.Tbody>
+                </Table>
+              )}
+              <Text size="xs" c="dimmed">הפיקדון שייך לשוכר ויוחזר לו בסוף החוזה; הוא לא חלק מהיתרה של הלקוח.</Text>
+            </Stack>
+          </SimpleGrid>
+        )}
+      </Paper>
     </Stack>
   );
 }
