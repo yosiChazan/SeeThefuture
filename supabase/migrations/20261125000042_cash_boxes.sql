@@ -13,6 +13,8 @@ create table app.cash_boxes (
   -- partners). Their manager cash from approved reports counts as received, as does the
   -- rent held by the box's holder (Yarach's transfers reach Gershon). Nothing is entered twice.
   linked_manager_ids uuid[] not null default '{}',
+  -- The office's own box: fees taken from a sum a manager sent are mirrored into it.
+  is_office        boolean not null default false,
   notes            text,
   position         int not null default 100,
   created_at       timestamptz not null default now()
@@ -34,6 +36,8 @@ create table app.cash_movements (
   -- How a sum sent to the office was divided (decision 114): its parts, each to a client
   -- (posted, as above) or to the office as fees, point to it.
   parent_id    uuid references app.cash_movements on delete cascade,
+  -- The office box's copy of an office fee points to the fee; it goes when the fee goes.
+  mirror_of    uuid references app.cash_movements on delete cascade,
   created_at   timestamptz not null default now(),
   created_by   uuid default auth.uid()
 );
@@ -67,8 +71,8 @@ create trigger audit after insert or update or delete on app.cash_boxes for each
 create trigger audit after insert or update or delete on app.cash_movements for each row execute function app.audit();
 
 -- The two boxes there are today.
-insert into app.cash_boxes (name, country_code, holder_party_id, position, notes)
-values ('קופת המשרד', null, null, 10, null);
+insert into app.cash_boxes (name, country_code, holder_party_id, is_office, position, notes)
+values ('קופת המשרד', null, null, true, 10, 'כולל העמלות שהמשרד לקח מהכסף שהגיע מהמנהלים, שנרשמות בחלוקה בקופה שלהם');
 insert into app.cash_boxes (name, country_code, holder_party_id, linked_manager_ids, position, notes)
 select 'קופת גרשון', 'UA',
        (select holder_party_id from app.import_sources where adapter = 'gershon_utilities_xlsx'),
@@ -132,3 +136,28 @@ begin
     delete from app.transactions where id = any (ts) and status = 'draft';
   end if;
 end $$;
+
+-- An office fee in a division (decision 115) is also income in the office's box: the copy is
+-- written by the database, so finance of the manager's country (who may not write to the
+-- office box) records both at once; a change or removal of the fee follows.
+create function app.cash_mirror_office_fee() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare office uuid; src text;
+begin
+  if tg_op = 'DELETE' then return old; end if;   -- the copy goes by its foreign key
+  if new.kind <> 'office_fee' or new.mirror_of is not null then return new; end if;
+  select id into office from app.cash_boxes where is_office order by position limit 1;
+  if office is null or office = new.box_id then return new; end if;
+  select name into src from app.cash_boxes where id = new.box_id;
+  if tg_op = 'INSERT' then
+    insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, party_name, notes, mirror_of)
+    values (office, new.occurred_on, -new.amount, new.currency, 'income', 'עמלות מ' || src, new.notes, new.id);
+  else
+    update app.cash_movements set occurred_on = new.occurred_on, amount = -new.amount, currency = new.currency, notes = new.notes
+    where mirror_of = new.id;
+  end if;
+  return new;
+end $$;
+revoke all on function app.cash_mirror_office_fee() from public;
+create trigger mirror_office_fee after insert or update on app.cash_movements
+  for each row execute function app.cash_mirror_office_fee();

@@ -1041,6 +1041,8 @@ select app.cash_pay_client((select id from app.cash_boxes where country_code = '
 insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, parent_id, party_name)
   select id, '2026-10-20', -50, 'UAH', 'office_fee', '74000000-0000-0000-0000-000000000003', 'המשרד' from app.cash_boxes where country_code = 'UA';
 reset role;
+select pg_temp.check((select amount from app.cash_movements m join app.cash_boxes b on b.id = m.box_id where b.is_office and m.kind = 'income') = 50,
+  'an office fee is also income in the office''s box');
 select pg_temp.check((select count(*) from app.cash_movements where parent_id = '74000000-0000-0000-0000-000000000003') = 2
   and (select status from app.transactions t join app.cash_movements m on m.transaction_id = t.id where m.parent_id is not null) = 'posted',
   'a sum sent to the office is divided: a client paid (posted) and the office''s fees');

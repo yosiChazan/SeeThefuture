@@ -20,7 +20,7 @@ import { useAccess } from '../lib/access';
 // entered as a sum with a date, then divided: to clients (posted to their accounts) and to
 // the office's fees. What Gershon should hold = received − sent to us.
 
-interface Box { id: string; name: string; country_code: Country | null; holder_party_id: string | null; linked_manager_ids: string[]; notes: string | null; position: number }
+interface Box { id: string; name: string; country_code: Country | null; holder_party_id: string | null; linked_manager_ids: string[]; is_office: boolean; notes: string | null; position: number }
 const CURRENCIES: Currency[] = ['UAH', 'USD', 'EUR', 'ILS', 'RON', 'GEL'];
 
 function useBoxes() {
@@ -29,7 +29,7 @@ function useBoxes() {
 function useMovements(boxId: string | null) {
   return useQuery({
     queryKey: ['cash-movements', boxId], enabled: !!boxId,
-    queryFn: async () => must(await supabase.from('cash_movements').select('id, occurred_on, amount, currency, kind, party_id, party_name, notes, created_by, parent_id, transaction_id')
+    queryFn: async () => must(await supabase.from('cash_movements').select('id, occurred_on, amount, currency, kind, party_id, party_name, notes, created_by, parent_id, transaction_id, mirror_of')
       .eq('box_id', boxId!).order('occurred_on', { ascending: false }).order('created_at', { ascending: false })) as CashMovement[],
   });
 }
@@ -298,7 +298,7 @@ export function CashBoxes() {
             </Paper>
           ))}
 
-          <Paper withBorder p="md">
+          {!box.is_office && <Paper withBorder p="md">
             <Group justify="space-between" mb="sm">
               <Title order={4}>{linked ? 'מה גרשון העביר אלינו, ולאן זה הלך' : 'העברות למשרד'} ({sent.length})</Title>
               {canWrite && <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => setSending(true)}>{linked ? 'גרשון העביר אלינו' : 'העברה למשרד'}</Button>}
@@ -342,7 +342,7 @@ export function CashBoxes() {
                 })}
               </Stack>
             )}
-          </Paper>
+          </Paper>}
 
           <Paper withBorder p="md">
             <Group justify="space-between" mb="sm">
@@ -359,8 +359,8 @@ export function CashBoxes() {
                       <Table.Td><Badge variant="light" color={Number(m.amount) > 0 ? 'teal' : 'orange'}>{KIND_HE[m.kind] ?? m.kind}</Badge></Table.Td>
                       <Table.Td>{nameOf(m)}</Table.Td>
                       <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(m.amount) < 0 ? 'red' : undefined}>{money(Number(m.amount), cur(m.currency))}</Table.Td>
-                      <Table.Td><Text size="xs">{m.notes}</Text></Table.Td>
-                      <Table.Td>{canWrite && <ActionIcon variant="subtle" color="red" onClick={() => remove(m)} aria-label="מחיקה"><IconTrash size={12} /></ActionIcon>}</Table.Td>
+                      <Table.Td><Text size="xs">{m.notes}</Text>{m.mirror_of && <Text size="xs" c="dimmed">מהחלוקה בקופה של המנהל; משתנה ונמחק שם</Text>}</Table.Td>
+                      <Table.Td>{canWrite && !m.mirror_of && <ActionIcon variant="subtle" color="red" onClick={() => remove(m)} aria-label="מחיקה"><IconTrash size={12} /></ActionIcon>}</Table.Td>
                     </Table.Tr>
                   ))}</Table.Tbody>
                 </Table>
