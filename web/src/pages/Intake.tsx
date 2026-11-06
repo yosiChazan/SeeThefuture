@@ -99,7 +99,9 @@ export function Intake() {
   const [adding, setAdding] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // Rejected and voided reports are hidden unless asked for (SPEC decision 59).
+  // By default only what waits for approval (SPEC decision 117); posted reports on a switch,
+  // rejected and voided ones on another (decision 59).
+  const [showPosted, setShowPosted] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
   const sources = useSources();
   const canAdd = access.countries.some((c) => access.canEdit(c));
@@ -119,16 +121,21 @@ export function Intake() {
       </Group>
       <Text c="dimmed" size="sm">דוח שנקלט נבדק כאן לפני שהוא נרשם בכרטיסי החשבון. רק עובד עם הרשאת כספים מאשר רישום.</Text>
       <QueryState q={batches}>{(all) => {
-        const closed = all.filter((b) => b.status === 'rejected').length;
-        const bs = showClosed ? all : all.filter((b) => b.status !== 'rejected');
+        const isPending = (b: (typeof all)[number]) => b.status === 'in_review' || b.status === 'parsed';
+        const isClosed = (b: (typeof all)[number]) => b.status === 'rejected' || !!b.voided_at;
+        const pending = all.filter(isPending).length;
+        const posted = all.filter((b) => b.status === 'committed' && !b.voided_at).length;
+        const closed = all.filter(isClosed).length;
+        const bs = all.filter((b) => isPending(b) || (showPosted && b.status === 'committed' && !b.voided_at) || (showClosed && isClosed(b)));
         return (
         <Paper withBorder p="sm">
-          {closed > 0 && (
-            <Group justify="flex-end" mb="xs">
-              <Switch size="sm" checked={showClosed} onChange={(e) => setShowClosed(e.currentTarget.checked)}
-                label={`הצגת דוחות שנדחו או בוטלו (${closed})`} />
+          <Group justify="space-between" mb="xs">
+            <Badge size="lg" variant="light" color={pending ? 'orange' : 'teal'}>{pending ? `ממתינים לאישור: ${pending}` : 'אין דוחות שממתינים לאישור'}</Badge>
+            <Group gap="lg">
+              {posted > 0 && <Switch size="sm" checked={showPosted} onChange={(e) => setShowPosted(e.currentTarget.checked)} label={`הצגת דוחות שנרשמו (${posted})`} />}
+              {closed > 0 && <Switch size="sm" checked={showClosed} onChange={(e) => setShowClosed(e.currentTarget.checked)} label={`הצגת דוחות שנדחו או בוטלו (${closed})`} />}
             </Group>
-          )}
+          </Group>
           {bs.length ? (
             <Table.ScrollContainer minWidth={700}>
               <Table striped highlightOnHover verticalSpacing="xs">
@@ -149,7 +156,7 @@ export function Intake() {
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
-          ) : <Text c="dimmed" size="sm">{all.length ? 'אין דוחות פתוחים או רשומים.' : 'עוד לא נקלטו דוחות.'}</Text>}
+          ) : <Text c="dimmed" size="sm">{all.length ? 'אין דוחות שממתינים לאישור. להצגת הדוחות שנרשמו: המתג למעלה.' : 'עוד לא נקלטו דוחות.'}</Text>}
         </Paper>
         );
       }}</QueryState>
