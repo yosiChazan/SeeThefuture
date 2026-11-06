@@ -4,6 +4,7 @@ import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CountryFilter } from '../components/common';
+import { CashOverview } from './CashBoxes';
 import { CATEGORY_HE, COUNTRY_HE, money, propertyTitle, STATUS_HE } from '../lib/format';
 import { useClients, useProperties } from '../lib/queries';
 import { byCity, change, contractRent, expensesByCategory, occupancy, monthly, quiet, trend, yearBefore, type StatEntry } from '../lib/stats';
@@ -287,6 +288,8 @@ export function Stats() {
           </Paper>
         );
       })}
+
+      <CashOverview />
 
       <Paper withBorder p="md">
         <Group justify="space-between" mb="xs">

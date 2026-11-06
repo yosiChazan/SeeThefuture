@@ -980,6 +980,79 @@ reset role;
 delete from app.documents where id = '73000000-0000-0000-0000-000000000002';
 delete from app.file_categories;
 
+-- Cash boxes (decision 112) ------------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.cash_boxes) = 1 and (select name from app.cash_boxes) = 'קופת גרשון', 'UA finance sees Gershon''s box, not the office''s');
+insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, party_name)
+  select id, '2026-10-01', 50000, 'UAH', 'from_manager', 'ויטאלי' from app.cash_boxes;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check(not exists (select 1 from app.cash_boxes) and not exists (select 1 from app.cash_movements), 'a Romania editor sees no cash box');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.cash_boxes) = 2, 'management sees both boxes');
+do $$ begin
+  insert into app.cash_movements (box_id, occurred_on, amount, currency, kind)
+    select id, '2026-10-01', 10, 'ILS', 'income' from app.cash_boxes where country_code is null;
+  raise exception 'FAILED: management wrote to the office box';
+exception when insufficient_privilege then raise notice 'ok - only an admin writes to the office box';
+end $$;
+reset role;
+select pg_temp.check((select sum(amount) from app.cash_movements) = 50000, 'a movement is recorded in Gershon''s box');
+delete from app.cash_movements;
+
+-- Paying a client from Gershon's box posts the transfer (decision 113).
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.accounts (id, holder_party_id, beneficiary_party_id, country_code, currency, kind) values
+  ('74000000-0000-0000-0000-000000000001', 'a0000000-0000-4000-8000-000000000001', '10000000-0000-0000-0000-000000000001', 'UA', 'UAH', 'manager_cash');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('74000000-0000-0000-0000-000000000002', 'UA', '2026-09-05', '2026-09-01', 'rent', 'draft');
+insert into app.entries (transaction_id, account_id, property_id, amount, currency)
+  values ('74000000-0000-0000-0000-000000000002', '74000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 1000, 'UAH');
+update app.transactions set status = 'posted' where id = '74000000-0000-0000-0000-000000000002';
+select app.cash_pay_client((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 400, '2026-10-10', 'אוקטובר');
+reset role;
+select pg_temp.check(
+  (select sum(e.amount) from app.entries e join app.transactions t on t.id = e.transaction_id where e.account_id = '74000000-0000-0000-0000-000000000001' and t.status = 'posted') = 600
+  and (select sum(e.amount) from app.entries e join app.accounts a on a.id = e.account_id join app.transactions t on t.id = e.transaction_id
+       where a.kind = 'client_bank' and a.beneficiary_party_id = '10000000-0000-0000-0000-000000000001' and t.status = 'posted' and t.category = 'transfer') = 400
+  and (select amount from app.cash_movements where kind = 'to_client') = -400,
+  'paying a client from Gershon''s box: out of Vitaly''s cash, into the client''s own account, and in the box');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  perform app.cash_pay_client((select id from app.cash_boxes limit 1), '74000000-0000-0000-0000-000000000001', 1, '2026-10-10', null);
+  raise exception 'FAILED: a Romania editor paid from Gershon''s box';
+exception when insufficient_privilege then raise notice 'ok - only who writes to the box pays from it';
+end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement((select id from app.cash_movements where kind = 'to_client'));
+reset role;
+select pg_temp.check(not exists (select 1 from app.cash_movements)
+  and (select status from app.transactions where category = 'transfer' and description like 'העברה ללקוח%') = 'void',
+  'removing the payment voids its transfer');
+
+-- A sum Gershon sent to the office, divided between a client and the office's fees (decision 114).
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.cash_movements (id, box_id, occurred_on, amount, currency, kind, party_name)
+  select '74000000-0000-0000-0000-000000000003', id, '2026-10-20', -500, 'UAH', 'to_office', 'המשרד' from app.cash_boxes where country_code = 'UA';
+select app.cash_pay_client((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 300, '2026-10-20', null, '74000000-0000-0000-0000-000000000003');
+insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, parent_id, party_name)
+  select id, '2026-10-20', -50, 'UAH', 'office_fee', '74000000-0000-0000-0000-000000000003', 'המשרד' from app.cash_boxes where country_code = 'UA';
+reset role;
+select pg_temp.check((select amount from app.cash_movements m join app.cash_boxes b on b.id = m.box_id where b.is_office and m.kind = 'income') = 50,
+  'an office fee is also income in the office''s box');
+select pg_temp.check((select count(*) from app.cash_movements where parent_id = '74000000-0000-0000-0000-000000000003') = 2
+  and (select status from app.transactions t join app.cash_movements m on m.transaction_id = t.id where m.parent_id is not null) = 'posted',
+  'a sum sent to the office is divided: a client paid (posted) and the office''s fees');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement('74000000-0000-0000-0000-000000000003');
+reset role;
+select pg_temp.check(not exists (select 1 from app.cash_movements)
+  and (select count(*) from app.transactions where description like 'העברה ללקוח%' and status = 'posted') = 0,
+  'removing the sum removes its parts and voids the client''s transfer');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
