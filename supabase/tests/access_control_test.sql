@@ -980,6 +980,28 @@ reset role;
 delete from app.documents where id = '73000000-0000-0000-0000-000000000002';
 delete from app.file_categories;
 
+-- Cash boxes (decision 112) ------------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.cash_boxes) = 1 and (select name from app.cash_boxes) = 'קופת גרשון', 'UA finance sees Gershon''s box, not the office''s');
+insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, party_name)
+  select id, '2026-10-01', 50000, 'UAH', 'from_manager', 'ויטאלי' from app.cash_boxes;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check(not exists (select 1 from app.cash_boxes) and not exists (select 1 from app.cash_movements), 'a Romania editor sees no cash box');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.cash_boxes) = 2, 'management sees both boxes');
+do $$ begin
+  insert into app.cash_movements (box_id, occurred_on, amount, currency, kind)
+    select id, '2026-10-01', 10, 'ILS', 'income' from app.cash_boxes where country_code is null;
+  raise exception 'FAILED: management wrote to the office box';
+exception when insufficient_privilege then raise notice 'ok - only an admin writes to the office box';
+end $$;
+reset role;
+select pg_temp.check((select sum(amount) from app.cash_movements) = 50000, 'a movement is recorded in Gershon''s box');
+delete from app.cash_movements;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
