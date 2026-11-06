@@ -24,13 +24,16 @@ create table app.cash_movements (
   occurred_on  date not null,
   amount       numeric(14,2) not null check (amount <> 0),
   currency     app.currency not null,
-  kind         text not null check (kind in ('from_manager', 'to_client', 'expense', 'income', 'transfer', 'other')),
+  kind         text not null check (kind in ('from_manager', 'to_office', 'to_client', 'office_fee', 'expense', 'income', 'transfer', 'other')),
   party_id     uuid references app.parties on delete set null,
   party_name   text,
   property_id  uuid references app.properties on delete set null,
   notes        text,
   -- A transfer to a client is also posted to the client's accounts (decision 113).
   transaction_id uuid references app.transactions,
+  -- How a sum sent to the office was divided (decision 114): its parts, each to a client
+  -- (posted, as above) or to the office as fees, point to it.
+  parent_id    uuid references app.cash_movements on delete cascade,
   created_at   timestamptz not null default now(),
   created_by   uuid default auth.uid()
 );
@@ -78,7 +81,7 @@ select 'קופת גרשון', 'UA',
 -- account, in that account's currency. Only who may write to the box may call it, and the
 -- ledger's own guard lets only finance post. The property is set when the money came from
 -- one property only.
-create function app.cash_pay_client(p_box uuid, p_from_account uuid, p_amount numeric, p_on date, p_notes text)
+create function app.cash_pay_client(p_box uuid, p_from_account uuid, p_amount numeric, p_on date, p_notes text, p_parent uuid default null)
 returns uuid language plpgsql set search_path = '' as $$
 declare
   b app.cash_boxes;
@@ -91,6 +94,9 @@ begin
   if not app.can_write_box(p_box) then raise exception 'not allowed to write to this box' using errcode = '42501'; end if;
   if p_amount is null or p_amount <= 0 then raise exception 'the amount must be positive'; end if;
   select * into b from app.cash_boxes where id = p_box;
+  if p_parent is not null and not exists (select 1 from app.cash_movements where id = p_parent and box_id = p_box and kind = 'to_office') then
+    raise exception 'the part must belong to a sum sent to the office from this box';
+  end if;
   select * into a from app.accounts where id = p_from_account;
   if a.id is null or not ((a.kind = 'manager_cash' and a.holder_party_id = any (b.linked_manager_ids))
                           or (a.kind = 'rent_pool' and a.holder_party_id = b.holder_party_id)) then
@@ -105,22 +111,24 @@ begin
     (t, app.account_for('client_bank', a.beneficiary_party_id, a.beneficiary_party_id, a.currency, a.country_code),
        case when props = 1 then prop end, p_amount, a.currency, p_notes);
   update app.transactions set status = 'posted' where id = t;
-  insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, party_id, notes, transaction_id)
-  values (p_box, p_on, -p_amount, a.currency, 'to_client', a.beneficiary_party_id, p_notes, t)
+  insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, party_id, notes, transaction_id, parent_id)
+  values (p_box, p_on, -p_amount, a.currency, 'to_client', a.beneficiary_party_id, p_notes, t, p_parent)
   returning id into m;
   return m;
 end $$;
 
--- Removing a movement that was posted voids its transfer (posted rows are never deleted).
+-- Removing a movement voids the transfers it posted, its parts' too (posted rows are never
+-- deleted).
 create function app.cash_remove_movement(p_movement uuid) returns void
 language plpgsql set search_path = '' as $$
-declare t uuid;
+declare ts uuid[];
 begin
-  select transaction_id into t from app.cash_movements where id = p_movement;
+  select array_agg(transaction_id) filter (where transaction_id is not null) into ts
+  from app.cash_movements where id = p_movement or parent_id = p_movement;
   delete from app.cash_movements where id = p_movement;
   if not found then raise exception 'no such movement, or not allowed' using errcode = '42501'; end if;
-  if t is not null then
-    update app.transactions set status = 'void' where id = t and status = 'posted';
-    delete from app.transactions where id = t and status = 'draft';
+  if ts is not null then
+    update app.transactions set status = 'void' where id = any (ts) and status = 'posted';
+    delete from app.transactions where id = any (ts) and status = 'draft';
   end if;
 end $$;

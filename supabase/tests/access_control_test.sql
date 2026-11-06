@@ -1033,6 +1033,24 @@ select pg_temp.check(not exists (select 1 from app.cash_movements)
   and (select status from app.transactions where category = 'transfer' and description like 'העברה ללקוח%') = 'void',
   'removing the payment voids its transfer');
 
+-- A sum Gershon sent to the office, divided between a client and the office's fees (decision 114).
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.cash_movements (id, box_id, occurred_on, amount, currency, kind, party_name)
+  select '74000000-0000-0000-0000-000000000003', id, '2026-10-20', -500, 'UAH', 'to_office', 'המשרד' from app.cash_boxes where country_code = 'UA';
+select app.cash_pay_client((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 300, '2026-10-20', null, '74000000-0000-0000-0000-000000000003');
+insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, parent_id, party_name)
+  select id, '2026-10-20', -50, 'UAH', 'office_fee', '74000000-0000-0000-0000-000000000003', 'המשרד' from app.cash_boxes where country_code = 'UA';
+reset role;
+select pg_temp.check((select count(*) from app.cash_movements where parent_id = '74000000-0000-0000-0000-000000000003') = 2
+  and (select status from app.transactions t join app.cash_movements m on m.transaction_id = t.id where m.parent_id is not null) = 'posted',
+  'a sum sent to the office is divided: a client paid (posted) and the office''s fees');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement('74000000-0000-0000-0000-000000000003');
+reset role;
+select pg_temp.check(not exists (select 1 from app.cash_movements)
+  and (select count(*) from app.transactions where description like 'העברה ללקוח%' and status = 'posted') = 0,
+  'removing the sum removes its parts and voids the client''s transfer');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
