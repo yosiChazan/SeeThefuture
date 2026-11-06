@@ -1002,6 +1002,37 @@ reset role;
 select pg_temp.check((select sum(amount) from app.cash_movements) = 50000, 'a movement is recorded in Gershon''s box');
 delete from app.cash_movements;
 
+-- Paying a client from Gershon's box posts the transfer (decision 113).
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.accounts (id, holder_party_id, beneficiary_party_id, country_code, currency, kind) values
+  ('74000000-0000-0000-0000-000000000001', 'a0000000-0000-4000-8000-000000000001', '10000000-0000-0000-0000-000000000001', 'UA', 'UAH', 'manager_cash');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('74000000-0000-0000-0000-000000000002', 'UA', '2026-09-05', '2026-09-01', 'rent', 'draft');
+insert into app.entries (transaction_id, account_id, property_id, amount, currency)
+  values ('74000000-0000-0000-0000-000000000002', '74000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 1000, 'UAH');
+update app.transactions set status = 'posted' where id = '74000000-0000-0000-0000-000000000002';
+select app.cash_pay_client((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 400, '2026-10-10', 'אוקטובר');
+reset role;
+select pg_temp.check(
+  (select sum(e.amount) from app.entries e join app.transactions t on t.id = e.transaction_id where e.account_id = '74000000-0000-0000-0000-000000000001' and t.status = 'posted') = 600
+  and (select sum(e.amount) from app.entries e join app.accounts a on a.id = e.account_id join app.transactions t on t.id = e.transaction_id
+       where a.kind = 'client_bank' and a.beneficiary_party_id = '10000000-0000-0000-0000-000000000001' and t.status = 'posted' and t.category = 'transfer') = 400
+  and (select amount from app.cash_movements where kind = 'to_client') = -400,
+  'paying a client from Gershon''s box: out of Vitaly''s cash, into the client''s own account, and in the box');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  perform app.cash_pay_client((select id from app.cash_boxes limit 1), '74000000-0000-0000-0000-000000000001', 1, '2026-10-10', null);
+  raise exception 'FAILED: a Romania editor paid from Gershon''s box';
+exception when insufficient_privilege then raise notice 'ok - only who writes to the box pays from it';
+end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement((select id from app.cash_movements where kind = 'to_client'));
+reset role;
+select pg_temp.check(not exists (select 1 from app.cash_movements)
+  and (select status from app.transactions where category = 'transfer' and description like 'העברה ללקוח%') = 'void',
+  'removing the payment voids its transfer');
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

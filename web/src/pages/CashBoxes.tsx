@@ -43,8 +43,10 @@ function useAuto(box: Box | null, names: Map<string, string>) {
         const out: Row[] = [];
         if (!holders.length) return out;
         for (let at = 0; ; at += 1000) {
-          const page = must(await supabase.from('entries').select('amount, currency, accounts!inner(kind, holder_party_id), transactions!inner(status)')
-            .eq('accounts.kind', kind).in('accounts.holder_party_id', holders).eq('transactions.status', 'posted').order('id').range(at, at + 999)) as unknown as Row[];
+          const page = must(await supabase.from('entries').select('amount, currency, accounts!inner(kind, holder_party_id), transactions!inner(status, category)')
+            .eq('accounts.kind', kind).in('accounts.holder_party_id', holders).eq('transactions.status', 'posted')
+            // A payment to a client is counted once, as "handed to clients": not again here.
+            .neq('transactions.category', 'transfer').order('id').range(at, at + 999)) as unknown as Row[];
           out.push(...page);
           if (page.length < 1000) return out;
         }
@@ -77,7 +79,7 @@ function NewMovement({ box, onClose }: { box: Box; onClose: () => void }) {
     const own = managers.filter((p) => !box.linked_manager_ids.includes(p.value));
     return v.kind === 'to_client' ? cl : v.kind === 'from_manager' ? own : [...managers, ...cl];
   }, [contacts.data, clients.data, v.kind, box.linked_manager_ids]);
-  const kinds = (v.dir === 'in' ? ['from_manager', 'income', 'transfer', 'other'] : ['to_client', 'expense', 'transfer', 'other']).map((k) => ({ value: k, label: KIND_HE[k] }));
+  const kinds = (v.dir === 'in' ? ['from_manager', 'income', 'transfer', 'other'] : ['expense', 'transfer', 'other']).map((k) => ({ value: k, label: KIND_HE[k] }));
   async function save() {
     setBusy(true); setError(null);
     const r = await supabase.from('cash_movements').insert({
@@ -93,7 +95,7 @@ function NewMovement({ box, onClose }: { box: Box; onClose: () => void }) {
   return (
     <Modal opened onClose={onClose} title={`תנועה ב${box.name}`} size="lg">
       <Stack>
-        <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out', kind: x === 'in' ? 'from_manager' : 'to_client', party: null })}
+        <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out', kind: x === 'in' ? 'from_manager' : 'expense', party: null })}
           data={[{ value: 'in', label: 'נכנס לקופה' }, { value: 'out', label: 'יצא מהקופה' }]} />
         <SimpleGrid cols={{ base: 1, sm: 3 }}>
           <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null })} valueFormat="DD.MM.YYYY" />
@@ -118,6 +120,67 @@ function NewMovement({ box, onClose }: { box: Box; onClose: () => void }) {
   );
 }
 
+// Paying a client from the box (SPEC decision 113): pick the client, the account the money
+// comes from (the client's money a linked manager or the box's holder keeps, with its
+// balance), the amount and the date. The transfer is posted to the client's accounts and
+// recorded in the box, in one step (app.cash_pay_client).
+function PayClient({ box, onClose }: { box: Box; onClose: () => void }) {
+  const qc = useQueryClient();
+  const clients = useClients();
+  const [client, setClient] = useState<string | null>(null);
+  const [account, setAccount] = useState<string | null>(null);
+  const [v, setV] = useState({ on: dayjs().format('YYYY-MM-DD') as string | null, amount: '' as number | '', notes: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const accounts = useQuery({
+    queryKey: ['box-client-accounts', box.id, client], enabled: !!client,
+    queryFn: async () => {
+      const rows = must(await supabase.from('accounts').select('id, kind, currency, holder_party_id, holder:parties!accounts_holder_party_id_fkey(display_name), entries(amount, transactions!inner(status))')
+        .eq('beneficiary_party_id', client!).in('kind', ['manager_cash', 'rent_pool'])) as unknown as
+        { id: string; kind: string; currency: Currency; holder_party_id: string; holder: { display_name: string }; entries: { amount: number; transactions: { status: string } }[] }[];
+      return rows.filter((a) => (a.kind === 'manager_cash' && box.linked_manager_ids.includes(a.holder_party_id)) || (a.kind === 'rent_pool' && a.holder_party_id === box.holder_party_id))
+        .map((a) => ({ id: a.id, currency: a.currency, label: `${a.kind === 'rent_pool' ? 'שכירות אצל' : 'קופת'} ${a.holder.display_name} · ${a.currency}`,
+          balance: Math.round(a.entries.filter((e) => e.transactions.status === 'posted').reduce((x, e) => x + Number(e.amount), 0) * 100) / 100 }))
+        .sort((a, b) => b.balance - a.balance);
+    },
+  });
+  const list = accounts.data ?? [];
+  const chosen = list.find((a) => a.id === account) ?? list[0];
+  async function save() {
+    setBusy(true); setError(null);
+    const r = await supabase.rpc('cash_pay_client', { p_box: box.id, p_from_account: chosen!.id, p_amount: Number(v.amount), p_on: v.on, p_notes: v.notes.trim() || null });
+    setBusy(false);
+    if (r.error) { setError(r.error.message); return; }
+    notifications.show({ color: 'teal', message: 'ההעברה נרשמה, גם בכרטיס הלקוח' });
+    await qc.invalidateQueries();
+    onClose();
+  }
+  return (
+    <Modal opened onClose={onClose} title={`העברה ללקוח מ${box.name}`} size="lg">
+      <Stack>
+        <Select label="לקוח" required searchable data={(clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name })).sort((a, b) => a.label.localeCompare(b.label))}
+          value={client} onChange={(x) => { setClient(x); setAccount(null); }} nothingFoundMessage="לא נמצא" />
+        {client && accounts.isLoading && <Text size="sm" c="dimmed">בודק יתרות…</Text>}
+        {client && accounts.data && !list.length && <Alert color="yellow">ללקוח הזה אין כסף רשום ב{box.name} (לא בקופת ויטאלי ולא בשכירות אצל גרשון), לפי הדוחות שאושרו.</Alert>}
+        {list.length > 0 && (
+          <Select label="מאיזה כסף" allowDeselect={false} value={chosen?.id ?? null} onChange={setAccount}
+            data={list.map((a) => ({ value: a.id, label: `${a.label} · יתרה ${money(a.balance, a.currency)}` }))} />
+        )}
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null })} valueFormat="DD.MM.YYYY" />
+          <NumberInput label={`כמה קיבל${chosen ? ` (${chosen.currency})` : ''}`} required min={0} thousandSeparator="," value={v.amount} onChange={(x) => setV({ ...v, amount: x === '' ? '' : Number(x) })} />
+        </SimpleGrid>
+        <TextInput label="פירוט (לא חובה)" value={v.notes} onChange={(e) => setV({ ...v, notes: e.currentTarget.value })} placeholder="למשל: העברה לחשבון בישראל" />
+        {chosen && Number(v.amount) > chosen.balance && <Text size="xs" c="orange">הסכום גדול מהיתרה של הלקוח בחשבון הזה; אחרי ההעברה היתרה תהיה במינוס.</Text>}
+        <Text size="xs" c="dimmed">נרשם מיד: בקופה, ובכרטיס הלקוח כהעברה מהכסף שאצל המנהל לחשבון הבנק שלו.</Text>
+        {error && <Alert color="red">{error}</Alert>}
+        <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
+          <Button onClick={save} loading={busy} disabled={!chosen || !v.amount || !v.on}>רישום ההעברה</Button></Group>
+      </Stack>
+    </Modal>
+  );
+}
+
 export function CashBoxes() {
   const access = useAccess();
   const qc = useQueryClient();
@@ -134,15 +197,16 @@ export function CashBoxes() {
   const auto = useAuto(box, names);
   const sums = summarize(movements, nameOf, auto.data ?? []);
   const [adding, setAdding] = useState(false);
+  const [paying, setPaying] = useState(false);
   const canWrite = !!box && (box.country_code ? access.canApprove(box.country_code) : access.isAdmin);
 
   const remove = (m: CashMovement) => modals.openConfirmModal({
-    title: 'מחיקת תנועה', children: <Text size="sm">{date(m.occurred_on)} · {money(Number(m.amount), m.currency as Currency)} · {nameOf(m)}</Text>,
+    title: 'מחיקת תנועה', children: <Text size="sm">{date(m.occurred_on)} · {money(Number(m.amount), m.currency as Currency)} · {nameOf(m)}{m.kind === 'to_client' ? '. ההעברה תבוטל גם בכרטיס הלקוח.' : ''}</Text>,
     labels: { confirm: 'מחיקה', cancel: 'ביטול' }, confirmProps: { color: 'red' },
     onConfirm: async () => {
-      const r = await supabase.from('cash_movements').delete().eq('id', m.id);
+      const r = await supabase.rpc('cash_remove_movement', { p_movement: m.id });
       if (r.error) notifications.show({ color: 'red', message: r.error.message });
-      await qc.invalidateQueries({ queryKey: ['cash-movements', box!.id] });
+      await qc.invalidateQueries();
     },
   });
 
@@ -179,7 +243,12 @@ export function CashBoxes() {
           <Paper withBorder p="md">
             <Group justify="space-between" mb="sm">
               <Title order={4}>תנועות ({movements.length})</Title>
-              {canWrite && <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => setAdding(true)}>תנועה חדשה</Button>}
+              {canWrite && (
+                <Group gap="xs">
+                  {(box.linked_manager_ids.length > 0 || box.holder_party_id) && <Button size="xs" onClick={() => setPaying(true)}>העברה ללקוח</Button>}
+                  <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={() => setAdding(true)}>תנועה אחרת</Button>
+                </Group>
+              )}
             </Group>
             {!movements.length ? <Text size="sm" c="dimmed">אין</Text> : (
               <Table.ScrollContainer minWidth={640}>
@@ -200,6 +269,7 @@ export function CashBoxes() {
             )}
           </Paper>
           {adding && <NewMovement box={box} onClose={() => setAdding(false)} />}
+          {paying && <PayClient box={box} onClose={() => setPaying(false)} />}
         </>
       )}
     </Stack>

@@ -29,6 +29,8 @@ create table app.cash_movements (
   party_name   text,
   property_id  uuid references app.properties on delete set null,
   notes        text,
+  -- A transfer to a client is also posted to the client's accounts (decision 113).
+  transaction_id uuid references app.transactions,
   created_at   timestamptz not null default now(),
   created_by   uuid default auth.uid()
 );
@@ -69,3 +71,56 @@ select 'קופת גרשון', 'UA',
        (select holder_party_id from app.import_sources where adapter = 'gershon_utilities_xlsx'),
        coalesce((select array_agg(holder_party_id) from app.import_sources where adapter = 'vitaly_rent_xlsx' and holder_party_id is not null), '{}'),
        20, 'גרשון וויטאלי שותפים: הקופה של ויטאלי נכנסת לכאן לבד מהדוחות שאושרו, וכך גם השכירות מירח. מזינים כאן את ההעברות ללקוחות ומה שלא מגיע מהדוחות';
+
+-- Paying a client from a box (decision 113): one call records the movement and posts the
+-- transfer in the ledger: out of the client's money held in the box (a linked manager's
+-- cash, or the rent the box's holder keeps for the client), into the client's own bank
+-- account, in that account's currency. Only who may write to the box may call it, and the
+-- ledger's own guard lets only finance post. The property is set when the money came from
+-- one property only.
+create function app.cash_pay_client(p_box uuid, p_from_account uuid, p_amount numeric, p_on date, p_notes text)
+returns uuid language plpgsql set search_path = '' as $$
+declare
+  b app.cash_boxes;
+  a app.accounts;
+  prop uuid;
+  props int;
+  t uuid;
+  m uuid;
+begin
+  if not app.can_write_box(p_box) then raise exception 'not allowed to write to this box' using errcode = '42501'; end if;
+  if p_amount is null or p_amount <= 0 then raise exception 'the amount must be positive'; end if;
+  select * into b from app.cash_boxes where id = p_box;
+  select * into a from app.accounts where id = p_from_account;
+  if a.id is null or not ((a.kind = 'manager_cash' and a.holder_party_id = any (b.linked_manager_ids))
+                          or (a.kind = 'rent_pool' and a.holder_party_id = b.holder_party_id)) then
+    raise exception 'this account is not held in this box';
+  end if;
+  select count(distinct property_id), min(property_id::text)::uuid into props, prop from app.entries where account_id = a.id and property_id is not null;
+  insert into app.transactions (country_code, occurred_on, period, category, description, status)
+  values (a.country_code, p_on, date_trunc('month', p_on)::date, 'transfer', 'העברה ללקוח מ' || b.name || coalesce(': ' || p_notes, ''), 'draft')
+  returning id into t;
+  insert into app.entries (transaction_id, account_id, property_id, amount, currency, memo) values
+    (t, a.id, case when props = 1 then prop end, -p_amount, a.currency, p_notes),
+    (t, app.account_for('client_bank', a.beneficiary_party_id, a.beneficiary_party_id, a.currency, a.country_code),
+       case when props = 1 then prop end, p_amount, a.currency, p_notes);
+  update app.transactions set status = 'posted' where id = t;
+  insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, party_id, notes, transaction_id)
+  values (p_box, p_on, -p_amount, a.currency, 'to_client', a.beneficiary_party_id, p_notes, t)
+  returning id into m;
+  return m;
+end $$;
+
+-- Removing a movement that was posted voids its transfer (posted rows are never deleted).
+create function app.cash_remove_movement(p_movement uuid) returns void
+language plpgsql set search_path = '' as $$
+declare t uuid;
+begin
+  select transaction_id into t from app.cash_movements where id = p_movement;
+  delete from app.cash_movements where id = p_movement;
+  if not found then raise exception 'no such movement, or not allowed' using errcode = '42501'; end if;
+  if t is not null then
+    update app.transactions set status = 'void' where id = t and status = 'posted';
+    delete from app.transactions where id = t and status = 'draft';
+  end if;
+end $$;
