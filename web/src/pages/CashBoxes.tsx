@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { KIND_HE, summarize, type CashMovement } from '../lib/cash';
+import { KIND_HE, summarize, type AutoIn, type CashMovement } from '../lib/cash';
 import { date, money } from '../lib/format';
 import { useClients, useContacts } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
@@ -17,7 +17,7 @@ import { useAccess } from '../lib/access';
 // Cash boxes (SPEC decision 112): the office's cash and Gershon's. What came in, what went
 // out, and what the box should hold: received from the managers minus handed to clients.
 
-interface Box { id: string; name: string; country_code: Country | null; holder_party_id: string | null; notes: string | null; position: number }
+interface Box { id: string; name: string; country_code: Country | null; holder_party_id: string | null; linked_manager_ids: string[]; notes: string | null; position: number }
 const CURRENCIES: Currency[] = ['UAH', 'USD', 'EUR', 'ILS', 'RON', 'GEL'];
 
 function useBoxes() {
@@ -31,22 +31,33 @@ function useMovements(boxId: string | null) {
   });
 }
 
-// What a manager's approved reports say he holds (manager cash), per currency: to compare
-// with what the box actually received from him.
-function useManagerCash(partyIds: string[]) {
+// What flows into a box on its own from approved reports (SPEC decision 112): the cash of
+// its linked managers (Vitaly's, into Gershon's), and the rent held by the box's holder
+// (Yarach's transfers reach Gershon). Per currency.
+function useAuto(box: Box | null, names: Map<string, string>) {
   return useQuery({
-    queryKey: ['manager-cash', partyIds], enabled: partyIds.length > 0,
+    queryKey: ['cash-auto', box?.id, box?.linked_manager_ids, box?.holder_party_id], enabled: !!box && (box.linked_manager_ids.length > 0 || !!box.holder_party_id),
     queryFn: async () => {
-      const rows: { amount: number; currency: string; accounts: { holder_party_id: string } }[] = [];
-      for (let at = 0; ; at += 1000) {
-        const page = must(await supabase.from('entries').select('amount, currency, accounts!inner(kind, holder_party_id), transactions!inner(status)')
-          .eq('accounts.kind', 'manager_cash').in('accounts.holder_party_id', partyIds).eq('transactions.status', 'posted').order('id').range(at, at + 999)) as unknown as typeof rows;
-        rows.push(...page);
-        if (page.length < 1000) break;
+      type Row = { amount: number; currency: string; accounts: { kind: string; holder_party_id: string } };
+      const load = async (kind: string, holders: string[]) => {
+        const out: Row[] = [];
+        if (!holders.length) return out;
+        for (let at = 0; ; at += 1000) {
+          const page = must(await supabase.from('entries').select('amount, currency, accounts!inner(kind, holder_party_id), transactions!inner(status)')
+            .eq('accounts.kind', kind).in('accounts.holder_party_id', holders).eq('transactions.status', 'posted').order('id').range(at, at + 999)) as unknown as Row[];
+          out.push(...page);
+          if (page.length < 1000) return out;
+        }
+      };
+      const rows = [...await load('manager_cash', box!.linked_manager_ids), ...await load('rent_pool', box!.holder_party_id ? [box!.holder_party_id] : [])];
+      const m = new Map<string, AutoIn>();
+      for (const r of rows) {
+        const who = r.accounts.kind === 'rent_pool' ? 'שכירות שהגיעה לגרשון (ירח), מהדוחות' : `${names.get(r.accounts.holder_party_id) ?? 'מנהל'}, מהדוחות`;
+        const k = `${who}|${r.currency}`;
+        const a = m.get(k) ?? m.set(k, { who, currency: r.currency, amount: 0 }).get(k)!;
+        a.amount += Number(r.amount);
       }
-      const m = new Map<string, number>();
-      for (const r of rows) m.set(`${r.accounts.holder_party_id}|${r.currency}`, (m.get(`${r.accounts.holder_party_id}|${r.currency}`) ?? 0) + Number(r.amount));
-      return m;
+      return [...m.values()].map((a) => ({ ...a, amount: Math.round(a.amount * 100) / 100 }));
     },
   });
 }
@@ -62,8 +73,10 @@ function NewMovement({ box, onClose }: { box: Box; onClose: () => void }) {
   const people = useMemo(() => {
     const managers = (contacts.data ?? []).map((p) => ({ value: p.id, label: p.display_name }));
     const cl = (clients.data ?? []).map((p) => ({ value: p.id, label: p.display_name }));
-    return v.kind === 'to_client' ? cl : v.kind === 'from_manager' ? managers : [...managers, ...cl];
-  }, [contacts.data, clients.data, v.kind]);
+    // A linked manager's money comes from the reports; entering it here would count it twice.
+    const own = managers.filter((p) => !box.linked_manager_ids.includes(p.value));
+    return v.kind === 'to_client' ? cl : v.kind === 'from_manager' ? own : [...managers, ...cl];
+  }, [contacts.data, clients.data, v.kind, box.linked_manager_ids]);
   const kinds = (v.dir === 'in' ? ['from_manager', 'income', 'transfer', 'other'] : ['to_client', 'expense', 'transfer', 'other']).map((k) => ({ value: k, label: KIND_HE[k] }));
   async function save() {
     setBusy(true); setError(null);
@@ -95,6 +108,7 @@ function NewMovement({ box, onClose }: { box: Box; onClose: () => void }) {
             onChange={(x) => setV({ ...v, party: x })} nothingFoundMessage="לא נמצא" />
           {!v.party && <TextInput label="או שם חופשי" value={v.partyName} onChange={(e) => setV({ ...v, partyName: e.currentTarget.value })} />}
         </SimpleGrid>
+        {v.kind === 'from_manager' && box.linked_manager_ids.length > 0 && <Text size="xs" c="dimmed">הכסף של ויטאלי ושל ירח נכנס לקופה לבד מהדוחות שאושרו, ולכן לא מזינים אותו כאן.</Text>}
         <TextInput label="פירוט" value={v.notes} onChange={(e) => setV({ ...v, notes: e.currentTarget.value })} />
         {error && <Alert color="red">{error}</Alert>}
         <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
@@ -117,9 +131,8 @@ export function CashBoxes() {
   const names = useMemo(() => new Map([...(clients.data ?? []), ...(contacts.data ?? [])].map((p) => [p.id, p.display_name])), [clients.data, contacts.data]);
   const nameOf = (m: CashMovement) => (m.party_id ? names.get(m.party_id) : null) ?? m.party_name ?? '—';
   const movements = ms.data ?? [];
-  const sums = summarize(movements, nameOf);
-  const managerIds = [...new Set(movements.filter((m) => m.kind === 'from_manager' && m.party_id).map((m) => m.party_id!))];
-  const reported = useManagerCash(managerIds);
+  const auto = useAuto(box, names);
+  const sums = summarize(movements, nameOf, auto.data ?? []);
   const [adding, setAdding] = useState(false);
   const canWrite = !!box && (box.country_code ? access.canApprove(box.country_code) : access.isAdmin);
 
@@ -145,7 +158,7 @@ export function CashBoxes() {
       {box && (
         <>
           {box.notes && <Text size="sm" c="dimmed">{box.notes}</Text>}
-          {!sums.length && !ms.isLoading && <Alert color="gray">עוד אין תנועות בקופה. מוסיפים כל סכום שהתקבל ממנהל וכל העברה ללקוח.</Alert>}
+          {!sums.length && !ms.isLoading && !auto.isLoading && <Alert color="gray">עוד אין תנועות בקופה. מוסיפים כל סכום שהתקבל ממנהל וכל העברה ללקוח.</Alert>}
           {sums.map((s) => (
             <Paper key={s.currency} withBorder p="md">
               <Title order={4} mb="sm">{box.name} · {s.currency}</Title>
@@ -158,11 +171,8 @@ export function CashBoxes() {
                 <Paper withBorder p="sm"><Text size="sm" c="dimmed">אחרי הוצאות ותנועות אחרות</Text><Text fw={700} fz={22}>{money(s.balance, s.currency as Currency)}</Text>
                   <Text size="xs" c="dimmed">{s.others ? `כולל ${money(s.others, s.currency as Currency)} הוצאות ואחר` : 'אין הוצאות שנרשמו'}</Text></Paper>
               </SimpleGrid>
-              {managerIds.length > 0 && reported.data && (
-                <Text size="xs" c="dimmed" mt="sm">
-                  להשוואה, לפי הדוחות שאושרו המנהלים מחזיקים: {managerIds.map((id) => `${names.get(id) ?? ''} ${money(reported.data!.get(`${id}|${s.currency}`) ?? 0, s.currency as Currency)}`).join(' · ')}
-                  {' '}(כל מה שגבו פחות הוצאות ודמי ניהול; ההפרש ממה שהתקבל כאן הוא מה שעוד לא הועבר או לא נרשם)
-                </Text>
+              {(auto.data ?? []).some((x) => x.currency === s.currency) && (
+                <Text size="xs" c="dimmed" mt="sm">"מהדוחות": מתעדכן לבד עם כל דוח שמאושר בקליטה (קופת ויטאלי: גבייה במזומן פחות דמי ניהול והוצאות).</Text>
               )}
             </Paper>
           ))}

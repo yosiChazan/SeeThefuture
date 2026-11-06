@@ -9,6 +9,10 @@ create table app.cash_boxes (
   name             text not null unique,
   country_code     char(2) references app.countries,
   holder_party_id  uuid references app.parties,
+  -- Managers whose cash flows into this box on its own (Vitaly's into Gershon's: they are
+  -- partners). Their manager cash from approved reports counts as received, as does the
+  -- rent held by the box's holder (Yarach's transfers reach Gershon). Nothing is entered twice.
+  linked_manager_ids uuid[] not null default '{}',
   notes            text,
   position         int not null default 100,
   created_at       timestamptz not null default now()
@@ -60,9 +64,8 @@ create trigger audit after insert or update or delete on app.cash_movements for 
 -- The two boxes there are today.
 insert into app.cash_boxes (name, country_code, holder_party_id, position, notes)
 values ('קופת המשרד', null, null, 10, null);
-insert into app.cash_boxes (name, country_code, holder_party_id, position, notes)
-select 'קופת גרשון', 'UA', s.holder_party_id, 20, 'הכסף שגרשון מקבל מירח ומויטאלי ומעביר ללקוחות'
-from app.import_sources s where s.adapter = 'gershon_utilities_xlsx'
-union all
-select 'קופת גרשון', 'UA', null, 20, 'הכסף שגרשון מקבל מירח ומויטאלי ומעביר ללקוחות'
-where not exists (select 1 from app.import_sources where adapter = 'gershon_utilities_xlsx');
+insert into app.cash_boxes (name, country_code, holder_party_id, linked_manager_ids, position, notes)
+select 'קופת גרשון', 'UA',
+       (select holder_party_id from app.import_sources where adapter = 'gershon_utilities_xlsx'),
+       coalesce((select array_agg(holder_party_id) from app.import_sources where adapter = 'vitaly_rent_xlsx' and holder_party_id is not null), '{}'),
+       20, 'גרשון וויטאלי שותפים: הקופה של ויטאלי נכנסת לכאן לבד מהדוחות שאושרו, וכך גם השכירות מירח. מזינים כאן את ההעברות ללקוחות ומה שלא מגיע מהדוחות';

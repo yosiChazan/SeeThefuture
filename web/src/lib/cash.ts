@@ -19,11 +19,16 @@ export interface BoxSummary {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-export function summarize(ms: CashMovement[], nameOf: (m: CashMovement) => string): BoxSummary[] {
+// What flows in from approved reports on its own (a linked manager's cash), per currency.
+export interface AutoIn { who: string; currency: string; amount: number }
+
+export function summarize(ms: CashMovement[], nameOf: (m: CashMovement) => string, auto: AutoIn[] = []): BoxSummary[] {
   const by = new Map<string, CashMovement[]>();
   for (const m of ms) by.set(m.currency, [...(by.get(m.currency) ?? []), m]);
+  for (const a of auto) if (!by.has(a.currency)) by.set(a.currency, []);
   return [...by].map(([currency, list]) => {
     const managers = new Map<string, number>();
+    for (const a of auto) if (a.currency === currency) managers.set(a.who, (managers.get(a.who) ?? 0) + a.amount);
     let toClients = 0, others = 0;
     for (const m of list) {
       if (m.kind === 'from_manager') managers.set(nameOf(m), (managers.get(nameOf(m)) ?? 0) + Number(m.amount));
