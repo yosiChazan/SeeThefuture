@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Group, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Group, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
@@ -7,7 +7,7 @@ import { ActionIcon } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { division, KIND_HE, summarize, type AutoIn, type CashMovement } from '../lib/cash';
 import { date, money } from '../lib/format';
 import { useClients, useContacts } from '../lib/queries';
@@ -373,5 +373,58 @@ export function CashBoxes() {
         </>
       )}
     </Stack>
+  );
+}
+
+// The boxes at a glance, for the statistics page (SPEC decision 116): per box and currency,
+// what came in, what was sent to us, what the box should hold and its balance.
+function BoxGlance({ box, names }: { box: Box; names: Map<string, string> }) {
+  const ms = useMovements(box.id);
+  const auto = useAuto(box, names);
+  const nameOf = (m: CashMovement) => (m.party_id ? names.get(m.party_id) : null) ?? m.party_name ?? '—';
+  const sums = summarize(ms.data ?? [], nameOf, auto.data ?? []);
+  const linked = box.linked_manager_ids.length > 0 || !!box.holder_party_id;
+  const parts = (ms.data ?? []).filter((m) => m.parent_id);
+  const sent = (ms.data ?? []).filter((m) => m.kind === 'to_office' && !m.parent_id);
+  return (
+    <Paper withBorder p="sm">
+      <Group justify="space-between" mb={6}><Text fw={600}>{box.name}</Text><Anchor component={Link} to={`/cash?box=${box.id}`} size="xs">לקופה</Anchor></Group>
+      {ms.isLoading || auto.isLoading ? <Text size="sm" c="dimmed">טוען…</Text> : !sums.length ? <Text size="sm" c="dimmed">אין תנועות</Text> : sums.map((s) => {
+        const c = s.currency as Currency;
+        const fees = parts.filter((p) => p.kind === 'office_fee' && p.currency === s.currency).reduce((a, p) => a - Number(p.amount), 0);
+        const toClients = parts.filter((p) => p.kind === 'to_client' && p.currency === s.currency).reduce((a, p) => a - Number(p.amount), 0);
+        const left = sent.filter((m) => m.currency === s.currency).reduce((a, m) => a + division(m, parts).left, 0);
+        return (
+          <Table key={s.currency} fz="sm" verticalSpacing={2} mb={4}>
+            <Table.Tbody>
+              {linked ? <>
+                <Table.Tr><Table.Td>התקבל מהמנהלים</Table.Td><Table.Td ta="left">{money(s.received, c)}</Table.Td></Table.Tr>
+                <Table.Tr><Table.Td>הועבר אלינו</Table.Td><Table.Td ta="left">{money(s.sentToOffice, c)}</Table.Td></Table.Tr>
+                <Table.Tr><Table.Td c="dimmed">· מזה ללקוחות</Table.Td><Table.Td ta="left" c="dimmed">{money(toClients, c)}</Table.Td></Table.Tr>
+                <Table.Tr><Table.Td c="dimmed">· מזה עמלות למשרד</Table.Td><Table.Td ta="left" c="dimmed">{money(fees, c)}</Table.Td></Table.Tr>
+                {left !== 0 && <Table.Tr><Table.Td c="orange">· עוד לא חולק</Table.Td><Table.Td ta="left" c="orange">{money(left, c)}</Table.Td></Table.Tr>}
+                <Table.Tr fw={700}><Table.Td>אמור להיות בקופה</Table.Td><Table.Td ta="left">{money(s.expected, c)}</Table.Td></Table.Tr>
+              </> : (
+                <Table.Tr fw={700}><Table.Td>יתרה</Table.Td><Table.Td ta="left">{money(s.balance, c)}</Table.Td></Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        );
+      })}
+    </Paper>
+  );
+}
+
+export function CashOverview() {
+  const boxes = useBoxes();
+  const clients = useClients();
+  const contacts = useContacts();
+  const names = useMemo(() => new Map([...(clients.data ?? []), ...(contacts.data ?? [])].map((p) => [p.id, p.display_name])), [clients.data, contacts.data]);
+  if (boxes.error || !boxes.data?.length) return null;   // no box this user may see
+  return (
+    <Paper withBorder p="md">
+      <Title order={3} mb="sm">קופות</Title>
+      <SimpleGrid cols={{ base: 1, md: 2 }}>{boxes.data.map((b) => <BoxGlance key={b.id} box={b} names={names} />)}</SimpleGrid>
+    </Paper>
   );
 }
