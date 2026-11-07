@@ -57,7 +57,7 @@ function useAuto(box: Box | null, names: Map<string, string>) {
       const rows = [...await load('manager_cash', box!.linked_manager_ids), ...await load('rent_pool', box!.holder_party_id ? [box!.holder_party_id] : [])];
       const m = new Map<string, AutoIn>();
       for (const r of rows) {
-        const who = r.accounts.kind === 'rent_pool' ? 'שכירות שהגיעה לגרשון (ירח), מהדוחות' : `${names.get(r.accounts.holder_party_id) ?? 'מנהל'}, מהדוחות`;
+        const who = r.accounts.kind === 'rent_pool' ? 'קופת גרשון (שכירות): מהדוחות ומכרטיסי הנכסים' : `${names.get(r.accounts.holder_party_id) ?? 'מנהל'}, מהדוחות`;
         const k = `${who}|${r.currency}`;
         const a = m.get(k) ?? m.set(k, { who, currency: r.currency, amount: 0 }).get(k)!;
         a.amount += Number(r.amount);
