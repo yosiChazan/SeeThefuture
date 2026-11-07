@@ -14,6 +14,7 @@ import { useClients, useContacts } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
 import type { Country, Currency } from '../lib/types';
 import { useAccess } from '../lib/access';
+import { useMe } from '../components/ManualTopics';
 
 // Cash boxes (SPEC decisions 112–114): the office's cash and Gershon's. Gershon's receives
 // Vitaly's and Yarach's money from the approved reports on its own; what he sends to us is
@@ -236,6 +237,36 @@ function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left
   );
 }
 
+// Editing a movement entered by hand (SPEC decision 119): date, amount and notes; its author
+// or an admin. A client's part is paid again with the new amount (app.cash_edit_movement).
+function EditMovement({ m, onClose }: { m: CashMovement; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [v, setV] = useState({ on: m.occurred_on as string | null, amount: Math.abs(Number(m.amount)) as number | '', notes: m.notes ?? '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function save() {
+    setBusy(true); setError(null);
+    const r = await supabase.rpc('cash_edit_movement', { p_movement: m.id, p_on: v.on, p_amount: Number(v.amount), p_notes: v.notes.trim() || null });
+    setBusy(false);
+    if (r.error) { setError(r.error.message); return; }
+    notifications.show({ color: 'teal', message: m.transaction_id ? 'עודכן; ההעברה ללקוח נרשמה מחדש בסכום החדש' : 'עודכן' });
+    await qc.invalidateQueries();
+    onClose();
+  }
+  return (
+    <Modal opened onClose={onClose} title={`עריכה: ${KIND_HE[m.kind] ?? m.kind}`} size="sm">
+      <Stack>
+        <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null })} valueFormat="DD.MM.YYYY" />
+        <NumberInput label={`סכום (${m.currency})`} required min={0} thousandSeparator="," value={v.amount} onChange={(x) => setV({ ...v, amount: x === '' ? '' : Number(x) })} />
+        <TextInput label="פירוט" value={v.notes} onChange={(e) => setV({ ...v, notes: e.currentTarget.value })} />
+        {m.transaction_id && <Text size="xs" c="dimmed">ההעברה בכרטיס הלקוח תבוטל ותירשם מחדש בסכום ובתאריך החדשים.</Text>}
+        {error && <Alert color="red">{error}</Alert>}
+        <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button><Button onClick={save} loading={busy} disabled={!v.on || !v.amount}>שמירה</Button></Group>
+      </Stack>
+    </Modal>
+  );
+}
+
 export function CashBoxes() {
   const access = useAccess();
   const qc = useQueryClient();
@@ -257,6 +288,9 @@ export function CashBoxes() {
   const [adding, setAdding] = useState(false);
   const [sending, setSending] = useState(false);
   const [dividing, setDividing] = useState<CashMovement | null>(null);
+  const [editingM, setEditingM] = useState<CashMovement | null>(null);
+  const me = useMe();
+  const canEditM = (m: CashMovement) => canWrite && !m.mirror_of && (access.isAdmin || m.created_by === me);
   const canWrite = !!box && (box.country_code ? access.canApprove(box.country_code) : access.isAdmin);
   const linked = !!box && (box.linked_manager_ids.length > 0 || !!box.holder_party_id);
 
@@ -320,6 +354,7 @@ export function CashBoxes() {
                         </Group>
                         {canWrite && (
                           <Group gap={4} wrap="nowrap">
+                            {canEditM(m) && <Button size="compact-xs" variant="subtle" onClick={() => setEditingM(m)}>עריכה</Button>}
                             <Button size="compact-xs" variant="light" onClick={() => setDividing(m)}>חלוקה</Button>
                             <ActionIcon variant="subtle" color="red" onClick={() => remove(m)} aria-label="מחיקה"><IconTrash size={14} /></ActionIcon>
                           </Group>
@@ -332,7 +367,10 @@ export function CashBoxes() {
                               <Table.Td>{p.kind === 'office_fee' ? 'המשרד (עמלות)' : nameOf(p)}</Table.Td>
                               <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(-Number(p.amount), cur(p.currency))}</Table.Td>
                               <Table.Td><Text size="xs" c="dimmed">{p.kind === 'to_client' ? 'נרשם בכרטיס הלקוח' : ''}</Text></Table.Td>
-                              <Table.Td>{canWrite && <ActionIcon size="sm" variant="subtle" color="red" onClick={() => remove(p)} aria-label="מחיקה"><IconTrash size={12} /></ActionIcon>}</Table.Td>
+                              <Table.Td><Group gap={2} wrap="nowrap">
+                                {canEditM(p) && <Button size="compact-xs" variant="subtle" onClick={() => setEditingM(p)}>עריכה</Button>}
+                                {canWrite && <ActionIcon size="sm" variant="subtle" color="red" onClick={() => remove(p)} aria-label="מחיקה"><IconTrash size={12} /></ActionIcon>}
+                              </Group></Table.Td>
                             </Table.Tr>
                           ))}</Table.Tbody>
                         </Table>
@@ -360,7 +398,10 @@ export function CashBoxes() {
                       <Table.Td>{nameOf(m)}</Table.Td>
                       <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(m.amount) < 0 ? 'red' : undefined}>{money(Number(m.amount), cur(m.currency))}</Table.Td>
                       <Table.Td><Text size="xs">{m.notes}</Text>{m.mirror_of && <Text size="xs" c="dimmed">מהחלוקה בקופה של המנהל; משתנה ונמחק שם</Text>}</Table.Td>
-                      <Table.Td>{canWrite && !m.mirror_of && <ActionIcon variant="subtle" color="red" onClick={() => remove(m)} aria-label="מחיקה"><IconTrash size={12} /></ActionIcon>}</Table.Td>
+                      <Table.Td><Group gap={2} wrap="nowrap">
+                        {canEditM(m) && <Button size="compact-xs" variant="subtle" onClick={() => setEditingM(m)}>עריכה</Button>}
+                        {canWrite && !m.mirror_of && <ActionIcon variant="subtle" color="red" onClick={() => remove(m)} aria-label="מחיקה"><IconTrash size={12} /></ActionIcon>}
+                      </Group></Table.Td>
                     </Table.Tr>
                   ))}</Table.Tbody>
                 </Table>
@@ -369,6 +410,7 @@ export function CashBoxes() {
           </Paper>
           {adding && <NewMovement box={box} onClose={() => setAdding(false)} />}
           {sending && <SendToOffice box={box} onClose={() => setSending(false)} />}
+          {editingM && <EditMovement m={editingM} onClose={() => setEditingM(null)} />}
           {dividing && <Divide box={box} sum={dividing} left={division(dividing, parts).left} onClose={() => setDividing(null)} />}
         </>
       )}

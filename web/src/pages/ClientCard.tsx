@@ -14,7 +14,7 @@ import { PropertyForm } from '../components/PropertyForm';
 import { LeaseTable } from '../components/LeaseTable';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
-import { AccountLedger } from '../components/AccountLedger';
+import { EditableLedger } from '../components/PropertyEntries';
 import { ACCOUNT_KIND_HE, COUNTRY_HE, amountLabel, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
 import { setClientRole, useAccountEntries, useClient, useClientAccounts, useClientProperties, useIdentity, usePartyLinks } from '../lib/queries';
 import { validIsraeliId } from '../lib/idnumber';
@@ -195,7 +195,7 @@ export function ClientCard() {
           <Title order={4} mb="sm">תנועות</Title>
           <QueryState q={accounts}>{(as) => (
             entries.isLoading ? <Text c="dimmed" size="sm">טוען תנועות…</Text>
-              : <AccountLedger accounts={as} entries={entries.data ?? []} />
+              : <EditableLedger accounts={as} entries={entries.data ?? []} />
           )}</QueryState>
         </Paper>
         </>}

@@ -13,8 +13,7 @@ import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { LeaseTable } from '../components/LeaseTable';
 import { COUNTRY_HE, date, isCurrentOwnership, propertyTitle } from '../lib/format';
 import { usePropertyEntries, useProperty } from '../lib/queries';
-import { AccountLedger } from '../components/AccountLedger';
-import { PropertyEntries } from '../components/PropertyEntries';
+import { EditableLedger, PropertyEntries } from '../components/PropertyEntries';
 
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -112,7 +111,7 @@ export function PropertyCard() {
           <PropertyFiles propertyId={p.id} country={p.country_code} />
 
           <PropertyEntries propertyId={p.id} country={p.country_code} accounts={ledger.data?.accounts ?? []}>
-            <QueryState q={ledger}>{(m) => <AccountLedger accounts={m.accounts} entries={m.entries} property />}</QueryState>
+            <QueryState q={ledger}>{(m) => <EditableLedger accounts={m.accounts} entries={m.entries} property />}</QueryState>
           </PropertyEntries>
         </Stack>
       );
