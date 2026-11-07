@@ -77,7 +77,8 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
   // manager's cash, and the client's own bank account.
   const holders = useMemo(() => {
     const m = new Map<string, string>();
-    for (const b of local.data?.boxes ?? []) if (b.holder_party_id) m.set(`rent_pool|${b.holder_party_id}`, b.name);
+    // The box's holder's cash is the box (decision 121): "מזומן אצל גרשון".
+    for (const b of local.data?.boxes ?? []) if (b.holder_party_id) m.set(`manager_cash|${b.holder_party_id}`, `מזומן אצל גרשון (${b.name})`);
     for (const a of accounts) {
       const holder = a.kind === 'client_bank' ? 'beneficiary' : a.holder.id;
       if (!m.has(`${a.kind}|${holder}`)) m.set(`${a.kind}|${holder}`, a.kind === 'client_bank' ? 'חשבון הבנק של הלקוח' : `${ACCOUNT_KIND_HE[a.kind] ?? a.kind} · ${a.holder.display_name}`);

@@ -55,10 +55,13 @@ function useAuto(box: Box | null, names: Map<string, string>) {
           if (page.length < 1000) return out;
         }
       };
-      const rows = [...await load('manager_cash', box!.linked_manager_ids), ...await load('rent_pool', box!.holder_party_id ? [box!.holder_party_id] : [])];
+      const holder = box!.holder_party_id ? [box!.holder_party_id] : [];
+      const rows = [...await load('manager_cash', [...box!.linked_manager_ids, ...holder]), ...await load('rent_pool', holder)];
       const m = new Map<string, AutoIn>();
       for (const r of rows) {
-        const who = r.accounts.kind === 'rent_pool' ? 'קופת גרשון (שכירות): מהדוחות ומכרטיסי הנכסים' : `${names.get(r.accounts.holder_party_id) ?? 'מנהל'}, מהדוחות`;
+        const who = r.accounts.holder_party_id === box!.holder_party_id
+          ? (r.accounts.kind === 'rent_pool' ? 'שכירות מירח אצל גרשון' : 'מזומן אצל גרשון: מהדוחות ומכרטיסי הנכסים')
+          : `${names.get(r.accounts.holder_party_id) ?? 'מנהל'}, מהדוחות`;
         const k = `${who}|${r.currency}`;
         const a = m.get(k) ?? m.set(k, { who, currency: r.currency, amount: 0 }).get(k)!;
         a.amount += Number(r.amount);
@@ -174,8 +177,8 @@ function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left
       const rows = must(await supabase.from('accounts').select('id, kind, currency, beneficiary_party_id, holder_party_id, holder:parties!accounts_holder_party_id_fkey(display_name), entries(amount, transactions!inner(status))')
         .in('beneficiary_party_id', clientIds).in('kind', ['manager_cash', 'rent_pool']).eq('currency', sum.currency)) as unknown as
         { id: string; kind: string; beneficiary_party_id: string; holder_party_id: string; holder: { display_name: string }; entries: { amount: number; transactions: { status: string } }[] }[];
-      return rows.filter((a) => (a.kind === 'manager_cash' && box.linked_manager_ids.includes(a.holder_party_id)) || (a.kind === 'rent_pool' && a.holder_party_id === box.holder_party_id))
-        .map((a) => ({ id: a.id, client: a.beneficiary_party_id, label: `${a.kind === 'rent_pool' ? 'שכירות אצל' : 'קופת'} ${a.holder.display_name}`,
+      return rows.filter((a) => (a.kind === 'manager_cash' && (box.linked_manager_ids.includes(a.holder_party_id) || a.holder_party_id === box.holder_party_id)) || (a.kind === 'rent_pool' && a.holder_party_id === box.holder_party_id))
+        .map((a) => ({ id: a.id, client: a.beneficiary_party_id, label: a.holder_party_id === box.holder_party_id ? (a.kind === 'rent_pool' ? 'שכירות מירח אצל גרשון' : 'מזומן אצל גרשון') : `מזומן אצל ${a.holder.display_name}`,
           balance: Math.round(a.entries.filter((e) => e.transactions.status === 'posted').reduce((x, e) => x + Number(e.amount), 0) * 100) / 100 }))
         .sort((a, b) => b.balance - a.balance);
     },
