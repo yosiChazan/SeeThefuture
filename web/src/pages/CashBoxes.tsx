@@ -30,7 +30,7 @@ function useBoxes() {
 function useMovements(boxId: string | null) {
   return useQuery({
     queryKey: ['cash-movements', boxId], enabled: !!boxId,
-    queryFn: async () => must(await supabase.from('cash_movements').select('id, occurred_on, amount, currency, kind, party_id, party_name, notes, created_by, parent_id, transaction_id, mirror_of')
+    queryFn: async () => must(await supabase.from('cash_movements').select('id, occurred_on, amount, currency, kind, party_id, party_name, notes, created_by, parent_id, transaction_id, mirror_of, fx_rate, fx_transaction_id')
       .eq('box_id', boxId!).order('occurred_on', { ascending: false }).order('created_at', { ascending: false })) as CashMovement[],
   });
 }
@@ -127,15 +127,18 @@ function NewMovement({ box, onClose }: { box: Box; onClose: () => void }) {
   );
 }
 
-// A sum Gershon sent to us (decision 114): date, amount, currency.
+// A sum Gershon sent to us (decision 114): date, amount, currency; in dollars or euros also
+// the rate (decision 123), so that each client's part is converted from the client's hryvnia.
 function SendToOffice({ box, onClose }: { box: Box; onClose: () => void }) {
   const qc = useQueryClient();
-  const [v, setV] = useState({ on: dayjs().format('YYYY-MM-DD') as string | null, amount: '' as number | '', currency: (box.country_code === 'UA' ? 'UAH' : 'ILS') as Currency, notes: '' });
+  const [v, setV] = useState({ on: dayjs().format('YYYY-MM-DD') as string | null, amount: '' as number | '', currency: (box.country_code === 'UA' ? 'USD' : 'ILS') as Currency, rate: '' as number | '', notes: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const withRate = box.country_code === 'UA' && v.currency !== 'UAH';
   async function save() {
     setBusy(true); setError(null);
-    const r = await supabase.from('cash_movements').insert({ box_id: box.id, occurred_on: v.on, amount: -Math.abs(Number(v.amount)), currency: v.currency, kind: 'to_office', party_name: 'המשרד', notes: v.notes.trim() || null });
+    const r = await supabase.from('cash_movements').insert({ box_id: box.id, occurred_on: v.on, amount: -Math.abs(Number(v.amount)), currency: v.currency, kind: 'to_office', party_name: 'המשרד',
+      fx_rate: withRate && Number(v.rate) > 0 ? Number(v.rate) : null, notes: v.notes.trim() || null });
     setBusy(false);
     if (r.error) { setError(r.error.message); return; }
     notifications.show({ color: 'teal', message: 'נרשם. עכשיו אפשר לחלק את הסכום' });
@@ -150,6 +153,8 @@ function SendToOffice({ box, onClose }: { box: Box; onClose: () => void }) {
           <NumberInput label="סכום" required min={0} thousandSeparator="," value={v.amount} onChange={(x) => setV({ ...v, amount: x === '' ? '' : Number(x) })} style={{ flex: 1 }} />
           <Select w={90} data={CURRENCIES} value={v.currency} allowDeselect={false} onChange={(x) => x && setV({ ...v, currency: x as Currency })} />
         </Group>
+        {withRate && <NumberInput label={`שער: כמה גריבנה ל-1 ${v.currency}`} decimalScale={4} min={0} value={v.rate} onChange={(x) => setV({ ...v, rate: x === '' ? '' : Number(x) })}
+          description="עם שער: החלק של כל לקוח מומר מהגריבנה שלו אצל גרשון ומועבר לו. בלי שער: משלמים ממה שכבר יש ללקוח במטבע הזה" />}
         <TextInput label="פירוט (לא חובה)" value={v.notes} onChange={(e) => setV({ ...v, notes: e.currentTarget.value })} />
         {error && <Alert color="red">{error}</Alert>}
         <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button><Button onClick={save} loading={busy} disabled={!v.on || !v.amount}>שמירה</Button></Group>
@@ -159,23 +164,27 @@ function SendToOffice({ box, onClose }: { box: Box; onClose: () => void }) {
 }
 
 const OFFICE = '__office__';
-interface Part { to: string | null; amount: number | ''; account: string | null }
+interface Part { to: string | null; amount: number | ''; account: string | null; uah: number | '' }
 
 // Dividing a sum sent to us: each line goes to a client (out of the client's money in the
-// box, posted to the client's accounts) or to the office as fees.
+// box, posted to the client's accounts) or to the office as fees. A sum with a rate
+// (decision 123): the client's part is converted from the client's hryvnia in the box at the
+// rate (by default the part times the rate; it can be set, as in Gershon's Excel), then paid.
 function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left: number; onClose: () => void }) {
   const qc = useQueryClient();
   const clients = useClients();
-  const [parts, setParts] = useState<Part[]>([{ to: null, amount: '', account: null }]);
+  const [parts, setParts] = useState<Part[]>([{ to: null, amount: '', account: null, uah: '' }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const rate = sum.fx_rate ? Number(sum.fx_rate) : null;
+  const from = rate ? 'UAH' : sum.currency;
   const clientIds = [...new Set(parts.map((p) => p.to).filter((x): x is string => !!x && x !== OFFICE))];
   // The clients' money held in this box, in the sum's currency, with the balance.
   const accounts = useQuery({
-    queryKey: ['box-accounts', box.id, clientIds, sum.currency], enabled: clientIds.length > 0,
+    queryKey: ['box-accounts', box.id, clientIds, from], enabled: clientIds.length > 0,
     queryFn: async () => {
       const rows = must(await supabase.from('accounts').select('id, kind, currency, beneficiary_party_id, holder_party_id, holder:parties!accounts_holder_party_id_fkey(display_name), entries(amount, transactions!inner(status))')
-        .in('beneficiary_party_id', clientIds).in('kind', ['manager_cash', 'rent_pool']).eq('currency', sum.currency)) as unknown as
+        .in('beneficiary_party_id', clientIds).in('kind', rate ? ['manager_cash'] : ['manager_cash', 'rent_pool']).eq('currency', from)) as unknown as
         { id: string; kind: string; beneficiary_party_id: string; holder_party_id: string; holder: { display_name: string }; entries: { amount: number; transactions: { status: string } }[] }[];
       return rows.filter((a) => (a.kind === 'manager_cash' && (box.linked_manager_ids.includes(a.holder_party_id) || a.holder_party_id === box.holder_party_id)) || (a.kind === 'rent_pool' && a.holder_party_id === box.holder_party_id))
         .map((a) => ({ id: a.id, client: a.beneficiary_party_id, label: a.holder_party_id === box.holder_party_id ? (a.kind === 'rent_pool' ? 'שכירות מירח אצל גרשון' : 'מזומן אצל גרשון') : `מזומן אצל ${a.holder.display_name}`,
@@ -198,7 +207,8 @@ function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left
         if (p.to === OFFICE) {
           must(await supabase.from('cash_movements').insert({ box_id: box.id, occurred_on: sum.occurred_on, amount: -Number(p.amount), currency: sum.currency, kind: 'office_fee', party_name: 'המשרד', parent_id: sum.id }));
         } else {
-          must(await supabase.rpc('cash_pay_client', { p_box: box.id, p_from_account: accountFor(p)!.id, p_amount: Number(p.amount), p_on: sum.occurred_on, p_notes: null, p_parent: sum.id }));
+          if (rate) must(await supabase.rpc('cash_pay_client_fx', { p_box: box.id, p_from: accountFor(p)!.id, p_amount: Number(p.amount), p_uah: p.uah === '' ? null : Number(p.uah), p_on: sum.occurred_on, p_notes: null, p_parent: sum.id }));
+          else must(await supabase.rpc('cash_pay_client', { p_box: box.id, p_from_account: accountFor(p)!.id, p_amount: Number(p.amount), p_on: sum.occurred_on, p_notes: null, p_parent: sum.id }));
         }
         done.push(p.to!);
       }
@@ -214,7 +224,9 @@ function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left
   return (
     <Modal opened onClose={onClose} title={`חלוקה של ${money(-Number(sum.amount), sum.currency as Currency)} מ-${date(sum.occurred_on)}`} size="xl">
       <Stack>
-        <Text size="sm" c="dimmed">נשאר לחלק: {money(left, sum.currency as Currency)}. לקוח: הסכום יורד מהכסף שלו בקופה ונרשם בכרטיס שלו כהעברה לחשבון הבנק שלו. המשרד: עמלות שהמשרד לקח.</Text>
+        <Text size="sm" c="dimmed">נשאר לחלק: {money(left, sum.currency as Currency)}. {rate
+          ? `לקוח: הגריבנה שלו אצל גרשון מומרת בשער ${rate} (המרה בכרטיס שלו), והסכום ב-${sum.currency} מועבר לחשבון הבנק שלו. מה שהומר מעבר לסכום נשאר לו ב-${sum.currency} (מינוס = חייב לקופה).`
+          : 'לקוח: הסכום יורד מהכסף שלו בקופה ונרשם בכרטיס שלו כהעברה לחשבון הבנק שלו.'} המשרד: עמלות שהמשרד לקח.</Text>
         {parts.map((p, i) => {
           const acc = accountFor(p);
           return (
@@ -222,15 +234,18 @@ function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left
               <Select label={i === 0 ? 'למי' : undefined} searchable data={options} value={p.to} onChange={(x) => set(i, { to: x, account: null })} style={{ flex: 1 }} nothingFoundMessage="לא נמצא" />
               {p.to && p.to !== OFFICE && (accountsOf(p.to).length > 1
                 ? <Select label={i === 0 ? 'מאיזה כסף' : undefined} w={230} allowDeselect={false} value={acc?.id ?? null} onChange={(x) => set(i, { account: x })}
-                    data={accountsOf(p.to).map((a) => ({ value: a.id, label: `${a.label} · ${money(a.balance, sum.currency as Currency)}` }))} />
-                : <Text size="xs" w={230} c={acc ? 'dimmed' : 'red'} mb={8}>{acc ? `${acc.label} · יתרה ${money(acc.balance, sum.currency as Currency)}` : accounts.isLoading ? 'בודק…' : `אין ללקוח כסף ב-${sum.currency} בקופה`}</Text>)}
-              <NumberInput label={i === 0 ? 'סכום' : undefined} w={150} min={0} thousandSeparator="," value={p.amount} onChange={(x) => set(i, { amount: x === '' ? '' : Number(x) })} />
+                    data={accountsOf(p.to).map((a) => ({ value: a.id, label: `${a.label} · ${money(a.balance, from as Currency)}` }))} />
+                : <Text size="xs" w={230} c={acc ? 'dimmed' : 'red'} mb={8}>{acc ? `${acc.label} · יתרה ${money(acc.balance, from as Currency)}` : accounts.isLoading ? 'בודק…' : `אין ללקוח כסף ב-${from} בקופה`}</Text>)}
+              <NumberInput label={i === 0 ? `סכום (${sum.currency})` : undefined} w={140} min={0} thousandSeparator="," value={p.amount} onChange={(x) => set(i, { amount: x === '' ? '' : Number(x) })} />
+              {rate && p.to !== OFFICE && <NumberInput label={i === 0 ? 'הומר (₴)' : undefined} w={140} min={0} thousandSeparator="," decimalScale={2} value={p.uah}
+                placeholder={Number(p.amount) > 0 ? String(Math.round(Number(p.amount) * rate * 100) / 100) : ''} onChange={(x) => set(i, { uah: x === '' ? '' : Number(x) })} />}
+              {rate && p.to !== OFFICE && p.uah !== '' && Number(p.amount) > 0 && <Text size="xs" c="dimmed" w={110} mb={8}>נשאר לו {money(Math.round((Number(p.uah) / rate - Number(p.amount)) * 100) / 100, sum.currency as Currency)}</Text>}
               <ActionIcon variant="subtle" color="red" mb={4} onClick={() => setParts((ps) => ps.filter((_, j) => j !== i))} aria-label="הסרה"><IconTrash size={16} /></ActionIcon>
             </Group>
           );
         })}
         <Group justify="space-between">
-          <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={() => setParts((ps) => [...ps, { to: null, amount: '', account: null }])}>שורה</Button>
+          <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={() => setParts((ps) => [...ps, { to: null, amount: '', account: null, uah: '' }])}>שורה</Button>
           <Text size="sm" c={total > left ? 'red' : undefined}>בשורות: {money(total, sum.currency as Currency)}{total > left ? ' (יותר ממה שנשאר לחלק)' : ''}</Text>
         </Group>
         {error && <Alert color="red">{error}</Alert>}
@@ -350,6 +365,7 @@ export function CashBoxes() {
                       <Group justify="space-between" wrap="nowrap">
                         <Group gap="sm">
                           <Text fw={600}>{date(m.occurred_on)} · {money(d.total, cur(m.currency))}</Text>
+                          {m.fx_rate && <Badge variant="outline" color="gray">שער {Number(m.fx_rate)}</Badge>}
                           <Badge variant="light" color="teal">ללקוחות {money(d.toClients, cur(m.currency))}</Badge>
                           <Badge variant="light" color="grape">למשרד {money(d.officeFees, cur(m.currency))}</Badge>
                           <Badge variant="light" color={d.left === 0 ? 'gray' : d.left > 0 ? 'orange' : 'red'}>{d.left === 0 ? 'חולק כולו' : d.left > 0 ? `נשאר לחלק ${money(d.left, cur(m.currency))}` : `חולק יותר ב-${money(-d.left, cur(m.currency))}`}</Badge>
@@ -369,7 +385,7 @@ export function CashBoxes() {
                             <Table.Tr key={p.id}>
                               <Table.Td>{p.kind === 'office_fee' ? 'המשרד (עמלות)' : nameOf(p)}</Table.Td>
                               <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(-Number(p.amount), cur(p.currency))}</Table.Td>
-                              <Table.Td><Text size="xs" c="dimmed">{p.kind === 'to_client' ? 'נרשם בכרטיס הלקוח' : ''}</Text></Table.Td>
+                              <Table.Td><Text size="xs" c="dimmed">{p.kind === 'to_client' ? (p.fx_transaction_id ? 'הומר והועבר, נרשם בכרטיס הלקוח' : 'נרשם בכרטיס הלקוח') : ''}</Text></Table.Td>
                               <Table.Td><Group gap={2} wrap="nowrap">
                                 {canEditM(p) && <Button size="compact-xs" variant="subtle" onClick={() => setEditingM(p)}>עריכה</Button>}
                                 {canWrite && <ActionIcon size="sm" variant="subtle" color="red" onClick={() => remove(p)} aria-label="מחיקה"><IconTrash size={12} /></ActionIcon>}
