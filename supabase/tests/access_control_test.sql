@@ -1053,6 +1053,60 @@ select pg_temp.check(not exists (select 1 from app.cash_movements)
   and (select count(*) from app.transactions where description like 'העברה ללקוח%' and status = 'posted') = 0,
   'removing the sum removes its parts and voids the client''s transfer');
 
+-- Editing what was entered by hand (decision 119) ---------------------------
+
+-- A client's part of a sum Gershon sent: editing its amount pays again from the same money.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.cash_movements (id, box_id, occurred_on, amount, currency, kind, party_name)
+  select '75000000-0000-0000-0000-000000000003', id, '2026-10-21', -500, 'UAH', 'to_office', 'המשרד' from app.cash_boxes where country_code = 'UA';
+select app.cash_edit_movement(
+  app.cash_pay_client((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 300, '2026-10-21', null, '75000000-0000-0000-0000-000000000003'),
+  '2026-10-22', 200, 'תוקן');
+select app.cash_edit_movement('75000000-0000-0000-0000-000000000003', '2026-10-21', 450, null);
+reset role;
+select pg_temp.check((select amount from app.cash_movements where parent_id = '75000000-0000-0000-0000-000000000003') = -200
+  and (select amount from app.cash_movements where id = '75000000-0000-0000-0000-000000000003') = -450
+  and (select count(*) from app.transactions where description like 'העברה ללקוח%תוקן' and status = 'posted') = 1,
+  'a cash box movement is edited; a client''s part is paid again with the new amount');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement('75000000-0000-0000-0000-000000000003');
+reset role;
+
+-- A draft by an editor: its author fixes it in place; another editor may not.
+insert into app.ownerships (property_id, party_id, share_pct, valid_from) values
+  ('30000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 100, '2023-01-01');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('75000000-0000-0000-0000-000000000001', 'RO', '2026-04-05', '2026-04-01', 'repair', 'draft');
+select app.post_import_entry('75000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', null, 'RO', '2026-04-05',
+  '{"amount": -100, "currency": "RON", "account": {"kind": "client_bank", "holder": "beneficiary"}}');
+select app.edit_manual_entry('75000000-0000-0000-0000-000000000001', '2026-04-06', '2026-04-01', 'repair', 'תוקן', -150, 'RON', 'client_bank', null);
+reset role;
+select pg_temp.check((select amount from app.entries where transaction_id = '75000000-0000-0000-0000-000000000001') = -150
+  and (select description from app.transactions where id = '75000000-0000-0000-0000-000000000001') = 'תוקן',
+  'the author of a draft edits it in place');
+
+-- Posted: an admin's edit voids it and enters the corrected one.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+update app.transactions set status = 'posted' where id = '75000000-0000-0000-0000-000000000001';
+select app.edit_manual_entry('75000000-0000-0000-0000-000000000001', '2026-04-06', '2026-04-01', 'repair', 'תוקן שוב', -170, 'RON', 'client_bank', null);
+reset role;
+select pg_temp.check((select status from app.transactions where id = '75000000-0000-0000-0000-000000000001') = 'void'
+  and (select count(*) from app.transactions where description = 'תוקן שוב' and status = 'posted') = 1,
+  'editing a posted movement voids it and posts the corrected one');
+
+-- A report's movement is not edited here.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  perform app.edit_manual_entry((select id from app.transactions where import_batch_id is not null limit 1), '2026-01-01', '2026-01-01', 'rent', null, 1, 'UAH', 'manager_cash', null);
+  raise exception 'FAILED: a report''s movement was edited by hand';
+exception when raise_exception then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - a movement from a report is not edited by hand';
+end $$;
+reset role;
+delete from app.ownerships where property_id = '30000000-0000-0000-0000-000000000002';
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

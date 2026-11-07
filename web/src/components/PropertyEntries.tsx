@@ -23,27 +23,37 @@ const EXPENSE = ['mgmt_fee', 'utilities', 'building_fees', 'repair', 'legal_fees
 const CURRENCIES: Currency[] = ['USD', 'EUR', 'UAH', 'RON', 'GEL', 'ILS'];
 const CURRENCY_OF: Record<Country, Currency> = { UA: 'USD', RO: 'RON', GE: 'USD', GR: 'EUR' };
 
-interface Draft { id: string; occurred_on: string; category: string; description: string | null; created_by: string | null; lines: { amount: number; currency: Currency; who: string }[] }
+// A movement entered by hand on this property (no import batch), waiting or posted.
+interface Draft {
+  id: string; occurred_on: string; period: string; category: string; description: string | null; created_by: string | null; status: string;
+  where: string;   // "<account kind>|<holder id or 'beneficiary'>", as in the form
+  currency: Currency; total: number;
+  lines: { amount: number; currency: Currency; who: string }[];
+}
 
 function useDrafts(propertyId: string) {
   return useQuery({
     queryKey: ['property-drafts', propertyId],
     queryFn: async () => {
       const rows = must(await supabase.from('entries')
-        .select('amount, currency, transaction:transactions!inner(id, occurred_on, category, description, status, created_by, import_batch_id), account:accounts(holder:parties!accounts_holder_party_id_fkey(display_name), beneficiary:parties!accounts_beneficiary_party_id_fkey(display_name))')
-        .eq('property_id', propertyId).eq('transaction.status', 'draft').is('transaction.import_batch_id', null)) as unknown as
-        { amount: number; currency: Currency; transaction: Omit<Draft, 'lines'>; account: { holder: { display_name: string }; beneficiary: { display_name: string } } | null }[];
+        .select('amount, currency, transaction:transactions!inner(id, occurred_on, period, category, description, status, created_by, import_batch_id), account:accounts(kind, holder_party_id, beneficiary_party_id, holder:parties!accounts_holder_party_id_fkey(display_name), beneficiary:parties!accounts_beneficiary_party_id_fkey(display_name))')
+        .eq('property_id', propertyId).in('transaction.status', ['draft', 'posted']).is('transaction.import_batch_id', null)) as unknown as
+        { amount: number; currency: Currency; transaction: Omit<Draft, 'lines' | 'where' | 'currency' | 'total'>;
+          account: { kind: string; holder_party_id: string; beneficiary_party_id: string; holder: { display_name: string }; beneficiary: { display_name: string } } | null }[];
       const m = new Map<string, Draft>();
       for (const r of rows) {
-        const d = m.get(r.transaction.id) ?? m.set(r.transaction.id, { ...r.transaction, lines: [] }).get(r.transaction.id)!;
-        d.lines.push({ amount: Number(r.amount), currency: r.currency, who: r.account ? `${r.account.beneficiary.display_name} (אצל ${r.account.holder.display_name})` : '' });
+        const a = r.account;
+        const where = a ? `${a.kind}|${a.kind === 'client_bank' || a.holder_party_id === a.beneficiary_party_id ? 'beneficiary' : a.holder_party_id}` : '';
+        const d = m.get(r.transaction.id) ?? m.set(r.transaction.id, { ...r.transaction, where, currency: r.currency, total: 0, lines: [] }).get(r.transaction.id)!;
+        d.total += Number(r.amount);
+        d.lines.push({ amount: Number(r.amount), currency: r.currency, who: a ? `${a.beneficiary.display_name} (אצל ${a.holder.display_name})` : '' });
       }
-      return [...m.values()].sort((a, b) => a.occurred_on.localeCompare(b.occurred_on));
+      return [...m.values()].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on));
     },
   });
 }
 
-function NewEntry({ propertyId, country, accounts, onClose }: { propertyId: string; country: Country; accounts: Account[]; onClose: () => void }) {
+function NewEntry({ propertyId, country, accounts, editing, onClose }: { propertyId: string; country: Country; accounts: Account[]; editing?: Draft; onClose: () => void }) {
   const access = useAccess();
   const qc = useQueryClient();
   const managers = useQuery({
@@ -74,10 +84,15 @@ function NewEntry({ propertyId, country, accounts, onClose }: { propertyId: stri
     for (const g of managers.data ?? []) if (!g.valid_to) cash(g.manager.id, g.manager.display_name);
     for (const s of local.data?.sources ?? []) if (s.holder) cash(s.holder.id, s.holder.display_name);
     m.set('client_bank|beneficiary', 'חשבון הבנק של הלקוח');
+    if (editing && !m.has(editing.where)) m.set(editing.where, editing.lines[0]?.who || 'החשבון של התנועה');
     return [...m].map(([value, label]) => ({ value, label }));
-  }, [accounts, managers.data, local.data]);
+  }, [accounts, managers.data, local.data, editing]);
 
-  const [v, setV] = useState({
+  const [v, setV] = useState(editing ? {
+    on: editing.occurred_on as string | null, period: editing.period as string | null, dir: (editing.total < 0 ? 'out' : 'in') as 'in' | 'out',
+    category: editing.category as string | null, amount: Math.abs(editing.total) as number | '', currency: editing.currency, where: editing.where as string | null,
+    description: editing.description ?? '', post: false,
+  } : {
     on: dayjs().format('YYYY-MM-DD') as string | null, period: dayjs().startOf('month').format('YYYY-MM-DD') as string | null,
     dir: 'in' as 'in' | 'out', category: 'rent' as string | null, amount: '' as number | '', currency: CURRENCY_OF[country], where: null as string | null, description: '',
     post: false,
@@ -93,6 +108,15 @@ function NewEntry({ propertyId, country, accounts, onClose }: { propertyId: stri
     try {
       const amount = Math.abs(Number(v.amount)) * (v.dir === 'in' ? 1 : -1);
       const [kind, holder] = v.where!.split('|');
+      if (editing) {
+        must(await supabase.rpc('edit_manual_entry', { p_txn: editing.id, p_on: v.on, p_period: v.period, p_category: v.category, p_description: v.description.trim() || null,
+          p_amount: amount, p_currency: v.currency, p_kind: kind, p_holder: holder === 'beneficiary' ? null : holder }));
+        notifications.show({ color: 'teal', message: editing.status === 'posted' ? 'התנועה תוקנה: הקודמת בוטלה והמתוקנת נרשמה' : 'התנועה עודכנה' });
+        await qc.invalidateQueries({ queryKey: ['property-drafts', propertyId] });
+        await qc.invalidateQueries({ queryKey: ['property-entries', propertyId] });
+        onClose();
+        return;
+      }
       txn = (must(await supabase.from('transactions').insert({ country_code: country, occurred_on: v.on, period: v.period, category: v.category, description: v.description.trim() || null, status: 'draft' })
         .select('id').single()) as { id: string }).id;
       must(await supabase.rpc('post_import_entry', {
@@ -111,7 +135,7 @@ function NewEntry({ propertyId, country, accounts, onClose }: { propertyId: stri
   }
 
   return (
-    <Modal opened onClose={onClose} title="תנועה חדשה בנכס" size="lg">
+    <Modal opened onClose={onClose} title={editing ? 'עריכת תנועה' : 'תנועה חדשה בנכס'} size="lg">
       <Stack>
         <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out', category: x === 'in' ? 'rent' : 'repair' })}
           data={[{ value: 'in', label: 'הכנסה' }, { value: 'out', label: 'הוצאה' }]} />
@@ -127,11 +151,12 @@ function NewEntry({ propertyId, country, accounts, onClose }: { propertyId: stri
         </SimpleGrid>
         <TextInput label="פירוט" value={v.description} onChange={(e) => setV({ ...v, description: e.currentTarget.value })} placeholder="למשל: תיקון דוד מים" />
         <Text size="xs" c="dimmed">הסכום מתחלק בין הבעלים של הנכס בתאריך הזה לפי האחוזים שלהם. בלי המרת מטבע: המטבע צריך להיות של החשבון.</Text>
-        {access.canApprove(country) && <Checkbox label="לרשום מיד (אישור כספים)" checked={v.post} onChange={(e) => setV({ ...v, post: e.currentTarget.checked })} />}
+        {!editing && access.canApprove(country) && <Checkbox label="לרשום מיד (אישור כספים)" checked={v.post} onChange={(e) => setV({ ...v, post: e.currentTarget.checked })} />}
+        {editing?.status === 'posted' && <Text size="xs" c="dimmed">התנועה כבר נרשמה: היא לא משתנה, אלא מבוטלת ונרשמת במקומה תנועה מתוקנת (שתיהן נשארות בהיסטוריה).</Text>}
         {error && <Alert color="red">{error}</Alert>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>ביטול</Button>
-          <Button onClick={save} loading={busy} disabled={!ready}>{v.post ? 'רישום' : 'שמירה לאישור'}</Button>
+          <Button onClick={save} loading={busy} disabled={!ready}>{editing ? 'שמירת התיקון' : v.post ? 'רישום' : 'שמירה לאישור'}</Button>
         </Group>
       </Stack>
     </Modal>
@@ -144,6 +169,7 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
   const qc = useQueryClient();
   const drafts = useDrafts(propertyId);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Draft | null>(null);
   const refresh = async () => { await qc.invalidateQueries({ queryKey: ['property-drafts', propertyId] }); await qc.invalidateQueries({ queryKey: ['property-entries', propertyId] }); };
   const approve = async (d: Draft) => {
     const r = await supabase.from('transactions').update({ status: 'posted' }).eq('id', d.id);
@@ -155,7 +181,14 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
     labels: { confirm: 'מחיקה', cancel: 'ביטול' }, confirmProps: { color: 'red' },
     onConfirm: async () => { const r = await supabase.from('transactions').delete().eq('id', d.id); if (r.error) notifications.show({ color: 'red', message: r.error.message }); await refresh(); },
   });
-  const list = drafts.data ?? [];
+  const all = drafts.data ?? [];
+  const list = all.filter((d) => d.status === 'draft');
+  // Posted by hand; a payment from a cash box is edited in the box.
+  const posted = all.filter((d) => d.status === 'posted' && !(d.category === 'transfer' && (d.description ?? '').startsWith('העברה ללקוח')));
+  // Who may edit (decision 119): its author or an admin; a posted one is voided and re-entered,
+  // which is finance's to do, so its author needs finance rights too.
+  const canEditDraft = (d: Draft) => access.isAdmin || d.created_by === me;
+  const canEditPosted = (d: Draft) => access.isAdmin || (d.created_by === me && access.canApprove(country));
   return (
     <Paper withBorder p="md">
       <Group justify="space-between" mb={4}>
@@ -173,6 +206,7 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
                 <Table.Td>{CATEGORY_HE[d.category] ?? d.category}{d.description ? ` · ${d.description}` : ''}</Table.Td>
                 <Table.Td>{d.lines.map((l, i) => <div key={i}>{money(l.amount, l.currency)} <Text span size="xs" c="dimmed">{l.who}</Text></div>)}</Table.Td>
                 <Table.Td><Group gap={4} wrap="nowrap" justify="flex-end">
+                  {canEditDraft(d) && <Button size="compact-xs" variant="light" onClick={() => setEditing(d)}>עריכה</Button>}
                   {access.canApprove(country) && <Button size="compact-xs" color="teal" onClick={() => approve(d)}>אישור</Button>}
                   {(access.canApprove(country) || d.created_by === me) && <Button size="compact-xs" variant="subtle" color="red" onClick={() => remove(d)}>מחיקה</Button>}
                 </Group></Table.Td>
@@ -181,8 +215,24 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
           </Table>
         </Paper>
       )}
+      {posted.length > 0 && (
+        <details style={{ marginBottom: 12 }}>
+          <summary><Text span size="sm" fw={600}>תנועות שנרשמו ידנית ({posted.length})</Text></summary>
+          <Table fz="sm" verticalSpacing={4} mt="xs">
+            <Table.Tbody>{posted.map((d) => (
+              <Table.Tr key={d.id}>
+                <Table.Td style={{ whiteSpace: 'nowrap' }}>{date(d.occurred_on)}</Table.Td>
+                <Table.Td>{CATEGORY_HE[d.category] ?? d.category}{d.description ? ` · ${d.description}` : ''}</Table.Td>
+                <Table.Td>{d.lines.map((l, i) => <div key={i}>{money(l.amount, l.currency)} <Text span size="xs" c="dimmed">{l.who}</Text></div>)}</Table.Td>
+                <Table.Td>{canEditPosted(d) && <Button size="compact-xs" variant="light" onClick={() => setEditing(d)}>עריכה</Button>}</Table.Td>
+              </Table.Tr>
+            ))}</Table.Tbody>
+          </Table>
+        </details>
+      )}
       {children}
       {adding && <NewEntry propertyId={propertyId} country={country} accounts={accounts} onClose={() => setAdding(false)} />}
+      {editing && <NewEntry propertyId={propertyId} country={country} accounts={accounts} editing={editing} onClose={() => setEditing(null)} />}
     </Paper>
   );
 }
