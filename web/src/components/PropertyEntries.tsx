@@ -51,18 +51,31 @@ function NewEntry({ propertyId, country, accounts, onClose }: { propertyId: stri
     queryFn: async () => must(await supabase.from('management_agreements').select('manager:parties!management_agreements_manager_party_id_fkey(id, display_name), valid_to')
       .eq('property_id', propertyId)) as unknown as { manager: { id: string; display_name: string }; valid_to: string | null }[],
   });
-  // Where the money is: the accounts this property already uses, every current manager's
-  // cash, and the client's own bank account.
+  // The managers who report in this country (their import sources) and the cash boxes of
+  // this country: money can be with any of them even before the property has an account there.
+  const local = useQuery({
+    queryKey: ['entry-holders', country],
+    queryFn: async () => ({
+      sources: must(await supabase.from('import_sources').select('holder:parties!import_sources_holder_party_id_fkey(id, display_name)').eq('country_code', country)) as unknown as { holder: { id: string; display_name: string } | null }[],
+      boxes: ((await supabase.from('cash_boxes').select('name, holder_party_id').eq('country_code', country)).data ?? []) as { name: string; holder_party_id: string | null }[],
+    }),
+  });
+  // Where the money is (SPEC decisions 103, 118): a cash box of the country (Gershon's), the
+  // accounts this property already uses, every current manager's and every reporting
+  // manager's cash, and the client's own bank account.
   const holders = useMemo(() => {
     const m = new Map<string, string>();
+    for (const b of local.data?.boxes ?? []) if (b.holder_party_id) m.set(`rent_pool|${b.holder_party_id}`, b.name);
     for (const a of accounts) {
       const holder = a.kind === 'client_bank' ? 'beneficiary' : a.holder.id;
-      m.set(`${a.kind}|${holder}`, a.kind === 'client_bank' ? 'חשבון הבנק של הלקוח' : `${ACCOUNT_KIND_HE[a.kind] ?? a.kind} · ${a.holder.display_name}`);
+      if (!m.has(`${a.kind}|${holder}`)) m.set(`${a.kind}|${holder}`, a.kind === 'client_bank' ? 'חשבון הבנק של הלקוח' : `${ACCOUNT_KIND_HE[a.kind] ?? a.kind} · ${a.holder.display_name}`);
     }
-    for (const g of managers.data ?? []) if (!g.valid_to) m.set(`manager_cash|${g.manager.id}`, m.get(`manager_cash|${g.manager.id}`) ?? `${ACCOUNT_KIND_HE.manager_cash} · ${g.manager.display_name}`);
+    const cash = (id: string, name: string) => { if (!m.has(`manager_cash|${id}`)) m.set(`manager_cash|${id}`, `${ACCOUNT_KIND_HE.manager_cash} · ${name}`); };
+    for (const g of managers.data ?? []) if (!g.valid_to) cash(g.manager.id, g.manager.display_name);
+    for (const s of local.data?.sources ?? []) if (s.holder) cash(s.holder.id, s.holder.display_name);
     m.set('client_bank|beneficiary', 'חשבון הבנק של הלקוח');
     return [...m].map(([value, label]) => ({ value, label }));
-  }, [accounts, managers.data]);
+  }, [accounts, managers.data, local.data]);
 
   const [v, setV] = useState({
     on: dayjs().format('YYYY-MM-DD') as string | null, period: dayjs().startOf('month').format('YYYY-MM-DD') as string | null,
