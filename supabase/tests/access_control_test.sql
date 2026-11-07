@@ -1072,6 +1072,34 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
 select app.cash_remove_movement('75000000-0000-0000-0000-000000000003');
 reset role;
 
+-- A sum in dollars at a rate (decision 123): a client's part is converted out of the client's
+-- hryvnia, then paid; what was converted beyond the part stays in dollars.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.cash_movements (id, box_id, occurred_on, amount, currency, kind, party_name, fx_rate)
+  select '76000000-0000-0000-0000-000000000001', id, '2026-10-25', -900, 'USD', 'to_office', 'המשרד', 44 from app.cash_boxes where country_code = 'UA';
+select app.cash_pay_client_fx((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 10, 462, '2026-10-25', null, '76000000-0000-0000-0000-000000000001');
+reset role;
+select pg_temp.check(
+  (select sum(e.amount) from app.entries e join app.transactions t on t.id = e.transaction_id where e.account_id = '74000000-0000-0000-0000-000000000001' and t.status = 'posted') = 538
+  and (select sum(e.amount) from app.entries e join app.accounts a on a.id = e.account_id join app.transactions t on t.id = e.transaction_id
+       where a.kind = 'manager_cash' and a.currency = 'USD' and a.beneficiary_party_id = '10000000-0000-0000-0000-000000000001' and t.status = 'posted') = 0.50
+  and (select sum(e.amount) from app.entries e join app.accounts a on a.id = e.account_id join app.transactions t on t.id = e.transaction_id
+       where a.kind = 'client_bank' and a.currency = 'USD' and t.status = 'posted') = 10
+  and (select fx_transaction_id is not null from app.cash_movements where parent_id = '76000000-0000-0000-0000-000000000001'),
+  'a part of a sum in dollars: hryvnia converted at the rate, the part paid, the rest stays in dollars');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_edit_movement((select id from app.cash_movements where parent_id = '76000000-0000-0000-0000-000000000001'), '2026-10-26', 20, null);
+reset role;
+select pg_temp.check(
+  (select sum(e.amount) from app.entries e join app.transactions t on t.id = e.transaction_id where e.account_id = '74000000-0000-0000-0000-000000000001' and t.status = 'posted') = 120
+  and (select count(*) from app.transactions where category = 'fx' and status = 'posted') = 1,
+  'editing a converted part converts again at the sum''s rate');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement('76000000-0000-0000-0000-000000000001');
+reset role;
+select pg_temp.check(not exists (select 1 from app.transactions where category in ('fx', 'transfer') and status = 'posted'),
+  'removing the sum voids its conversions and transfers');
+
 -- A draft by an editor: its author fixes it in place; another editor may not.
 insert into app.ownerships (property_id, party_id, share_pct, valid_from) values
   ('30000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 100, '2023-01-01');

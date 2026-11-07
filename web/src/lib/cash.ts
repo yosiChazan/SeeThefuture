@@ -4,6 +4,7 @@
 export interface CashMovement {
   id: string; occurred_on: string; amount: number; currency: string; kind: string; party_id: string | null; party_name: string | null;
   notes: string | null; created_by: string | null; parent_id?: string | null; transaction_id?: string | null; mirror_of?: string | null;
+  fx_rate?: number | null; fx_transaction_id?: string | null;
 }
 
 export const KIND_HE: Record<string, string> = {
