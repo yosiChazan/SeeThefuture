@@ -9,6 +9,8 @@ import { useMemo, useState } from 'react';
 import { useAccess } from '../lib/access';
 import { ACCOUNT_KIND_HE, CATEGORY_HE, date, money } from '../lib/format';
 import { useMe } from './ManualTopics';
+import { AccountLedger } from './AccountLedger';
+import type { EntryRow } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
 import type { Account, Country, Currency } from '../lib/types';
 
@@ -112,8 +114,7 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
         must(await supabase.rpc('edit_manual_entry', { p_txn: editing.id, p_on: v.on, p_period: v.period, p_category: v.category, p_description: v.description.trim() || null,
           p_amount: amount, p_currency: v.currency, p_kind: kind, p_holder: holder === 'beneficiary' ? null : holder }));
         notifications.show({ color: 'teal', message: editing.status === 'posted' ? 'התנועה תוקנה: הקודמת בוטלה והמתוקנת נרשמה' : 'התנועה עודכנה' });
-        await qc.invalidateQueries({ queryKey: ['property-drafts', propertyId] });
-        await qc.invalidateQueries({ queryKey: ['property-entries', propertyId] });
+        await qc.invalidateQueries();   // the property's and the owners' ledgers
         onClose();
         return;
       }
@@ -183,12 +184,9 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
   });
   const all = drafts.data ?? [];
   const list = all.filter((d) => d.status === 'draft');
-  // Posted by hand; a payment from a cash box is edited in the box.
-  const posted = all.filter((d) => d.status === 'posted' && !(d.category === 'transfer' && (d.description ?? '').startsWith('העברה ללקוח')));
   // Who may edit (decision 119): its author or an admin; a posted one is voided and re-entered,
   // which is finance's to do, so its author needs finance rights too.
   const canEditDraft = (d: Draft) => access.isAdmin || d.created_by === me;
-  const canEditPosted = (d: Draft) => access.isAdmin || (d.created_by === me && access.canApprove(country));
   return (
     <Paper withBorder p="md">
       <Group justify="space-between" mb={4}>
@@ -215,24 +213,51 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
           </Table>
         </Paper>
       )}
-      {posted.length > 0 && (
-        <details style={{ marginBottom: 12 }}>
-          <summary><Text span size="sm" fw={600}>תנועות שנרשמו ידנית ({posted.length})</Text></summary>
-          <Table fz="sm" verticalSpacing={4} mt="xs">
-            <Table.Tbody>{posted.map((d) => (
-              <Table.Tr key={d.id}>
-                <Table.Td style={{ whiteSpace: 'nowrap' }}>{date(d.occurred_on)}</Table.Td>
-                <Table.Td>{CATEGORY_HE[d.category] ?? d.category}{d.description ? ` · ${d.description}` : ''}</Table.Td>
-                <Table.Td>{d.lines.map((l, i) => <div key={i}>{money(l.amount, l.currency)} <Text span size="xs" c="dimmed">{l.who}</Text></div>)}</Table.Td>
-                <Table.Td>{canEditPosted(d) && <Button size="compact-xs" variant="light" onClick={() => setEditing(d)}>עריכה</Button>}</Table.Td>
-              </Table.Tr>
-            ))}</Table.Tbody>
-          </Table>
-        </details>
-      )}
       {children}
       {adding && <NewEntry propertyId={propertyId} country={country} accounts={accounts} onClose={() => setAdding(false)} />}
       {editing && <NewEntry propertyId={propertyId} country={country} accounts={accounts} editing={editing} onClose={() => setEditing(null)} />}
     </Paper>
+  );
+}
+
+// The edit button on a ledger row (SPEC decision 119): a movement entered by hand (no import
+// batch, not a payment from a cash box), by its author with finance rights, or an admin.
+export function useCanEditEntry() {
+  const access = useAccess();
+  const me = useMe();
+  return (e: EntryRow) => e.transaction.import_batch_id === null && e.transaction.status === 'posted'
+    && !(e.transaction.category === 'transfer' && (e.transaction.description ?? '').startsWith('העברה ללקוח'))
+    && (access.isAdmin || (!!me && e.transaction.created_by === me && !!e.transaction.country_code && access.canApprove(e.transaction.country_code as Country)));
+}
+
+// Opens the edit form for one transaction, read from its entries.
+function EditTransaction({ txnId, onClose }: { txnId: string; onClose: () => void }) {
+  const q = useQuery({
+    queryKey: ['manual-txn', txnId],
+    queryFn: async () => {
+      const rows = must(await supabase.from('entries')
+        .select('amount, currency, property_id, transaction:transactions!inner(id, occurred_on, period, category, description, status, created_by, country_code), account:accounts(kind, holder_party_id, beneficiary_party_id, holder:parties!accounts_holder_party_id_fkey(display_name), beneficiary:parties!accounts_beneficiary_party_id_fkey(display_name))')
+        .eq('transaction_id', txnId)) as unknown as { amount: number; currency: Currency; property_id: string; transaction: Draft & { country_code: Country };
+          account: { kind: string; holder_party_id: string; beneficiary_party_id: string; holder: { display_name: string }; beneficiary: { display_name: string } } }[];
+      const a = rows[0].account;
+      const draft: Draft = { ...rows[0].transaction, currency: rows[0].currency, total: rows.reduce((x, r) => x + Number(r.amount), 0),
+        where: `${a.kind}|${a.kind === 'client_bank' || a.holder_party_id === a.beneficiary_party_id ? 'beneficiary' : a.holder_party_id}`,
+        lines: rows.map((r) => ({ amount: Number(r.amount), currency: r.currency, who: `${r.account.beneficiary.display_name} (אצל ${r.account.holder.display_name})` })) };
+      return { draft, propertyId: rows[0].property_id, country: rows[0].transaction.country_code };
+    },
+  });
+  if (!q.data) return null;
+  return <NewEntry propertyId={q.data.propertyId} country={q.data.country} accounts={[]} editing={q.data.draft} onClose={onClose} />;
+}
+
+// A ledger whose rows entered by hand carry an edit button.
+export function EditableLedger({ accounts, entries, property = false }: { accounts: Account[]; entries: EntryRow[]; property?: boolean }) {
+  const can = useCanEditEntry();
+  const [txn, setTxn] = useState<string | null>(null);
+  return (
+    <>
+      <AccountLedger accounts={accounts} entries={entries} property={property} edit={{ can, open: setTxn }} />
+      {txn && <EditTransaction txnId={txn} onClose={() => setTxn(null)} />}
+    </>
   );
 }

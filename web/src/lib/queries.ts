@@ -113,7 +113,7 @@ export interface EntryRow {
   currency: string;
   memo: string | null;
   account_id: string | null;
-  transaction: { id: string; occurred_on: string; category: string; description: string | null; status: string };
+  transaction: { id: string; occurred_on: string; period?: string; category: string; description: string | null; status: string; import_batch_id?: string | null; created_by?: string | null; country_code?: string };
 }
 
 // Every posted entry of the accounts, oldest first. The API returns at most 1,000
@@ -126,7 +126,7 @@ export function useAccountEntries(accountIds: string[]) {
       const out: EntryRow[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('entries')
-          .select('id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, category, description, status)')
+          .select('id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code)')
           .in('account_id', accountIds).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as EntryRow[];
         out.push(...page);
         if (page.length < 1000) break;
@@ -144,7 +144,7 @@ export function usePropertyEntries(propertyId: string) {
       const out: (EntryRow & { account: Account })[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('entries')
-          .select(`id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, category, description, status), account:accounts!inner(${ACCOUNT_COLS})`)
+          .select(`id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code), account:accounts!inner(${ACCOUNT_COLS})`)
           .eq('property_id', propertyId).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as (EntryRow & { account: Account })[];
         out.push(...page);
         if (page.length < 1000) break;

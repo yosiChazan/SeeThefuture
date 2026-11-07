@@ -1,4 +1,4 @@
-import { Group, Paper, SegmentedControl, Stack, Table, Text } from '@mantine/core';
+import { Button, Group, Paper, SegmentedControl, Stack, Table, Text } from '@mantine/core';
 import { useState } from 'react';
 import { ACCOUNT_KIND_HE, CATEGORY_HE, amountLabel, date, money } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
@@ -10,7 +10,11 @@ const FROM = '2026-01-01';
 // everything before 1.1.2026 summed into one opening line; or the whole history.
 // On a property card only that property's entries are given, so the total is the
 // property's share of the account, and the account's owner is named.
-export function AccountLedger({ accounts, entries, property = false }: { accounts: Account[]; entries: EntryRow[]; property?: boolean }) {
+// `edit`: an edit button on a row the user may edit (SPEC decision 119: a movement entered by
+// hand, by its author or an admin).
+export function AccountLedger({ accounts, entries, property = false, edit }: {
+  accounts: Account[]; entries: EntryRow[]; property?: boolean; edit?: { can: (e: EntryRow) => boolean; open: (transactionId: string) => void };
+}) {
   const [range, setRange] = useState<'2026' | 'all'>('2026');
   const shown = accounts.filter((a) => entries.some((e) => e.account_id === a.id));
   return (
@@ -33,7 +37,7 @@ export function AccountLedger({ accounts, entries, property = false }: { account
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing={4} striped>
                 <Table.Thead>
-                  <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={120}>סכום</Table.Th><Table.Th w={130}>{label} מצטבר</Table.Th></Table.Tr>
+                  <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={120}>סכום</Table.Th><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {range === '2026' && (
@@ -42,6 +46,7 @@ export function AccountLedger({ accounts, entries, property = false }: { account
                       <Table.Td colSpan={2}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
                       <Table.Td />
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
+                      {edit && <Table.Td />}
                     </Table.Tr>
                   )}
                   {rows.map((e) => {
@@ -53,6 +58,7 @@ export function AccountLedger({ accounts, entries, property = false }: { account
                         <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
+                        {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
                       </Table.Tr>
                     );
                   })}
