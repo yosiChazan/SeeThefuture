@@ -6,6 +6,13 @@ let n = 0;
 const m = (kind: string, amount: number, party_name: string | null = null, currency = 'UAH', parent_id: string | null = null): CashMovement =>
   ({ id: `m${++n}`, occurred_on: '2026-10-01', amount, currency, kind, party_id: null, party_name, notes: null, created_by: null, parent_id });
 
+test('conversions are their own line, not money from the managers', () => {
+  const [u, d] = summarize([m('to_client', -900, 'לקוח', 'USD')], () => '', [
+    { who: 'ויטאלי', currency: 'UAH', amount: 100000 }, { who: 'המרות', currency: 'UAH', amount: -39600, fx: true }, { who: 'המרות', currency: 'USD', amount: 895.8, fx: true }]);
+  assert.deepEqual([u.currency, u.received, u.converted, u.expected], ['UAH', 100000, -39600, 60400]);
+  assert.deepEqual([d.currency, d.received, d.converted, d.toClients, d.expected], ['USD', 0, 895.8, 900, -4.2]);
+});
+
 test('what Gershon should hold: received from the reports minus what he sent to us', () => {
   const sent = m('to_office', -1000000);
   const [s] = summarize([sent, m('to_client', -600000, 'לקוח', 'UAH', sent.id), m('office_fee', -50000, null, 'UAH', sent.id), m('expense', -100)],

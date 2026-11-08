@@ -42,7 +42,7 @@ function useAuto(box: Box | null, names: Map<string, string>) {
   return useQuery({
     queryKey: ['cash-auto', box?.id, box?.linked_manager_ids, box?.holder_party_id], enabled: !!box && (box.linked_manager_ids.length > 0 || !!box.holder_party_id),
     queryFn: async () => {
-      type Row = { amount: number; currency: string; accounts: { kind: string; holder_party_id: string } };
+      type Row = { amount: number; currency: string; accounts: { kind: string; holder_party_id: string }; transactions: { category: string } };
       const load = async (kind: string, holders: string[]) => {
         const out: Row[] = [];
         if (!holders.length) return out;
@@ -59,11 +59,12 @@ function useAuto(box: Box | null, names: Map<string, string>) {
       const rows = [...await load('manager_cash', [...box!.linked_manager_ids, ...holder]), ...await load('rent_pool', holder)];
       const m = new Map<string, AutoIn>();
       for (const r of rows) {
-        const who = r.accounts.holder_party_id === box!.holder_party_id
+        const fx = r.transactions.category === 'fx';
+        const who = fx ? 'המרות' : r.accounts.holder_party_id === box!.holder_party_id
           ? (r.accounts.kind === 'rent_pool' ? 'שכירות מירח אצל גרשון' : 'מזומן אצל גרשון: מהדוחות ומכרטיסי הנכסים')
           : `${names.get(r.accounts.holder_party_id) ?? 'מנהל'}, מהדוחות`;
         const k = `${who}|${r.currency}`;
-        const a = m.get(k) ?? m.set(k, { who, currency: r.currency, amount: 0 }).get(k)!;
+        const a = m.get(k) ?? m.set(k, { who, currency: r.currency, amount: 0, fx }).get(k)!;
         a.amount += Number(r.amount);
       }
       return [...m.values()].map((a) => ({ ...a, amount: Math.round(a.amount * 100) / 100 }));
@@ -336,13 +337,15 @@ export function CashBoxes() {
           {sums.map((s) => (
             <Paper key={s.currency} withBorder p="md">
               <Title order={4} mb="sm">{box.name} · {s.currency}</Title>
-              <SimpleGrid cols={{ base: 1, sm: 4 }}>
+              <SimpleGrid cols={{ base: 1, sm: s.converted ? 5 : 4 }}>
                 <Paper withBorder p="sm"><Text size="sm" c="dimmed">התקבל מהמנהלים</Text><Text fw={700} fz={22}>{money(s.received, cur(s.currency))}</Text>
                   {s.fromManagers.map((f) => <Text key={f.who} size="xs" c="dimmed">{f.who}: {money(f.amount, cur(s.currency))}</Text>)}</Paper>
+                {s.converted !== 0 && <Paper withBorder p="sm"><Text size="sm" c="dimmed">{convLabel(s)}</Text><Text fw={700} fz={22}>{money(s.converted, cur(s.currency))}</Text>
+                  <Text size="xs" c="dimmed">{s.converted < 0 ? 'גריבנה של לקוחות שהומרה לפני העברה אליהם' : 'מהגריבנה של הלקוחות, לפני ההעברה אליהם'}</Text></Paper>}
                 <Paper withBorder p="sm"><Text size="sm" c="dimmed">{linked ? 'גרשון העביר אלינו' : 'הועבר למשרד'}</Text><Text fw={700} fz={22}>{money(s.sentToOffice, cur(s.currency))}</Text>
                   {s.toClients > 0 && <Text size="xs" c="dimmed">ועוד ישירות ללקוחות: {money(s.toClients, cur(s.currency))}</Text>}</Paper>
                 <Paper withBorder p="sm" bg="blue.0"><Text size="sm" c="dimmed">{linked ? 'אמור להיות אצל גרשון' : 'אמור להיות בקופה'}</Text><Text fw={700} fz={22}>{money(s.expected, cur(s.currency))}</Text>
-                  <Text size="xs" c="dimmed">התקבל פחות מה שהועבר אלינו</Text></Paper>
+                  <Text size="xs" c="dimmed">{s.converted ? 'התקבל, ± המרות, פחות מה שהועבר אלינו וללקוחות' : 'התקבל פחות מה שהועבר אלינו וללקוחות'}</Text></Paper>
                 <Paper withBorder p="sm"><Text size="sm" c="dimmed">אחרי הוצאות ותנועות אחרות</Text><Text fw={700} fz={22}>{money(s.balance, cur(s.currency))}</Text>
                   <Text size="xs" c="dimmed">{s.others ? `כולל ${money(s.others, cur(s.currency))}` : 'אין הוצאות שנרשמו'}</Text></Paper>
               </SimpleGrid>
@@ -437,6 +440,10 @@ export function CashBoxes() {
   );
 }
 
+// A conversion line (decision 124): hryvnia that left for another currency, or the dollars,
+// euros or shekels it became.
+const convLabel = (s: { converted: number; currency: string }) => (s.converted < 0 ? 'הומר למטבע אחר' : 'התקבל מהמרה מגריבנה');
+
 // The boxes at a glance, for the statistics page (SPEC decision 116): per box and currency,
 // what came in, what was sent to us, what the box should hold and its balance.
 function BoxGlance({ box, names }: { box: Box; names: Map<string, string> }) {
@@ -460,6 +467,8 @@ function BoxGlance({ box, names }: { box: Box; names: Map<string, string> }) {
             <Table.Tbody>
               {linked ? <>
                 <Table.Tr><Table.Td>התקבל מהמנהלים</Table.Td><Table.Td ta="left">{money(s.received, c)}</Table.Td></Table.Tr>
+                {s.converted !== 0 && <Table.Tr><Table.Td>{convLabel(s)}</Table.Td><Table.Td ta="left">{money(s.converted, c)}</Table.Td></Table.Tr>}
+                {s.toClients !== 0 && <Table.Tr><Table.Td>הועבר ישירות ללקוחות</Table.Td><Table.Td ta="left">{money(-s.toClients, c)}</Table.Td></Table.Tr>}
                 <Table.Tr><Table.Td>הועבר אלינו</Table.Td><Table.Td ta="left">{money(s.sentToOffice, c)}</Table.Td></Table.Tr>
                 <Table.Tr><Table.Td c="dimmed">· מזה ללקוחות</Table.Td><Table.Td ta="left" c="dimmed">{money(toClients, c)}</Table.Td></Table.Tr>
                 <Table.Tr><Table.Td c="dimmed">· מזה עמלות למשרד</Table.Td><Table.Td ta="left" c="dimmed">{money(fees, c)}</Table.Td></Table.Tr>
