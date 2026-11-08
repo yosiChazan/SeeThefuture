@@ -42,15 +42,15 @@ function useAuto(box: Box | null, names: Map<string, string>) {
   return useQuery({
     queryKey: ['cash-auto', box?.id, box?.linked_manager_ids, box?.holder_party_id], enabled: !!box && (box.linked_manager_ids.length > 0 || !!box.holder_party_id),
     queryFn: async () => {
-      type Row = { amount: number; currency: string; accounts: { kind: string; holder_party_id: string }; transactions: { category: string } };
-      const load = async (kind: string, holders: string[]) => {
+      type Row = { amount: number; currency: string; accounts: { kind: string; holder_party_id: string; beneficiary_party_id: string }; transactions: { category: string } };
+      const load = async (kind: string, holders: string[], transfers = false) => {
         const out: Row[] = [];
         if (!holders.length) return out;
         for (let at = 0; ; at += 1000) {
-          const page = must(await supabase.from('entries').select('amount, currency, accounts!inner(kind, holder_party_id), transactions!inner(status, category)')
+          const page = must(await supabase.from('entries').select('amount, currency, accounts!inner(kind, holder_party_id, beneficiary_party_id), transactions!inner(status, category)')
             .eq('accounts.kind', kind).in('accounts.holder_party_id', holders).eq('transactions.status', 'posted')
             // A payment to a client is counted once, as "handed to clients": not again here.
-            .neq('transactions.category', 'transfer').order('id').range(at, at + 999)) as unknown as Row[];
+            [transfers ? 'eq' : 'neq']('transactions.category', 'transfer').order('id').range(at, at + 999)) as unknown as Row[];
           out.push(...page);
           if (page.length < 1000) return out;
         }
@@ -65,6 +65,16 @@ function useAuto(box: Box | null, names: Map<string, string>) {
           : `${names.get(r.accounts.holder_party_id) ?? 'מנהל'}, מהדוחות`;
         const k = `${who}|${r.currency}`;
         const a = m.get(k) ?? m.set(k, { who, currency: r.currency, amount: 0, fx }).get(k)!;
+        a.amount += Number(r.amount);
+      }
+      // What a conversion left in a client's dollars, euros or shekels after the transfer to the
+      // client (decision 125): the client's debt to Gershon or credit with him, not cash in the box.
+      const transfers = (await load('manager_cash', [...box!.linked_manager_ids, ...holder], true)).filter((r) => r.currency !== 'UAH');
+      const fxClients = new Set(rows.filter((r) => r.transactions.category === 'fx' && r.currency !== 'UAH').map((r) => `${r.accounts.beneficiary_party_id}|${r.currency}`));
+      for (const r of [...rows.filter((x) => x.currency !== 'UAH' && x.transactions.category === 'fx'), ...transfers]) {
+        if (!fxClients.has(`${r.accounts.beneficiary_party_id}|${r.currency}`)) continue;
+        const k = `residual|${r.currency}`;
+        const a = m.get(k) ?? m.set(k, { who: 'residual', currency: r.currency, amount: 0, residual: true }).get(k)!;
         a.amount += Number(r.amount);
       }
       return [...m.values()].map((a) => ({ ...a, amount: Math.round(a.amount * 100) / 100 }));
@@ -341,7 +351,8 @@ export function CashBoxes() {
                 <Paper withBorder p="sm"><Text size="sm" c="dimmed">התקבל מהמנהלים</Text><Text fw={700} fz={22}>{money(s.received, cur(s.currency))}</Text>
                   {s.fromManagers.map((f) => <Text key={f.who} size="xs" c="dimmed">{f.who}: {money(f.amount, cur(s.currency))}</Text>)}</Paper>
                 {s.converted !== 0 && <Paper withBorder p="sm"><Text size="sm" c="dimmed">{convLabel(s)}</Text><Text fw={700} fz={22}>{money(s.converted, cur(s.currency))}</Text>
-                  <Text size="xs" c="dimmed">{s.converted < 0 ? 'גריבנה של לקוחות שהומרה לפני העברה אליהם' : 'מהגריבנה של הלקוחות, לפני ההעברה אליהם'}</Text></Paper>}
+                  <Text size="xs" c="dimmed">{s.converted < 0 ? 'גריבנה של לקוחות שהומרה לפני העברה אליהם' : 'מהגריבנה של הלקוחות, לפני ההעברה אליהם'}</Text>
+                  {s.residual !== 0 && <Text size="xs" c="dimmed">מזה נשאר ללקוחות כיתרה מול גרשון (לא בקופה): {money(s.residual, cur(s.currency))}</Text>}</Paper>}
                 <Paper withBorder p="sm"><Text size="sm" c="dimmed">{linked ? 'גרשון העביר אלינו' : 'הועבר למשרד'}</Text><Text fw={700} fz={22}>{money(s.sentToOffice, cur(s.currency))}</Text>
                   {s.toClients > 0 && <Text size="xs" c="dimmed">ועוד ישירות ללקוחות: {money(s.toClients, cur(s.currency))}</Text>}</Paper>
                 <Paper withBorder p="sm" bg="blue.0"><Text size="sm" c="dimmed">{linked ? 'אמור להיות אצל גרשון' : 'אמור להיות בקופה'}</Text><Text fw={700} fz={22}>{money(s.expected, cur(s.currency))}</Text>
@@ -469,6 +480,7 @@ function BoxGlance({ box, names }: { box: Box; names: Map<string, string> }) {
                 <Table.Tr><Table.Td>התקבל מהמנהלים</Table.Td><Table.Td ta="left">{money(s.received, c)}</Table.Td></Table.Tr>
                 {s.converted !== 0 && <Table.Tr><Table.Td>{convLabel(s)}</Table.Td><Table.Td ta="left">{money(s.converted, c)}</Table.Td></Table.Tr>}
                 {s.toClients !== 0 && <Table.Tr><Table.Td>הועבר ישירות ללקוחות</Table.Td><Table.Td ta="left">{money(-s.toClients, c)}</Table.Td></Table.Tr>}
+                {s.residual !== 0 && <Table.Tr><Table.Td c="dimmed">· יתרות לקוחות מול גרשון מההמרות (לא בקופה)</Table.Td><Table.Td ta="left" c="dimmed">{money(s.residual, c)}</Table.Td></Table.Tr>}
                 <Table.Tr><Table.Td>הועבר אלינו</Table.Td><Table.Td ta="left">{money(s.sentToOffice, c)}</Table.Td></Table.Tr>
                 <Table.Tr><Table.Td c="dimmed">· מזה ללקוחות</Table.Td><Table.Td ta="left" c="dimmed">{money(toClients, c)}</Table.Td></Table.Tr>
                 <Table.Tr><Table.Td c="dimmed">· מזה עמלות למשרד</Table.Td><Table.Td ta="left" c="dimmed">{money(fees, c)}</Table.Td></Table.Tr>

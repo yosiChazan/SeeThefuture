@@ -8,9 +8,11 @@ const m = (kind: string, amount: number, party_name: string | null = null, curre
 
 test('conversions are their own line, not money from the managers', () => {
   const [u, d] = summarize([m('to_client', -900, 'לקוח', 'USD')], () => '', [
-    { who: 'ויטאלי', currency: 'UAH', amount: 100000 }, { who: 'המרות', currency: 'UAH', amount: -39600, fx: true }, { who: 'המרות', currency: 'USD', amount: 895.8, fx: true }]);
+    { who: 'ויטאלי', currency: 'UAH', amount: 100000 }, { who: 'המרות', currency: 'UAH', amount: -39600, fx: true }, { who: 'המרות', currency: 'USD', amount: 895.8, fx: true },
+    { who: 'residual', currency: 'USD', amount: -4.2, residual: true }]);
   assert.deepEqual([u.currency, u.received, u.converted, u.expected], ['UAH', 100000, -39600, 60400]);
-  assert.deepEqual([d.currency, d.received, d.converted, d.toClients, d.expected], ['USD', 0, 895.8, 900, -4.2]);
+  // all of it went to the client: the 4.20 the client owes is a debt to Gershon, not cash
+  assert.deepEqual([d.currency, d.received, d.converted, d.residual, d.toClients, d.expected], ['USD', 0, 895.8, -4.2, 900, 0]);
 });
 
 test('what Gershon should hold: received from the reports minus what he sent to us', () => {

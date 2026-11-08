@@ -14,13 +14,16 @@ export const KIND_HE: Record<string, string> = {
 
 // fx: a currency conversion in the box's accounts (decision 124), shown on its own line, not
 // as money received from the managers.
-export interface AutoIn { who: string; currency: string; amount: number; fx?: boolean }
+// residual: what conversions left in clients' dollars/euros/shekels after their transfers
+// (decision 125): their balance with Gershon, not cash in the box.
+export interface AutoIn { who: string; currency: string; amount: number; fx?: boolean; residual?: boolean }
 
 export interface BoxSummary {
   currency: string;
   fromManagers: { who: string; amount: number }[];
   received: number;      // from the managers: reports on their own, plus what was entered
   converted: number;     // conversions: hryvnia out (negative), dollars/euros/shekels in (positive)
+  residual: number;      // of which left to clients as debt/credit with the holder, not cash
   sentToOffice: number;  // sums sent to us (positive)
   toClients: number;     // paid to clients straight from the box, not through a sum to us
   expected: number;      // received ± converted − sent to us − paid straight to clients
@@ -37,9 +40,10 @@ export function summarize(ms: CashMovement[], nameOf: (m: CashMovement) => strin
   for (const a of auto) if (!by.has(a.currency)) by.set(a.currency, []);
   return [...by].map(([currency, list]) => {
     const managers = new Map<string, number>();
-    let converted = 0;
+    let converted = 0, residual = 0;
     for (const a of auto) if (a.currency === currency) {
-      if (a.fx) converted += a.amount;
+      if (a.residual) residual += a.amount;
+      else if (a.fx) converted += a.amount;
       else managers.set(a.who, (managers.get(a.who) ?? 0) + a.amount);
     }
     let sentToOffice = 0, toClients = 0, others = 0;
@@ -51,10 +55,10 @@ export function summarize(ms: CashMovement[], nameOf: (m: CashMovement) => strin
       else others += n;
     }
     const received = [...managers.values()].reduce((a, b) => a + b, 0);
-    const expected = received + converted - sentToOffice - toClients;
+    const expected = received + converted - residual - sentToOffice - toClients;
     return {
       currency, fromManagers: [...managers].map(([who, amount]) => ({ who, amount: r2(amount) })).sort((a, b) => b.amount - a.amount),
-      received: r2(received), converted: r2(converted), sentToOffice: r2(sentToOffice), toClients: r2(toClients), expected: r2(expected), others: r2(others), balance: r2(expected + others),
+      received: r2(received), converted: r2(converted), residual: r2(residual), sentToOffice: r2(sentToOffice), toClients: r2(toClients), expected: r2(expected), others: r2(others), balance: r2(expected + others),
     };
   }).sort((a, b) => a.currency.localeCompare(b.currency));
 }
