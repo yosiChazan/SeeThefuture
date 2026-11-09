@@ -4,7 +4,7 @@ import { unzip, type Unzipped } from 'fflate';
 import { notifications } from '@mantine/notifications';
 import { IconExternalLink, IconFileText, IconFileZip, IconLock, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAccess } from '../lib/access';
 import { date } from '../lib/format';
 import { must, supabase } from '../lib/supabase';
@@ -45,7 +45,36 @@ function useThumbs(docs: Doc[]) {
   });
 }
 
-function Preview({ doc, url, height }: { doc: Doc; url: string; height: number }) {
+// Sensitive files preview too (SPEC decision 127), as in Google Drive: straight from our
+// storage, never through an outside viewer, a PDF from a local copy marked as PDF. Showing
+// them is logged as a view of each, once per opening of the card.
+const isPdf = (d: Doc) => /\.pdf$/i.test(d.file_name ?? d.storage_path);
+function useSecretThumbs(docs: Doc[]) {
+  const shown = docs.filter((d) => isImage(d) || isPdf(d) || isVideo(d));
+  const paths = shown.map((d) => d.storage_path);
+  const logged = useRef(new Set<string>());
+  const q = useQuery({
+    queryKey: ['secret-thumbs', paths], enabled: paths.length > 0, staleTime: 50 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.storage.from('documents').createSignedUrls(paths, 3600);
+      if (error) throw error;
+      return new Map(await Promise.all((data ?? []).map(async (x): Promise<[string, string]> => {
+        const path = x.path ?? '', url = x.signedUrl ?? '';
+        if (!url || !/\.pdf$/i.test(path)) return [path, url];
+        try { return [path, URL.createObjectURL(new Blob([await (await fetch(url)).blob()], { type: 'application/pdf' }))]; } catch { return [path, '']; }
+      })));
+    },
+  });
+  useEffect(() => {
+    if (!q.data) return;
+    for (const d of shown) if (!logged.current.has(d.id)) { logged.current.add(d.id); supabase.rpc('log_document_access', { doc: d.id }).then(() => undefined); }
+  }, [q.data]);
+  return q.data;
+}
+
+function Preview({ doc, url, height, local = false }: { doc: Doc; url: string; height: number; local?: boolean }) {
+  if (local && isPdf(doc)) return <iframe src={`${url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} loading="lazy" title={doc.file_name ?? ''} style={{ width: '100%', height, border: 0, borderRadius: 4, pointerEvents: 'none', background: '#fff' }} />;
+  if (local && !isImage(doc) && !isVideo(doc)) return <Stack h={height} align="center" justify="center" gap={4} bg="gray.0"><IconFileText size={32} color="var(--mantine-color-gray-5)" /><Text size="xs" c="dimmed">לחיצה לתצוגה</Text></Stack>;
   if (isImage(doc)) return <Image src={url} h={height} fit="cover" radius="sm" alt={doc.file_name ?? ''} loading="lazy" />;
   // The first frame of a video; it plays in the large view.
   if (isVideo(doc)) return <video src={`${url}#t=0.5`} preload="metadata" muted style={{ width: '100%', height, objectFit: 'cover', borderRadius: 4, pointerEvents: 'none', background: '#000' }} />;
@@ -83,6 +112,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
   const shown = inGroup(group).slice(0, limit);
   const free = shown.filter((d) => !d.sensitive);
   const thumbs = useThumbs(free);
+  const secret = useSecretThumbs(shown.filter((d) => d.sensitive));
 
   async function open(d: Doc) {
     const log = await supabase.rpc('log_document_access', { doc: d.id });
@@ -206,7 +236,9 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
                 <Card key={d.id} withBorder padding={6} radius="md" style={{ cursor: 'pointer' }} onClick={() => open(d)}>
                   <Card.Section>
                     {d.sensitive
-                      ? <Stack h={140} align="center" justify="center" gap={4} bg="gray.0"><IconLock size={28} color="var(--mantine-color-gray-6)" /><Text size="xs" c="dimmed">לחיצה לתצוגה</Text></Stack>
+                      ? (secret?.get(d.storage_path)
+                        ? <Preview doc={d} url={secret.get(d.storage_path)!} height={140} local />
+                        : <Stack h={140} align="center" justify="center" gap={4} bg="gray.0"><IconLock size={28} color="var(--mantine-color-gray-6)" /><Text size="xs" c="dimmed">לחיצה לתצוגה</Text></Stack>)
                       : url ? <Preview doc={d} url={url} height={140} /> : <Stack h={140} bg="gray.0" />}
                   </Card.Section>
                   <Text size="xs" mt={6} lineClamp={1} dir="auto">{d.file_name ?? d.storage_path.split('/').pop()}</Text>
@@ -224,7 +256,7 @@ export function PropertyFiles({ propertyId, country }: { propertyId: string; cou
           {inGroup(group).length > limit && <Button mt="sm" variant="subtle" size="xs" onClick={() => setLimit((n) => n + PAGE)}>עוד ({inGroup(group).length - limit})</Button>}
         </>
       )}
-      {group.sensitive && <Text size="xs" c="dimmed" mt="xs">המסמכים כאן רגישים: התצוגה נפתחת בלחיצה, וכל פתיחה נרשמת ביומן.</Text>}
+      {group.sensitive && <Text size="xs" c="dimmed" mt="xs">המסמכים כאן רגישים: מוצגים רק למי שמורשה לראות אותם, וגם התצוגה המקדימה נרשמת ביומן.</Text>}
 
       {viewing && (
         <Modal opened onClose={() => setViewing(null)} size="xl" title={viewing.doc.file_name ?? 'קובץ'}>
