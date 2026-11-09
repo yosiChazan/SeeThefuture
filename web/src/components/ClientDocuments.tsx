@@ -1,8 +1,8 @@
-import { Alert, Anchor, Badge, Button, FileInput, Group, Modal, Paper, Select, Stack, Table, Text, Title } from '@mantine/core';
-import { IconId, IconUpload } from '@tabler/icons-react';
+import { Alert, Badge, Button, Card, FileInput, Group, Image, Modal, Paper, Select, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { IconFileText, IconId, IconUpload } from '@tabler/icons-react';
 import { IdFromScans } from './IdFromScans';
 import { useIdentity } from '../lib/queries';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAccess } from '../lib/access';
@@ -28,32 +28,70 @@ const TYPE_OPTIONS = [
   { value: 'poa', label: 'ייפוי כוח' }, { value: 'attachment', label: 'מסמך אחר' },
 ];
 
-function DocTable({ docs, canChange, onOpen, onType }: { docs: Doc[]; canChange: (d: Doc) => boolean; onOpen: (d: Doc) => void; onType: (d: Doc, type: string) => void }) {
+const isImage = (d: Doc) => /\.(jpe?g|png|webp|gif)$/i.test(d.file_name ?? d.storage_path);
+const isPdf = (d: Doc) => /\.pdf$/i.test(d.file_name ?? d.storage_path);
+
+// Previews (SPEC decision 126): a picture or the first page of a PDF, so the office sees
+// which file it is without opening it. They are shown only to who may see the document
+// (row-level security) and come straight from our storage, never through an outside
+// viewer; showing them is logged as a view of each document, once per opening of the card.
+function usePreviews(docs: Doc[]) {
+  const shown = docs.filter((d) => isImage(d) || isPdf(d));
+  const paths = shown.map((d) => d.storage_path);
+  const logged = useRef(new Set<string>());
+  const q = useQuery({
+    queryKey: ['doc-previews', paths], enabled: paths.length > 0, staleTime: 50 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.storage.from('documents').createSignedUrls(paths, 3600);
+      if (error) throw error;
+      // A PDF is shown from a local copy marked as PDF, so a file stored without its type
+      // previews instead of downloading.
+      return new Map(await Promise.all((data ?? []).map(async (x): Promise<[string, string]> => {
+        const path = x.path ?? '', url = x.signedUrl ?? '';
+        if (!url || !/\.pdf$/i.test(path)) return [path, url];
+        try {
+          const blob = await (await fetch(url)).blob();
+          return [path, URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }))];
+        } catch { return [path, '']; }
+      })));
+    },
+  });
+  useEffect(() => {
+    if (!q.data) return;
+    for (const d of shown) if (!logged.current.has(d.id)) { logged.current.add(d.id); supabase.rpc('log_document_access', { doc: d.id }).then(() => undefined); }
+  }, [q.data]);
+  return q.data;
+}
+
+function Preview({ d, url }: { d: Doc; url?: string }) {
+  const h = 150;
+  if (url && isImage(d)) return <Image src={url} h={h} fit="cover" alt={d.file_name ?? ''} loading="lazy" />;
+  if (url && isPdf(d)) return <iframe src={`${url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} loading="lazy" title={d.file_name ?? ''} style={{ width: '100%', height: h, border: 0, pointerEvents: 'none', background: '#fff' }} />;
+  return <Stack h={h} align="center" justify="center" bg="gray.0"><IconFileText size={36} color="var(--mantine-color-gray-5)" /></Stack>;
+}
+
+function DocGrid({ docs, previews, canChange, onOpen, onType }: { docs: Doc[]; previews?: Map<string, string>; canChange: (d: Doc) => boolean; onOpen: (d: Doc) => void; onType: (d: Doc, type: string) => void }) {
   if (!docs.length) return <Text c="dimmed" size="sm">אין</Text>;
   return (
-    <Table.ScrollContainer minWidth={560}>
-      <Table verticalSpacing="xs">
-        <Table.Thead>
-          <Table.Tr><Table.Th>קובץ</Table.Th><Table.Th>סוג המסמך</Table.Th><Table.Th>מדינה</Table.Th><Table.Th>נוסף</Table.Th></Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {docs.map((d) => (
-            <Table.Tr key={d.id}>
-              <Table.Td><Anchor size="sm" dir="ltr" onClick={() => onOpen(d)}>{d.file_name ?? d.storage_path.split('/').pop()}</Anchor></Table.Td>
-              <Table.Td w={190}>
-                {canChange(d) ? (
-                  <Select size="xs" allowDeselect={false} aria-label="סוג המסמך" value={d.doc_type}
-                    data={TYPE_OPTIONS.some((o) => o.value === d.doc_type) ? TYPE_OPTIONS : [...TYPE_OPTIONS, { value: d.doc_type, label: DOC_TYPE_HE[d.doc_type] ?? d.doc_type }]}
-                    onChange={(v) => v && v !== d.doc_type && onType(d, v)} />
-                ) : <Text size="sm">{DOC_TYPE_HE[d.doc_type] ?? d.doc_type}</Text>}
-              </Table.Td>
-              <Table.Td>{COUNTRY_HE[d.country_code]}</Table.Td>
-              <Table.Td>{date(d.uploaded_at.slice(0, 10))}</Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
-    </Table.ScrollContainer>
+    <SimpleGrid cols={{ base: 2, sm: 3, md: 4, lg: 5 }} spacing="sm">
+      {docs.map((d) => (
+        <Card key={d.id} withBorder padding={6} radius="md">
+          <Card.Section style={{ cursor: 'pointer' }} onClick={() => onOpen(d)} title="פתיחה">
+            <Preview d={d} url={previews?.get(d.storage_path)} />
+          </Card.Section>
+          <Text size="xs" mt={6} lineClamp={1} dir="auto" style={{ cursor: 'pointer' }} onClick={() => onOpen(d)}>{d.file_name ?? d.storage_path.split('/').pop()}</Text>
+          {canChange(d) ? (
+            <Select size="xs" mt={4} allowDeselect={false} aria-label="סוג המסמך" value={d.doc_type}
+              data={TYPE_OPTIONS.some((o) => o.value === d.doc_type) ? TYPE_OPTIONS : [...TYPE_OPTIONS, { value: d.doc_type, label: DOC_TYPE_HE[d.doc_type] ?? d.doc_type }]}
+              onChange={(v) => v && v !== d.doc_type && onType(d, v)} />
+          ) : <Badge size="xs" mt={4} variant="light">{DOC_TYPE_HE[d.doc_type] ?? d.doc_type}</Badge>}
+          <Group justify="space-between" mt={4} gap={4}>
+            <Text size="xs" c="dimmed">{COUNTRY_HE[d.country_code]}</Text>
+            <Text size="xs" c="dimmed">{date(d.uploaded_at.slice(0, 10))}</Text>
+          </Group>
+        </Card>
+      ))}
+    </SimpleGrid>
   );
 }
 
@@ -136,6 +174,8 @@ export function ClientDocuments({ partyId, countries = [] }: { partyId: string; 
       .eq('entity_type', 'party').eq('entity_id', partyId).order('uploaded_at').order('file_name')) as Doc[],
   });
 
+  const previews = usePreviews(docs.data ?? []);
+
   async function open(d: Doc) {
     const log = await supabase.rpc('log_document_access', { doc: d.id });
     if (log.error) { notifications.show({ color: 'red', message: log.error.message }); return; }
@@ -167,13 +207,13 @@ export function ClientDocuments({ partyId, countries = [] }: { partyId: string; 
           primary={docs.data.filter(isPassport)} others={docs.data.filter((d) => !isPassport(d))} />
       )}
       {uploading && <UploadDocuments partyId={partyId} countries={countries} onClose={() => setUploading(false)} />}
-      <Text size="xs" c="dimmed" mb="sm">מסמכים רגישים מוצגים רק למי שיש לו הרשאה למסמכים רגישים במדינה. כל פתיחה נרשמת.</Text>
+      <Text size="xs" c="dimmed" mb="sm">מסמכים רגישים מוצגים רק למי שיש לו הרשאה למסמכים רגישים במדינה. כל פתיחה, וגם הצגת התצוגה המקדימה, נרשמת.</Text>
       <QueryState q={docs}>{(ds) => ds.length ? (
         <Stack>
           {([['דרכונים', ds.filter(isPassport)], ['מסמכים נוספים', ds.filter((d) => !isPassport(d))]] as const).map(([title, list]) => (
             <div key={title}>
               <Group gap="xs" mb={4}><Text fw={600} size="sm">{title}</Text><Badge size="sm" variant="light">{list.length}</Badge></Group>
-              <DocTable docs={list} canChange={(d) => access.canEdit(d.country_code)} onOpen={open} onType={setType} />
+              <DocGrid docs={list} previews={previews} canChange={(d) => access.canEdit(d.country_code)} onOpen={open} onType={setType} />
             </div>
           ))}
         </Stack>
