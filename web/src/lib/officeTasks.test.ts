@@ -16,6 +16,9 @@ test('tasks sort by date, priority, subject and by who handles them', () => {
   assert.deepEqual(sortTasks([a, b, c], 'priority', name).map((x) => x.id), ['א', 'ג', 'ב']);
   assert.deepEqual(sortTasks([a, b, c], 'subject', name).map((x) => x.id), ['א', 'ב', 'ג']);
   assert.deepEqual(sortTasks([a, b, c], 'assignee', name).map((x) => x.id), ['א', 'ב', 'ג']);
+  const rank = (id: string | null | undefined) => ({ c1: 1, c2: 2 }[id ?? ''] ?? 99);
+  assert.deepEqual(sortTasks([{ ...a, category_id: 'c2' }, { ...b, category_id: null }, { ...c, category_id: 'c1' }], 'category', name, rank).map((x) => x.id), ['ג', 'ב', 'א']);
+  assert.deepEqual(sortTasks([{ ...a, trigger_kind: 'monthly' }, { ...b, trigger_kind: 'client' }, c], 'trigger', name).map((x) => x.id), ['ב', 'א', 'ג']);
   assert.deepEqual([...openByAssignee([a, b, { ...c, status: 'done', office_task_assignees: [{ user_id: 'x', party_id: null }] }])], [['u:x', 1], ['u:y', 1]]);
 });
 

@@ -1149,12 +1149,13 @@ reset role;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
 select pg_temp.check((select count(*) from app.office_tasks) = 1, 'the employee it is with sees the task');
 insert into app.office_task_events (task_id, kind, body) select id, 'reply', 'בטיפול' from app.office_tasks;
-update app.office_tasks set status = 'in_progress', priority = 'low';
+update app.office_tasks set status = 'in_progress', priority = 'low', category_id = (select id from app.task_categories where label = 'ייעול');
 delete from app.office_task_assignees where party_id is not null;
 reset role;
 select pg_temp.check((select string_agg(kind, ',' order by created_at, kind) from app.office_task_events) like 'created,%'
   and (select count(*) from app.office_task_events where kind in ('reply', 'status', 'change', 'unassign')) = 4,
   'a reply, the state, a change of a detail and passing it on are all in the history');
+select pg_temp.check((select data->'category'->>1 from app.office_task_events where kind = 'change') = 'ייעול', 'a change of category is in the history by name');
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
 select pg_temp.check(not exists (select 1 from app.office_tasks), 'a client no longer on the task does not see it');
 reset role;

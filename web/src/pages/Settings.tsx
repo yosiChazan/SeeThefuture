@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { QueryState } from '../components/common';
 import { ResetItai } from '../components/ResetItai';
 import { FileCategoriesSettings } from '../components/FileCategoriesSettings';
+import { TaskCategoriesSettings } from '../components/TaskCategoriesSettings';
 import { SplitNames } from '../components/SplitNames';
 import { useAccess } from '../lib/access';
 import { listSharedFiles, loadDropbox, saveSettings, startConnect } from '../lib/dropbox';
@@ -65,6 +66,7 @@ export function Settings() {
         </Paper>
       )}</QueryState>
       <FileCategoriesSettings />
+      <TaskCategoriesSettings />
       <SplitNames />
       <ResetItai />
     </Stack>

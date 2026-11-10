@@ -11,23 +11,24 @@ export const PRIORITY_COLOR: Record<Priority, string> = { low: 'gray', medium: '
 export const STATUS_HE: Record<TaskStatus, string> = { assigned: 'מוען', in_progress: 'בטיפול', done: 'טופל' };
 export const STATUS_COLOR: Record<TaskStatus, string> = { assigned: 'blue', in_progress: 'orange', done: 'teal' };
 const PRIORITY_RANK: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
-const FIELD_HE: Record<string, string> = { subject: 'הנושא', body: 'התוכן', priority: 'העדיפות', trigger_kind: 'הטריגר' };
+const FIELD_HE: Record<string, string> = { subject: 'הנושא', body: 'התוכן', priority: 'העדיפות', trigger_kind: 'הטריגר', category: 'הקטגוריה' };
 
 export interface Assignee { id?: string; user_id: string | null; party_id: string | null }
 export interface TaskLink { id?: string; kind: 'client' | 'property' | 'contact' | 'country'; entity_id: string | null; country_code: string | null }
 export interface OfficeTask {
   id: string; created_by: string; created_at: string; updated_at: string; trigger_kind: Trigger; subject: string; body: string | null;
-  priority: Priority; status: TaskStatus; office_task_assignees: Assignee[]; office_task_links: TaskLink[];
+  priority: Priority; status: TaskStatus; category_id?: string | null; office_task_assignees: Assignee[]; office_task_links: TaskLink[];
 }
 export interface TaskEvent { id: string; task_id: string; kind: string; body: string | null; data: Record<string, unknown> | null; created_by: string | null; created_at: string }
 
-export type SortKey = 'updated' | 'created' | 'priority' | 'subject' | 'assignee';
+export type SortKey = 'updated' | 'created' | 'priority' | 'subject' | 'assignee' | 'trigger' | 'category';
 
 export const assigneeKey = (a: Assignee) => (a.user_id ? `u:${a.user_id}` : `p:${a.party_id}`);
 
 // Sorting the list. "By who handles it" orders by the first assignee's name; a task with
 // no one comes last.
-export function sortTasks(tasks: OfficeTask[], key: SortKey, nameOf: (a: Assignee) => string): OfficeTask[] {
+// "By category" orders by the category's place in Settings (`categoryRank`); none comes last.
+export function sortTasks(tasks: OfficeTask[], key: SortKey, nameOf: (a: Assignee) => string, categoryRank: (id: string | null | undefined) => number = () => 0): OfficeTask[] {
   const first = (t: OfficeTask) => t.office_task_assignees.map(nameOf).sort((a, b) => a.localeCompare(b, 'he'))[0] ?? '￿';
   const by: Record<SortKey, (a: OfficeTask, b: OfficeTask) => number> = {
     updated: (a, b) => b.updated_at.localeCompare(a.updated_at),
@@ -35,6 +36,8 @@ export function sortTasks(tasks: OfficeTask[], key: SortKey, nameOf: (a: Assigne
     priority: (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || b.updated_at.localeCompare(a.updated_at),
     subject: (a, b) => a.subject.localeCompare(b.subject, 'he'),
     assignee: (a, b) => first(a).localeCompare(first(b), 'he') || PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
+    trigger: (a, b) => TRIGGER_HE[a.trigger_kind].localeCompare(TRIGGER_HE[b.trigger_kind], 'he') || PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
+    category: (a, b) => categoryRank(a.category_id) - categoryRank(b.category_id) || PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
   };
   return [...tasks].sort(by[key]);
 }
