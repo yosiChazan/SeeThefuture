@@ -1135,6 +1135,48 @@ end $$;
 reset role;
 delete from app.ownerships where property_id = '30000000-0000-0000-0000-000000000002';
 
+-- Tasks (decision 128): only the author, who it is with, management and admins see it.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.create_office_task('client', 'לבדוק חוזה', 'פרטים', 'high',
+  array['00000000-0000-0000-0000-00000000000b']::uuid[], array['10000000-0000-0000-0000-000000000001']::uuid[],
+  '[{"kind":"property","entity_id":"30000000-0000-0000-0000-000000000001"},{"kind":"country","country_code":"UA"}]');
+select pg_temp.check((select count(*) from app.office_task_links) = 2 and (select count(*) from app.office_task_assignees) = 2
+  and (select count(*) from app.office_task_events) = 1, 'a task is created with its links and assignees, as one "created" event');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select pg_temp.check((select count(*) from app.office_tasks) = 1 and (select count(*) from app.task_people()) >= 1, 'a client the task is with sees it, and the names on it');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.office_tasks) = 1, 'the employee it is with sees the task');
+insert into app.office_task_events (task_id, kind, body) select id, 'reply', 'בטיפול' from app.office_tasks;
+update app.office_tasks set status = 'in_progress', priority = 'low';
+delete from app.office_task_assignees where party_id is not null;
+reset role;
+select pg_temp.check((select string_agg(kind, ',' order by created_at, kind) from app.office_task_events) like 'created,%'
+  and (select count(*) from app.office_task_events where kind in ('reply', 'status', 'change', 'unassign')) = 4,
+  'a reply, the state, a change of a detail and passing it on are all in the history');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select pg_temp.check(not exists (select 1 from app.office_tasks), 'a client no longer on the task does not see it');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.office_tasks) = 1, 'management sees every task');
+reset role;
+-- Another employee, not on the task: sees nothing and cannot answer.
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000f', 'ro.other@example.test');
+insert into app.profiles (user_id, display_name) values ('00000000-0000-0000-0000-00000000000f', 'RO other');
+insert into app.user_country_roles (user_id, country_code, level) values ('00000000-0000-0000-0000-00000000000f', 'RO', 'editor');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000f');
+select pg_temp.check(not exists (select 1 from app.office_tasks), 'an employee the task is not with does not see it');
+do $$ begin
+  insert into app.office_task_events (task_id, kind, body) select id, 'reply', 'x' from app.office_tasks;
+  insert into app.office_task_events (task_id, kind, body) values ((select id from app.office_task_links limit 1), 'reply', 'x');
+  raise exception 'FAILED: an outsider answered a task';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - an employee the task is not with cannot answer it';
+end $$;
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
