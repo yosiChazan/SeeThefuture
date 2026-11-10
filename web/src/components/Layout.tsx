@@ -19,11 +19,11 @@ const NAV = [
   { to: '/stats', label: 'סטטיסטיקות', icon: IconChartBar },
   { to: '/cash', label: 'קופות', icon: IconCash },
   { to: '/tasks', label: 'משימות', icon: IconListCheck },
+  { to: '/messages', label: 'הודעות', icon: IconMessages },
 ];
 
 // Screens from SPEC §6.1 that wait for later stages (§9).
 const LATER = [
-  { label: 'הודעות', icon: IconMessages },
   { label: 'דוחות חודשיים', icon: IconFileText },
 ];
 
