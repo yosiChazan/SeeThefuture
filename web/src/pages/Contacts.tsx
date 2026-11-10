@@ -1,6 +1,8 @@
-import { Anchor, Badge, Group, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
-import { IconSearch } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { Anchor, Badge, Button, Group, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { IconPlus, IconSearch } from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
+import { ClientForm } from '../components/ClientForm';
+import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
 import { QueryState } from '../components/common';
 import { useContacts } from '../lib/queries';
@@ -25,11 +27,18 @@ export function Contacts() {
       .filter((c) => !s || [c.display_name, c.phone, c.email].some((x) => x?.toLowerCase().includes(s)))
       .sort((a, b) => a.display_name.localeCompare(b.display_name, 'he'));
   }, [q.data, search, role]);
+  const access = useAccess();
+  const canAdd = access.isAdmin || access.countries.some((x) => access.canEdit(x));
+  const [adding, setAdding] = useState(false);
   const set = (k: string, v: string | null) => setParams((p) => { if (v) p.set(k, v); else p.delete(k); return p; }, { replace: true });
 
   return (
     <Stack>
-      <Title order={2}>אנשי קשר</Title>
+      <Group justify="space-between">
+        <Title order={2}>אנשי קשר</Title>
+        {canAdd && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>איש קשר חדש</Button>}
+      </Group>
+      {adding && <ClientForm opened contact onClose={() => setAdding(false)} />}
       <Text size="sm" c="dimmed">שוכרים, ספקים, עורכי דין, מנהלים ומי שאינו לקוח. לקוח שאינו באמת לקוח מעבירים לכאן מהכרטיס שלו ("הגדרה כאיש קשר").</Text>
       <Group>
         <TextInput placeholder="חיפוש שם, טלפון או מייל" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => set('q', e.currentTarget.value)} w={260} />
