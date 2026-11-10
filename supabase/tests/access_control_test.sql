@@ -1250,6 +1250,23 @@ exception when insufficient_privilege then raise notice 'ok - only finance links
 end $$;
 reset role;
 
+-- The source is seen only by who recorded the transaction and an admin (decision 138).
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  perform source from app.transactions limit 1;
+  raise exception 'FAILED: the source column was read directly';
+exception when insufficient_privilege then raise notice 'ok - the source is not read directly';
+end $$;
+select pg_temp.check(
+  (select count(*) from app.transaction_sources(array(select id from app.transactions))) = (select count(*) from app.transactions where created_by = '00000000-0000-0000-0000-00000000000c')
+  and (select count(*) from app.transaction_sources(array(select id from app.transactions))) > 0,
+  'who recorded a transaction sees its source; not the others''');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check((select count(*) from app.transaction_sources(array(select id from app.transactions))) = (select count(*) from app.transactions),
+  'an admin sees every source');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
