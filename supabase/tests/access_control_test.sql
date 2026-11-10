@@ -1224,6 +1224,19 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000f');
 select pg_temp.check(not exists (select 1 from app.office_task_series), 'an employee not on a recurring task does not see it');
 reset role;
 
+-- Where a transaction came from (decision 136): set on its own, filled in once, never changed.
+select pg_temp.check((select count(*) from app.transactions where source is null) = 0
+  and exists (select 1 from app.transactions where source like 'report:%') and exists (select 1 from app.transactions where source = 'manual'),
+  'every transaction has a source: its report, or manual');
+do $$ declare t uuid; begin
+  select id into t from app.transactions where status = 'posted' and source = 'manual' limit 1;
+  update app.transactions set source = 'excel:test' where id = t;
+  raise exception 'FAILED: the source of a transaction changed';
+exception when raise_exception then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - the source of a transaction does not change';
+end $$;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

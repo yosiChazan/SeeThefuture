@@ -2,6 +2,7 @@ import { Button, Group, Paper, SegmentedControl, Select, Stack, Table, Text } fr
 import { useState } from 'react';
 import { ACCOUNT_KIND_HE, CATEGORY_HE, amountLabel, date, money } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
+import { SourceBadge } from './SourceBadge';
 import type { Account, Currency } from '../lib/types';
 
 const FROM = '2026-01-01';
@@ -46,13 +47,13 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing={4} striped>
                 <Table.Thead>
-                  <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={120}>סכום</Table.Th><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
+                  <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={70}>מקור</Table.Th><Table.Th w={120}>סכום</Table.Th><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {range === '2026' && (
                     <Table.Tr fw={600}>
                       <Table.Td>01.01.2026</Table.Td>
-                      <Table.Td colSpan={2}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
+                      <Table.Td colSpan={3}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
                       <Table.Td />
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
                       {edit && <Table.Td />}
@@ -65,6 +66,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                         <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
                         <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
                         <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
+                        <Table.Td><SourceBadge source={e.transaction.source} importBatchId={e.transaction.import_batch_id} /></Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
                         {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
@@ -106,7 +108,7 @@ function ByDate({ accounts, entries, from, property, edit }: {
       <Table.ScrollContainer minWidth={700}>
         <Table verticalSpacing={4} striped>
           <Table.Thead>
-            <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={200}>קופה</Table.Th><Table.Th w={70}>מטבע</Table.Th><Table.Th w={120}>סכום</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
+            <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={200}>קופה</Table.Th><Table.Th w={70}>מקור</Table.Th><Table.Th w={70}>מטבע</Table.Th><Table.Th w={120}>סכום</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {rows.map((e) => {
@@ -117,6 +119,7 @@ function ByDate({ accounts, entries, from, property, edit }: {
                   <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
                   <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
                   <Table.Td><Text size="xs">{accountName(a, property)}</Text></Table.Td>
+                  <Table.Td><SourceBadge source={e.transaction.source} importBatchId={e.transaction.import_batch_id} /></Table.Td>
                   <Table.Td>{e.currency}</Table.Td>
                   <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                   {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
