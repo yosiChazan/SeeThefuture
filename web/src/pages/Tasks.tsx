@@ -11,8 +11,8 @@ import { AddLink, append, LinkedText, useMe } from '../components/ManualTopics';
 import { useAccess } from '../lib/access';
 import { COUNTRIES, COUNTRY_HE, propertyTitle } from '../lib/format';
 import {
-  assigneeKey, describeEvent, MONTH_HE, nextOccurrence, openByAssignee, PRIORITY_COLOR, PRIORITY_HE, recurrenceText, sortTasks, STATUS_COLOR, STATUS_HE, taskMail, WEEKDAY_HE,
-  type Assignee, type OfficeTask, type Priority, type Series, type SortKey, type TaskEvent, type TaskLink, type TaskStatus,
+  assigneeKey, describeEvent, FILTER_FIELD_HE, filterTasks, MONTH_HE, nextOccurrence, openByAssignee, PRIORITY_COLOR, PRIORITY_HE, recurrenceText, sortTasks, STATUS_COLOR, STATUS_HE, taskMail, WEEKDAY_HE,
+  type Assignee, type FilterField, type OfficeTask, type TaskFilter, type Priority, type Series, type SortKey, type TaskEvent, type TaskLink, type TaskStatus,
 } from '../lib/officeTasks';
 import { useClients, useContacts, useProperties } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
@@ -442,6 +442,42 @@ function SeriesList({ dir }: { dir: Directory }) {
   );
 }
 
+// Filters, the same fields as sorting (decision 132): choose a field, then one or more of its
+// values (a text for the subject, a range for the dates). Several filters narrow together:
+// first a category, then within it a trigger, and so on.
+function TaskFilters({ filters, setFilters, choices }: {
+  filters: TaskFilter[]; setFilters: (f: TaskFilter[]) => void; choices: Partial<Record<FilterField, { value: string; label: string }[]>>;
+}) {
+  const used = new Set(filters.map((f) => f.field));
+  const fields = (Object.keys(FILTER_FIELD_HE) as FilterField[]).filter((f) => !used.has(f));
+  const set = (i: number, values: string[]) => setFilters(filters.map((f, j) => (j === i ? { ...f, values } : f)));
+  const remove = (i: number) => setFilters(filters.filter((_, j) => j !== i));
+  return (
+    <Group gap="xs" align="flex-end">
+      {filters.map((f, i) => (
+        <Group key={f.field} gap={4} align="flex-end" wrap="nowrap">
+          {f.field === 'subject'
+            ? <TextInput size="xs" w={200} label={FILTER_FIELD_HE.subject} placeholder="מילה בנושא או בתוכן" value={f.values[0] ?? ''} onChange={(e) => set(i, [e.currentTarget.value])} />
+            : f.field === 'created' || f.field === 'updated'
+              ? <Group gap={4} wrap="nowrap">
+                  <DateInput size="xs" w={120} label={`${FILTER_FIELD_HE[f.field]} מ-`} valueFormat="DD.MM.YYYY" clearable value={f.values[0] || null}
+                    onChange={(d) => set(i, [d ? dayjs(d).format('YYYY-MM-DD') : '', f.values[1] ?? ''])} />
+                  <DateInput size="xs" w={120} label="עד" valueFormat="DD.MM.YYYY" clearable value={f.values[1] || null}
+                    onChange={(d) => set(i, [f.values[0] ?? '', d ? dayjs(d).format('YYYY-MM-DD') : ''])} />
+                </Group>
+              : <MultiSelect size="xs" w={260} label={FILTER_FIELD_HE[f.field]} placeholder="בחירה (אפשר כמה)" searchable data={choices[f.field] ?? []}
+                  value={f.values} onChange={(x) => set(i, x)} />}
+          <ActionIcon variant="subtle" color="gray" mb={2} onClick={() => remove(i)} aria-label="הסרת הסינון"><IconTrash size={14} /></ActionIcon>
+        </Group>
+      ))}
+      {fields.length > 0 && <Select size="xs" w={170} label={filters.length ? 'ועוד סינון לפי' : 'סינון לפי'} placeholder="בחירת שדה" value={null}
+        data={fields.map((f) => ({ value: f, label: FILTER_FIELD_HE[f] }))}
+        onChange={(x) => x && setFilters([...filters, { field: x as FilterField, values: [] }])} />}
+      {filters.length > 0 && <Button size="xs" variant="subtle" color="gray" onClick={() => setFilters([])}>ניקוי הסינון</Button>}
+    </Group>
+  );
+}
+
 export function Tasks() {
   const access = useAccess();
   const me = useMe();
@@ -450,8 +486,7 @@ export function Tasks() {
   const [params, setParams] = useSearchParams();
   const [sort, setSort] = useState<SortKey>('updated');
   const [state, setState] = useState<'open' | 'done' | 'all'>('open');
-  const [who, setWho] = useState<string | null>(null);
-  const [cat, setCat] = useState<string | null>(null);
+  const [filters, setFilters] = useState<TaskFilter[]>([]);
   const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<{ task: OfficeTask; to: Assignee[] } | null>(null);
   const all = tasks.data ?? [];
@@ -472,10 +507,15 @@ export function Tasks() {
     { value: 'mine', label: 'אצלי' }, { value: 'sent', label: 'שפתחתי' },
     ...[...counts].map(([k, n]) => ({ value: k, label: `${dir.nameOf(toAssignee(k))} (${n})` })).sort((a, b) => a.label.localeCompare(b.label, 'he')),
   ];
-  const shown = sortTasks(all.filter((t) => (state === 'all' || (state === 'done') === (t.status === 'done'))
-    && (!who || (who === 'mine' ? t.office_task_assignees.some((a) => a.user_id === me) : who === 'sent' ? t.created_by === me
-      : t.office_task_assignees.some((a) => assigneeKey(a) === who)))
-    && (!cat || (cat === 'none' ? !t.category_id : t.category_id === cat))), sort, dir.nameOf, { trigger: dir.trigRank, category: dir.catRank });
+  const shown = sortTasks(filterTasks(all.filter((t) => state === 'all' || (state === 'done') === (t.status === 'done')), filters, me),
+    sort, dir.nameOf, { trigger: dir.trigRank, category: dir.catRank });
+  // The values each filter offers, as in sorting.
+  const choices: Partial<Record<FilterField, { value: string; label: string }[]>> = {
+    priority: [{ value: 'high', label: PRIORITY_HE.high }, { value: 'medium', label: PRIORITY_HE.medium }, { value: 'low', label: PRIORITY_HE.low }],
+    assignee: [...whoOptions, { value: 'none', label: 'לא הועברה לטיפול' }],
+    trigger: [...dir.trigOptions, { value: 'none', label: 'בלי טריגר' }],
+    category: [...dir.catOptions, { value: 'none', label: 'בלי קטגוריה' }],
+  };
 
   return (
     <Stack>
@@ -492,10 +532,9 @@ export function Tasks() {
           data={[{ value: 'open', label: 'פתוחות' }, { value: 'done', label: 'טופלו' }, { value: 'all', label: 'הכול' }]} />
         <Select label="מיון" w={170} allowDeselect={false} value={sort} onChange={(x) => x && setSort(x as SortKey)}
           data={[{ value: 'updated', label: 'עדכון אחרון' }, { value: 'created', label: 'תאריך פתיחה' }, { value: 'priority', label: 'דחיפות' }, { value: 'subject', label: 'נושא' }, { value: 'assignee', label: 'בטיפול של' }, { value: 'trigger', label: 'טריגר' }, { value: 'category', label: 'קטגוריה' }]} />
-        <Select label="קטגוריה" w={170} clearable placeholder="כל הקטגוריות" data={[...dir.catOptions, { value: 'none', label: 'בלי קטגוריה' }]} value={cat} onChange={setCat} />
-        <Select label="בטיפול של" w={240} clearable placeholder="כל המשימות שאני רואה" data={whoOptions} value={who} onChange={setWho} searchable />
         <Text size="sm" c="dimmed">{shown.length} משימות</Text>
       </Group>
+      <TaskFilters filters={filters} setFilters={setFilters} choices={choices} />
       {tasks.error && <Alert color="red">{(tasks.error as Error).message}</Alert>}
       {created && (
         <Alert color="teal" withCloseButton onClose={() => setCreated(null)} title={`המשימה "${created.task.subject}" נשמרה`}>

@@ -136,3 +136,30 @@ export function recurrenceText(s: Rule & Pick<Series, 'lead_days'>): string {
     : `כל שנה, ב-${list([...s.year_dates].sort().map((x) => `${Number(x.slice(3))} ב${MONTH_HE[Number(x.slice(0, 2)) - 1]}`))}`;
   return s.lead_days ? `${base} · מופיעה ${s.lead_days} ימים לפני` : base;
 }
+
+// Filtering the list (SPEC decision 132) by the same fields as sorting. Several filters
+// together must all hold; several values in one filter are "any of them". "none" is a task
+// without a trigger or a category; "mine" and "sent" are the viewer's.
+export type FilterField = 'updated' | 'created' | 'priority' | 'subject' | 'assignee' | 'trigger' | 'category';
+export interface TaskFilter { field: FilterField; values: string[] }
+export const FILTER_FIELD_HE: Record<FilterField, string> = {
+  updated: 'עדכון אחרון', created: 'תאריך פתיחה', priority: 'דחיפות', subject: 'נושא', assignee: 'בטיפול של', trigger: 'טריגר', category: 'קטגוריה',
+};
+export function filterTasks(tasks: OfficeTask[], filters: TaskFilter[], me: string): OfficeTask[] {
+  const holds = (t: OfficeTask, f: TaskFilter): boolean => {
+    const v = f.values;
+    switch (f.field) {
+      case 'updated': case 'created': {
+        const d = (f.field === 'updated' ? t.updated_at : t.created_at).slice(0, 10);
+        return (!v[0] || d >= v[0]) && (!v[1] || d <= v[1]);
+      }
+      case 'subject': return !v[0] || `${t.subject} ${t.body ?? ''}`.toLowerCase().includes(v[0].trim().toLowerCase());
+      case 'priority': return v.includes(t.priority);
+      case 'trigger': return v.includes(t.trigger_id ?? 'none');
+      case 'category': return v.includes(t.category_id ?? 'none');
+      case 'assignee': return v.some((x) => x === 'mine' ? t.office_task_assignees.some((a) => a.user_id === me)
+        : x === 'sent' ? t.created_by === me : x === 'none' ? !t.office_task_assignees.length : t.office_task_assignees.some((a) => assigneeKey(a) === x));
+    }
+  };
+  return tasks.filter((t) => filters.every((f) => !f.values.length || holds(t, f)));
+}

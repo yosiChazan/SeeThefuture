@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { describeEvent, nextOccurrence, openByAssignee, recurrenceText, seriesOn, sortTasks, taskMail, type OfficeTask } from './officeTasks.ts';
+import { describeEvent, filterTasks, nextOccurrence, openByAssignee, recurrenceText, seriesOn, sortTasks, taskMail, type OfficeTask } from './officeTasks.ts';
 
 const t = (id: string, o: Partial<OfficeTask>): OfficeTask => ({
   id, created_by: 'u0', created_at: '2026-11-01', updated_at: '2026-11-01', trigger_id: 'g1', subject: id, body: null,
@@ -47,4 +47,19 @@ test('when a recurring task falls', () => {
   assert.equal(recurrenceText({ ...many, lead_days: 0 }), 'כל חודש, ב-1 וב-15 וביום האחרון');
   assert.equal(recurrenceText({ ...r, frequency: 'yearly', year_dates: ['09-30', '03-31'], lead_days: 0 }), 'כל שנה, ב-31 במרץ וב-30 בספטמבר');
   assert.equal(recurrenceText({ ...r, frequency: 'weekly', weekday: 0, lead_days: 2 }), 'כל שבוע, ביום ראשון · מופיעה 2 ימים לפני');
+});
+
+test('filters: by field, several values are any of them, several filters all hold', () => {
+  const a = t('a', { category_id: 'c1', trigger_id: 'g1', priority: 'high', created_at: '2026-11-01', office_task_assignees: [{ user_id: 'me', party_id: null }] });
+  const b = t('b', { category_id: 'c2', trigger_id: null, priority: 'low', created_at: '2026-11-08', subject: 'חוזה שכירות' });
+  const c = t('c', { category_id: null, trigger_id: 'g1', priority: 'high', created_by: 'me', created_at: '2026-11-09' });
+  const ids = (f: Parameters<typeof filterTasks>[1]) => filterTasks([a, b, c], f, 'me').map((x) => x.id).join('');
+  assert.equal(ids([{ field: 'category', values: ['c1', 'none'] }]), 'ac');
+  assert.equal(ids([{ field: 'category', values: ['c1', 'none'] }, { field: 'trigger', values: ['g1'] }, { field: 'priority', values: ['high'] }]), 'ac');
+  assert.equal(ids([{ field: 'trigger', values: ['none'] }]), 'b');
+  assert.equal(ids([{ field: 'assignee', values: ['mine'] }]), 'a');
+  assert.equal(ids([{ field: 'assignee', values: ['sent', 'none'] }]), 'bc');
+  assert.equal(ids([{ field: 'subject', values: ['שכירות'] }]), 'b');
+  assert.equal(ids([{ field: 'created', values: ['2026-11-05', ''] }]), 'bc');
+  assert.equal(ids([{ field: 'created', values: ['', '2026-11-08'] }, { field: 'priority', values: [] }]), 'ab');
 });
