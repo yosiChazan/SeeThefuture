@@ -12,7 +12,14 @@ import { supabase } from '../lib/supabase';
 // Adds a client, or edits one (SPEC decisions 62, 65). Managers' reports name owners in
 // Latin letters, and the intake matches them by name: when the display name changes and
 // no name as in the reports is set yet, the old name is kept there, so matching goes on.
-export function ClientForm({ client, idNumber = null, opened, onClose }: { client?: ClientRow; idNumber?: string | null; opened: boolean; onClose: () => void }) {
+// `contact`: a new contact rather than a client (SPEC decision 133): with a role (tenant,
+// lawyer, supplier…) instead of the client role, listed with the contacts.
+const CONTACT_ROLES = [
+  { value: 'contact', label: 'איש קשר' }, { value: 'tenant', label: 'שוכר' }, { value: 'manager', label: 'מנהל נכסים' }, { value: 'lawyer', label: 'עו"ד' },
+  { value: 'hotel', label: 'מלון' }, { value: 'developer', label: 'יזם' }, { value: 'supplier', label: 'ספק' }, { value: 'marketer', label: 'משווק' },
+];
+export function ClientForm({ client, idNumber = null, opened, onClose, contact = false }: { client?: ClientRow; idNumber?: string | null; opened: boolean; onClose: () => void; contact?: boolean }) {
+  const [role, setRole] = useState('contact');
   useAccess();
   // The ID number is a regular detail, open to all staff (SPEC decision 72).
   const canId = true;
@@ -57,18 +64,20 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
     // A new client: the party, and its client role so it is listed with the clients.
     const id = crypto.randomUUID();
     const add = await supabase.from('parties').insert({ id, ...fields });
-    const role = add.error ? add : await supabase.from('party_roles').insert({ party_id: id, role: 'client' });
-    if (!role.error) try { await saveId(id); } catch (e) { notifications.show({ color: 'orange', title: 'הלקוח נוסף, מספר הזהות לא נשמר', message: (e as Error).message }); }
+    const who = contact ? 'איש הקשר' : 'הלקוח';
+    const added = add.error ? add : await supabase.from('party_roles').insert({ party_id: id, role: contact ? role : 'client' });
+    if (!added.error) try { await saveId(id); } catch (e) { notifications.show({ color: 'orange', title: `${who} נוסף, מספר הזהות לא נשמר`, message: (e as Error).message }); }
     setBusy(false);
-    if (role.error) { notifications.show({ color: 'red', title: 'הלקוח לא נוסף', message: role.error.message }); return; }
-    notifications.show({ color: 'teal', message: 'הלקוח נוסף' });
+    if (added.error) { notifications.show({ color: 'red', title: `${who} לא נוסף`, message: added.error.message }); return; }
+    notifications.show({ color: 'teal', message: `${who} נוסף` });
     await qc.invalidateQueries();
     onClose();
-    navigate(`/clients/${id}`);
+    navigate(contact ? `/contacts/${id}` : `/clients/${id}`);
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title={client ? 'עריכת פרטי לקוח' : 'לקוח חדש'} size="lg">
+    <Modal opened={opened} onClose={onClose} title={client ? 'עריכת פרטי לקוח' : contact ? 'איש קשר חדש' : 'לקוח חדש'} size="lg">
+      {contact && !client && <Select label="תפקיד" mb="sm" w={220} allowDeselect={false} data={CONTACT_ROLES} value={role} onChange={(x) => x && setRole(x)} />}
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
         {person ? (
           <>
@@ -96,7 +105,7 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
       {keepOld && <Text size="xs" c="dimmed" mt="xs">השם הקודם, "{client!.display_name}", יישמר כשם בדוחות, כדי שהדוחות ימשיכו לזהות את הלקוח.</Text>}
       <Group justify="flex-end" mt="md">
         <Button variant="default" onClick={onClose}>ביטול</Button>
-        <Button onClick={save} loading={busy} disabled={!name || (person && !v.last_name.trim()) || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : 'הוספת לקוח'}</Button>
+        <Button onClick={save} loading={busy} disabled={!name || (person && !v.last_name.trim()) || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : contact ? 'הוספת איש קשר' : 'הוספת לקוח'}</Button>
       </Group>
     </Modal>
   );
