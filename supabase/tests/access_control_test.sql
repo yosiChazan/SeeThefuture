@@ -1237,6 +1237,19 @@ exception when raise_exception then
   raise notice 'ok - the source of a transaction does not change';
 end $$;
 
+-- The spreadsheet a transaction came from (decision 137): finance of its country links it.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.source_files (source, country_code, storage_path, file_name) values ('excel:גרשון', 'UA', 'UA/sources/x.xlsx', 'x.xlsx');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check(not exists (select 1 from app.source_files), 'a Romania editor does not see Ukraine''s source files');
+do $$ begin
+  insert into app.source_files (source, country_code, storage_path) values ('excel:y', 'RO', 'RO/sources/y.xlsx');
+  raise exception 'FAILED: an editor linked a source file';
+exception when insufficient_privilege then raise notice 'ok - only finance links a source file';
+end $$;
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(
