@@ -292,13 +292,16 @@ function SeriesForm({ dir, series, onClose }: { dir: Directory; series?: Series;
     category: series?.category_id ?? null as string | null, trigger: series?.trigger_id ?? null as string | null,
     links: (series?.links ?? []).map(linkValue), assignees: [...(series?.users ?? []).map((u) => `u:${u}`), ...(series?.parties ?? []).map((p) => `p:${p}`)],
     frequency: (series?.frequency ?? 'monthly') as Series['frequency'], workdays_only: series?.workdays_only ?? true, weekday: series?.weekday ?? 0,
-    month_day: series?.month_day ?? 1, last_day: series?.last_day ?? false, year_month: series?.year_month ?? 1,
+    month_days: (series?.month_days ?? [1]).map(String), last_day: series?.last_day ?? false, year_dates: series?.year_dates ?? [] as string[],
+    newDay: 1, newMonth: 1,
     start_on: series?.start_on ?? today(), end_on: series?.end_on ?? null as string | null, lead_days: series?.lead_days ?? 0,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const rule = { ...v, weekday: v.frequency === 'weekly' ? v.weekday : null, month_day: ['monthly', 'yearly'].includes(v.frequency) && !(v.frequency === 'monthly' && v.last_day) ? v.month_day : null,
-    last_day: v.frequency === 'monthly' && v.last_day, year_month: v.frequency === 'yearly' ? v.year_month : null, workdays_only: v.frequency === 'daily' && v.workdays_only };
+  const rule = { ...v, weekday: v.frequency === 'weekly' ? v.weekday : null, month_days: v.frequency === 'monthly' ? v.month_days.map(Number) : [],
+    last_day: v.frequency === 'monthly' && v.last_day, year_dates: v.frequency === 'yearly' ? v.year_dates : [], workdays_only: v.frequency === 'daily' && v.workdays_only };
+  const dateKey = (m: number, d: number) => `${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const daysOk = v.frequency === 'monthly' ? v.month_days.length > 0 || v.last_day : v.frequency === 'yearly' ? v.year_dates.length > 0 : true;
   const next = nextOccurrence(rule, series?.last_spawned ? dayjs(series.last_spawned).add(1, 'day').format('YYYY-MM-DD') : v.start_on);
   async function save() {
     setBusy(true); setError(null);
@@ -306,8 +309,8 @@ function SeriesForm({ dir, series, onClose }: { dir: Directory; series?: Series;
     const row = {
       subject: v.subject.trim(), body: v.body.trim() || null, priority: v.priority, category_id: v.category, trigger_id: v.trigger,
       users: a.filter((x) => x.user_id).map((x) => x.user_id), parties: a.filter((x) => x.party_id).map((x) => x.party_id), links: v.links.map(toLink),
-      frequency: v.frequency, workdays_only: rule.workdays_only, weekday: rule.weekday, month_day: rule.month_day, last_day: rule.last_day,
-      year_month: rule.year_month, start_on: v.start_on, end_on: v.end_on, lead_days: v.lead_days, updated_at: new Date().toISOString(),
+      frequency: v.frequency, workdays_only: rule.workdays_only, weekday: rule.weekday, month_days: rule.month_days, last_day: rule.last_day,
+      year_dates: rule.year_dates, start_on: v.start_on, end_on: v.end_on, lead_days: v.lead_days, updated_at: new Date().toISOString(),
     };
     const r = series ? await supabase.from('office_task_series').update(row).eq('id', series.id) : await supabase.from('office_task_series').insert(row);
     if (r.error) { setBusy(false); setError(r.error.message); return; }
@@ -340,14 +343,24 @@ function SeriesForm({ dir, series, onClose }: { dir: Directory; series?: Series;
             {v.frequency === 'weekly' && <Select label="ביום" w={160} allowDeselect={false} value={String(v.weekday)} onChange={(x) => x && setV({ ...v, weekday: Number(x) })}
               data={WEEKDAY_HE.map((d, i) => ({ value: String(i), label: d }))} />}
             {v.frequency === 'monthly' && <Group align="flex-end">
-              <NumberInput label="ביום בחודש" w={130} min={1} max={31} disabled={v.last_day} value={v.month_day} onChange={(x) => setV({ ...v, month_day: Number(x) || 1 })} />
-              <Switch label="היום האחרון בחודש" checked={v.last_day} onChange={(e) => setV({ ...v, last_day: e.currentTarget.checked })} mb={8} />
+              <MultiSelect label="בימים בחודש" placeholder="אפשר לבחור כמה" style={{ flex: 1 }} value={v.month_days}
+                onChange={(x) => setV({ ...v, month_days: [...x].sort((a, b) => Number(a) - Number(b)) })}
+                data={Array.from({ length: 31 }, (_, i) => String(i + 1))} />
+              <Switch label="וגם היום האחרון בחודש" checked={v.last_day} onChange={(e) => setV({ ...v, last_day: e.currentTarget.checked })} mb={8} />
             </Group>}
-            {v.frequency === 'yearly' && <Group>
-              <NumberInput label="יום" w={100} min={1} max={31} value={v.month_day} onChange={(x) => setV({ ...v, month_day: Number(x) || 1 })} />
-              <Select label="חודש" w={150} allowDeselect={false} value={String(v.year_month)} onChange={(x) => x && setV({ ...v, year_month: Number(x) })}
-                data={MONTH_HE.map((m, i) => ({ value: String(i + 1), label: m }))} />
-            </Group>}
+            {v.frequency === 'yearly' && <Stack gap={6}>
+              <Group gap={6}>{v.year_dates.length ? [...v.year_dates].sort().map((x) => (
+                <Badge key={x} variant="light" rightSection={<ActionIcon size="xs" variant="transparent" onClick={() => setV({ ...v, year_dates: v.year_dates.filter((y) => y !== x) })} aria-label="הסרה"><IconTrash size={10} /></ActionIcon>}>
+                  {Number(x.slice(3))} ב{MONTH_HE[Number(x.slice(0, 2)) - 1]}</Badge>
+              )) : <Text size="xs" c="dimmed">עוד לא נבחר תאריך</Text>}</Group>
+              <Group align="flex-end" gap="xs">
+                <NumberInput label="יום" w={90} min={1} max={31} value={v.newDay} onChange={(x) => setV({ ...v, newDay: Number(x) || 1 })} />
+                <Select label="חודש" w={140} allowDeselect={false} value={String(v.newMonth)} onChange={(x) => x && setV({ ...v, newMonth: Number(x) })}
+                  data={MONTH_HE.map((m, i) => ({ value: String(i + 1), label: m }))} />
+                <Button size="xs" variant="light" mb={4} disabled={v.year_dates.includes(dateKey(v.newMonth, v.newDay))}
+                  onClick={() => setV({ ...v, year_dates: [...v.year_dates, dateKey(v.newMonth, v.newDay)] })}>הוספת תאריך</Button>
+              </Group>
+            </Stack>}
             {['monthly', 'yearly'].includes(v.frequency) && <Text size="xs" c="dimmed">יום שאין בחודש (31 בחודש קצר, 29 בפברואר) נופל ביום האחרון של החודש.</Text>}
             <Group grow>
               <DateInput label="מתאריך" valueFormat="DD.MM.YYYY" value={v.start_on} onChange={(d) => d && setV({ ...v, start_on: dayjs(d).format('YYYY-MM-DD') })} />
@@ -360,7 +373,7 @@ function SeriesForm({ dir, series, onClose }: { dir: Directory; series?: Series;
         {series && <Text size="xs" c="dimmed">השינוי חל על המשימות שייפתחו מעכשיו. משימות שכבר נפתחו לא משתנות.</Text>}
         {error && <Alert color="red">{error}</Alert>}
         <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
-          <Button onClick={save} loading={busy} disabled={!v.subject.trim()}>שמירה</Button></Group>
+          <Button onClick={save} loading={busy} disabled={!v.subject.trim() || !daysOk}>שמירה</Button></Group>
       </Stack>
     </Modal>
   );

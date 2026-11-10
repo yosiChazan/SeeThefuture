@@ -95,12 +95,13 @@ export function taskMail(t: { subject: string; body: string | null; priority: Pr
 export interface Series {
   id: string; created_by: string; active: boolean; subject: string; body: string | null; priority: Priority;
   category_id: string | null; trigger_id: string | null; users: string[]; parties: string[]; links: TaskLink[];
-  frequency: 'daily' | 'weekly' | 'monthly' | 'yearly'; workdays_only: boolean; weekday: number | null; month_day: number | null;
-  last_day: boolean; year_month: number | null; start_on: string; end_on: string | null; lead_days: number; last_spawned: string | null;
+  frequency: 'daily' | 'weekly' | 'monthly' | 'yearly'; workdays_only: boolean; weekday: number | null; month_days: number[];
+  last_day: boolean; year_dates: string[];   // year_dates: 'MM-DD'
+  start_on: string; end_on: string | null; lead_days: number; last_spawned: string | null;
 }
 export const WEEKDAY_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 export const MONTH_HE = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
-type Rule = Pick<Series, 'frequency' | 'workdays_only' | 'weekday' | 'month_day' | 'last_day' | 'year_month'>;
+type Rule = Pick<Series, 'frequency' | 'workdays_only' | 'weekday' | 'month_days' | 'last_day' | 'year_dates'>;
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const day = (s: string) => new Date(`${s}T00:00:00Z`);
@@ -111,8 +112,8 @@ export function seriesOn(s: Rule, on: string): boolean {
   switch (s.frequency) {
     case 'daily': return !s.workdays_only || dow <= 4;
     case 'weekly': return dow === s.weekday;
-    case 'monthly': return s.last_day ? dom === last : dom === Math.min(s.month_day ?? 0, last);
-    case 'yearly': return d.getUTCMonth() + 1 === s.year_month && dom === Math.min(s.month_day ?? 0, last);
+    case 'monthly': return (s.last_day && dom === last) || s.month_days.some((x) => Math.min(x, last) === dom);
+    case 'yearly': return s.year_dates.some((x) => Number(x.slice(0, 2)) === d.getUTCMonth() + 1 && Math.min(Number(x.slice(3)), last) === dom);
   }
 }
 
@@ -127,10 +128,11 @@ export function nextOccurrence(s: Rule & Pick<Series, 'start_on' | 'end_on'>, fr
   return null;
 }
 
+const list = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} וב-${xs[xs.length - 1]}`);
 export function recurrenceText(s: Rule & Pick<Series, 'lead_days'>): string {
   const base = s.frequency === 'daily' ? (s.workdays_only ? 'כל יום עבודה (א׳–ה׳)' : 'כל יום')
     : s.frequency === 'weekly' ? `כל שבוע, ביום ${WEEKDAY_HE[s.weekday ?? 0]}`
-    : s.frequency === 'monthly' ? (s.last_day ? 'כל חודש, ביום האחרון' : `כל חודש, ב-${s.month_day}`)
-    : `כל שנה, ב-${s.month_day} ב${MONTH_HE[(s.year_month ?? 1) - 1]}`;
+    : s.frequency === 'monthly' ? `כל חודש, ${[s.month_days.length ? `ב-${list([...s.month_days].sort((a, b) => a - b).map(String))}` : '', s.last_day ? 'ביום האחרון' : ''].filter(Boolean).join(' ו')}`
+    : `כל שנה, ב-${list([...s.year_dates].sort().map((x) => `${Number(x.slice(3))} ב${MONTH_HE[Number(x.slice(0, 2)) - 1]}`))}`;
   return s.lead_days ? `${base} · מופיעה ${s.lead_days} ימים לפני` : base;
 }

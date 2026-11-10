@@ -1181,10 +1181,12 @@ reset role;
 -- Recurring tasks (decision 130): a monthly one on the 31st opens on the last day of a short
 -- month, once per date however often it runs; the tasks are seen like any task.
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
-insert into app.office_task_series (subject, frequency, month_day, start_on, users, links)
-values ('דוח גרשון', 'monthly', 31, '2026-01-01', array['00000000-0000-0000-0000-00000000000b']::uuid[], '[{"kind":"country","country_code":"UA"}]');
+insert into app.office_task_series (subject, frequency, month_days, start_on, users, links)
+values ('דוח גרשון', 'monthly', array[31], '2026-01-01', array['00000000-0000-0000-0000-00000000000b']::uuid[], '[{"kind":"country","country_code":"UA"}]');
 insert into app.office_task_series (subject, frequency, workdays_only, start_on, end_on) values ('וואטסאפ', 'daily', true, '2026-03-01', '2026-03-07');
-insert into app.office_task_series (subject, frequency, year_month, month_day, lead_days, start_on) values ('ביטוח', 'yearly', 2, 29, 7, '2026-01-01');
+insert into app.office_task_series (subject, frequency, year_dates, lead_days, start_on) values ('ביטוח', 'yearly', array['02-29'], 7, '2026-01-01');
+insert into app.office_task_series (subject, frequency, month_days, last_day, start_on, end_on) values ('גבייה', 'monthly', array[1, 15], true, '2026-04-01', '2026-04-30');
+insert into app.office_task_series (subject, frequency, year_dates, start_on) values ('מיסים', 'yearly', array['03-31', '09-30'], '2026-01-01');
 select app.spawn_recurring_tasks('2026-04-30');
 select app.spawn_recurring_tasks('2026-04-30');
 reset role;
@@ -1192,9 +1194,11 @@ select pg_temp.check(
   (select string_agg(occurrence_on::text, ',' order by occurrence_on) from app.office_tasks where subject = 'דוח גרשון') = '2026-01-31,2026-02-28,2026-03-31,2026-04-30'
   and (select count(*) from app.office_tasks where subject = 'וואטסאפ') = 5
   and (select string_agg(occurrence_on::text, ',') from app.office_tasks where subject = 'ביטוח') = '2026-02-28'
+  and (select string_agg(occurrence_on::text, ',' order by occurrence_on) from app.office_tasks where subject = 'גבייה') = '2026-04-01,2026-04-15,2026-04-30'
+  and (select string_agg(occurrence_on::text, ',') from app.office_tasks where subject = 'מיסים') = '2026-03-31'
   and (select count(*) from app.office_task_assignees a join app.office_tasks t on t.id = a.task_id where t.subject = 'דוח גרשון') = 4
   and (select count(*) from app.office_task_events e join app.office_tasks t on t.id = e.task_id where t.subject = 'דוח גרשון') = 4,
-  'recurring tasks open on their days (last day of a short month, workdays only, ahead by lead days), once each');
+  'recurring tasks open on their days (several days a month or a year, last day of a short month, workdays only, ahead by lead days), once each');
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
 select pg_temp.check((select count(*) from app.office_tasks where subject = 'דוח גרשון') = 4
   and (select count(*) from app.office_tasks where subject = 'וואטסאפ') = 0, 'a recurring task''s tasks are seen by whom they are with');

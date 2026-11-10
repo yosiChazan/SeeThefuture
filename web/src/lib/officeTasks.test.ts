@@ -34,12 +34,17 @@ test('the history in words, and the e-mail', () => {
 });
 
 test('when a recurring task falls', () => {
-  const r = { workdays_only: false, weekday: null, month_day: null, last_day: false, year_month: null };
-  const monthly31 = { ...r, frequency: 'monthly' as const, month_day: 31, start_on: '2026-01-01', end_on: null };
+  const r = { workdays_only: false, weekday: null, month_days: [] as number[], last_day: false, year_dates: [] as string[] };
+  const monthly31 = { ...r, frequency: 'monthly' as const, month_days: [31], start_on: '2026-01-01', end_on: null };
   assert.equal(nextOccurrence(monthly31, '2026-02-01'), '2026-02-28');
   assert.equal(nextOccurrence({ ...r, frequency: 'daily', workdays_only: true, start_on: '2026-01-01', end_on: null }, '2026-03-06'), '2026-03-08');
-  assert.equal(nextOccurrence({ ...r, frequency: 'yearly', year_month: 2, month_day: 29, start_on: '2026-01-01', end_on: null }, '2026-03-01'), '2027-02-28');
+  assert.equal(nextOccurrence({ ...r, frequency: 'yearly', year_dates: ['02-29'], start_on: '2026-01-01', end_on: null }, '2026-03-01'), '2027-02-28');
   assert.equal(nextOccurrence({ ...r, frequency: 'weekly', weekday: 0, start_on: '2026-01-01', end_on: '2026-03-07' }, '2026-03-02'), null);
   assert.ok(seriesOn({ ...r, frequency: 'monthly', last_day: true }, '2026-04-30'));
+  const many = { ...r, frequency: 'monthly' as const, month_days: [15, 1], last_day: true, start_on: '2026-04-01', end_on: null };
+  assert.equal(nextOccurrence(many, '2026-04-02'), '2026-04-15');
+  assert.equal(nextOccurrence(many, '2026-04-16'), '2026-04-30');
+  assert.equal(recurrenceText({ ...many, lead_days: 0 }), 'כל חודש, ב-1 וב-15 וביום האחרון');
+  assert.equal(recurrenceText({ ...r, frequency: 'yearly', year_dates: ['09-30', '03-31'], lead_days: 0 }), 'כל שנה, ב-31 במרץ וב-30 בספטמבר');
   assert.equal(recurrenceText({ ...r, frequency: 'weekly', weekday: 0, lead_days: 2 }), 'כל שבוע, ביום ראשון · מופיעה 2 ימים לפני');
 });
