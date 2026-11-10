@@ -1137,7 +1137,7 @@ delete from app.ownerships where property_id = '30000000-0000-0000-0000-00000000
 
 -- Tasks (decision 128): only the author, who it is with, management and admins see it.
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
-select app.create_office_task('client', 'לבדוק חוזה', 'פרטים', 'high',
+select app.create_office_task((select id from app.task_triggers where label = 'לקוח'), 'לבדוק חוזה', 'פרטים', 'high',
   array['00000000-0000-0000-0000-00000000000b']::uuid[], array['10000000-0000-0000-0000-000000000001']::uuid[],
   '[{"kind":"property","entity_id":"30000000-0000-0000-0000-000000000001"},{"kind":"country","country_code":"UA"}]');
 select pg_temp.check((select count(*) from app.office_task_links) = 2 and (select count(*) from app.office_task_assignees) = 2
@@ -1176,6 +1176,31 @@ exception when others then
   if sqlerrm like 'FAILED%' then raise; end if;
   raise notice 'ok - an employee the task is not with cannot answer it';
 end $$;
+reset role;
+
+-- Recurring tasks (decision 130): a monthly one on the 31st opens on the last day of a short
+-- month, once per date however often it runs; the tasks are seen like any task.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.office_task_series (subject, frequency, month_day, start_on, users, links)
+values ('דוח גרשון', 'monthly', 31, '2026-01-01', array['00000000-0000-0000-0000-00000000000b']::uuid[], '[{"kind":"country","country_code":"UA"}]');
+insert into app.office_task_series (subject, frequency, workdays_only, start_on, end_on) values ('וואטסאפ', 'daily', true, '2026-03-01', '2026-03-07');
+insert into app.office_task_series (subject, frequency, year_month, month_day, lead_days, start_on) values ('ביטוח', 'yearly', 2, 29, 7, '2026-01-01');
+select app.spawn_recurring_tasks('2026-04-30');
+select app.spawn_recurring_tasks('2026-04-30');
+reset role;
+select pg_temp.check(
+  (select string_agg(occurrence_on::text, ',' order by occurrence_on) from app.office_tasks where subject = 'דוח גרשון') = '2026-01-31,2026-02-28,2026-03-31,2026-04-30'
+  and (select count(*) from app.office_tasks where subject = 'וואטסאפ') = 5
+  and (select string_agg(occurrence_on::text, ',') from app.office_tasks where subject = 'ביטוח') = '2026-02-28'
+  and (select count(*) from app.office_task_assignees a join app.office_tasks t on t.id = a.task_id where t.subject = 'דוח גרשון') = 4
+  and (select count(*) from app.office_task_events e join app.office_tasks t on t.id = e.task_id where t.subject = 'דוח גרשון') = 4,
+  'recurring tasks open on their days (last day of a short month, workdays only, ahead by lead days), once each');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.office_tasks where subject = 'דוח גרשון') = 4
+  and (select count(*) from app.office_tasks where subject = 'וואטסאפ') = 0, 'a recurring task''s tasks are seen by whom they are with');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000f');
+select pg_temp.check(not exists (select 1 from app.office_task_series), 'an employee not on a recurring task does not see it');
 reset role;
 
 -- Audit -----------------------------------------------------------------

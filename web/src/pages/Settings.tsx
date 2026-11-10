@@ -67,6 +67,7 @@ export function Settings() {
       )}</QueryState>
       <FileCategoriesSettings />
       <TaskCategoriesSettings />
+      <TaskCategoriesSettings table="task_triggers" />
       <SplitNames />
       <ResetItai />
     </Stack>

@@ -1,22 +1,26 @@
-import { Alert, Anchor, Badge, Button, Card, Group, Modal, MultiSelect, Paper, SegmentedControl, Select, Stack, Text, Textarea, TextInput, Timeline, Title } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Button, Card, Group, Modal, MultiSelect, NumberInput, Paper, SegmentedControl, Select, Stack, Switch, Tabs, Text, Textarea, TextInput, Timeline, Title } from '@mantine/core';
+import { DateInput } from '@mantine/dates';
+import { modals } from '@mantine/modals';
+import dayjs from 'dayjs';
 import { notifications } from '@mantine/notifications';
-import { IconMail, IconPlus } from '@tabler/icons-react';
+import { IconMail, IconPencil, IconPlus, IconRepeat, IconTrash } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AddLink, append, LinkedText, useMe } from '../components/ManualTopics';
 import { useAccess } from '../lib/access';
 import { COUNTRIES, COUNTRY_HE, propertyTitle } from '../lib/format';
 import {
-  assigneeKey, describeEvent, openByAssignee, PRIORITY_COLOR, PRIORITY_HE, sortTasks, STATUS_COLOR, STATUS_HE, taskMail, TRIGGER_HE,
-  type Assignee, type OfficeTask, type Priority, type SortKey, type TaskEvent, type TaskLink, type TaskStatus, type Trigger,
+  assigneeKey, describeEvent, MONTH_HE, nextOccurrence, openByAssignee, PRIORITY_COLOR, PRIORITY_HE, recurrenceText, sortTasks, STATUS_COLOR, STATUS_HE, taskMail, WEEKDAY_HE,
+  type Assignee, type OfficeTask, type Priority, type Series, type SortKey, type TaskEvent, type TaskLink, type TaskStatus,
 } from '../lib/officeTasks';
 import { useClients, useContacts, useProperties } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
 import { gmailLink, mailtoLink } from '../lib/topicMail';
 
-// Tasks (SPEC decision 128). Each task is seen only by its author, whoever it is with,
-// management and admins; the database enforces it. All of them may answer it.
+// Tasks (SPEC decisions 128–130). Each task is seen only by its author, whoever it is with,
+// management and admins; the database enforces it. All of them may answer it. Recurring
+// tasks are written once and open a task on each of their dates.
 
 interface Person { user_id: string; display_name: string; email: string | null; client_party_id: string | null }
 
@@ -24,8 +28,13 @@ function usePeople() {
   return useQuery({ queryKey: ['task-people'], queryFn: async () => must(await supabase.rpc('task_people')) as Person[] });
 }
 export interface TaskCategory { id: string; label: string; position: number }
-export function useTaskCategories() {
-  return useQuery({ queryKey: ['task-categories'], queryFn: async () => must(await supabase.from('task_categories').select('id, label, position').order('position').order('label')) as TaskCategory[] });
+// The lists kept in Settings: categories and triggers (decisions 129, 130).
+export function useLabelList(table: 'task_categories' | 'task_triggers') {
+  return useQuery({ queryKey: [table], queryFn: async () => must(await supabase.from(table).select('id, label, position').order('position').order('label')) as TaskCategory[] });
+}
+export const useTaskCategories = () => useLabelList('task_categories');
+function useSeries() {
+  return useQuery({ queryKey: ['office-task-series'], queryFn: async () => must(await supabase.from('office_task_series').select('*').order('subject')) as Series[] });
 }
 function useTasks() {
   return useQuery({
@@ -50,6 +59,7 @@ function useDirectory() {
   const contacts = useContacts();
   const properties = useProperties();
   const cats = useTaskCategories();
+  const trigs = useLabelList('task_triggers');
   return useMemo(() => {
     const users = new Map((people.data ?? []).map((p) => [p.user_id, p]));
     const parties = new Map<string, { name: string; email: string | null }>();
@@ -81,8 +91,12 @@ function useDirectory() {
     const catLabel = (id: string | null | undefined) => catList.find((c) => c.id === id)?.label ?? null;
     const catRank = (id: string | null | undefined) => { const i = catList.findIndex((c) => c.id === id); return i < 0 ? 9999 : i; };
     const catOptions = catList.map((c) => ({ value: c.id, label: c.label }));
-    return { nameOf, emailOf, linkName, linkPath, assigneeOptions, linkOptions, users, catLabel, catRank, catOptions };
-  }, [people.data, clients.data, contacts.data, properties.data, cats.data, access.isClient]);
+    const trList = trigs.data ?? [];
+    const trigLabel = (id: string | null | undefined) => trList.find((c) => c.id === id)?.label ?? null;
+    const trigRank = (id: string | null | undefined) => { const i = trList.findIndex((c) => c.id === id); return i < 0 ? 9999 : i; };
+    const trigOptions = trList.map((c) => ({ value: c.id, label: c.label }));
+    return { nameOf, emailOf, linkName, linkPath, assigneeOptions, linkOptions, users, catLabel, catRank, catOptions, trigLabel, trigRank, trigOptions };
+  }, [people.data, clients.data, contacts.data, properties.data, cats.data, trigs.data, access.isClient]);
 }
 type Directory = ReturnType<typeof useDirectory>;
 
@@ -92,7 +106,6 @@ const toLink = (v: string): TaskLink => {
   return kind === 'country' ? { kind, entity_id: null, country_code: id } : { kind, entity_id: id, country_code: null };
 };
 const toAssignee = (v: string): Assignee => (v.startsWith('u:') ? { user_id: v.slice(2), party_id: null } : { user_id: null, party_id: v.slice(2) });
-const TRIGGERS = (Object.keys(TRIGGER_HE) as Trigger[]).map((k) => ({ value: k, label: TRIGGER_HE[k] }));
 const PRIORITIES = (Object.keys(PRIORITY_HE) as Priority[]).map((k) => ({ value: k, label: PRIORITY_HE[k] }));
 const STATUSES = (Object.keys(STATUS_HE) as TaskStatus[]).map((k) => ({ value: k, label: STATUS_HE[k] }));
 
@@ -104,7 +117,7 @@ function MailLinks({ task, to, dir, from }: { task: OfficeTask; to: Assignee[]; 
   return (
     <Stack gap={4}>
       {withMail.map((a) => {
-        const m = taskMail(task, dir.nameOf(a), from, window.location.origin);
+        const m = taskMail({ ...task, trigger: dir.trigLabel(task.trigger_id) }, dir.nameOf(a), from, window.location.origin);
         const email = dir.emailOf(a)!;
         return (
           <Group key={assigneeKey(a)} gap="xs">
@@ -123,7 +136,7 @@ function MailLinks({ task, to, dir, from }: { task: OfficeTask; to: Assignee[]; 
 function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: OfficeTask; onClose: () => void; onSaved: (t: OfficeTask, added: Assignee[]) => void }) {
   const qc = useQueryClient();
   const [v, setV] = useState({
-    trigger: (task?.trigger_kind ?? null) as Trigger | null, subject: task?.subject ?? '', body: task?.body ?? '',
+    trigger: (task?.trigger_id ?? null) as string | null, subject: task?.subject ?? '', body: task?.body ?? '',
     priority: (task?.priority ?? 'medium') as Priority, category: (task?.category_id ?? null) as string | null,
     links: (task?.office_task_links ?? []).map(linkValue), assignees: (task?.office_task_assignees ?? []).map(assigneeKey),
   });
@@ -141,8 +154,8 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
           p_links: v.links.map(toLink), p_category: v.category,
         })) as string;
       } else {
-        const fields = { trigger_kind: v.trigger, subject: v.subject.trim(), body: v.body.trim() || null, priority: v.priority, category_id: v.category };
-        if (fields.trigger_kind !== task.trigger_kind || fields.subject !== task.subject || fields.body !== (task.body ?? null) || fields.priority !== task.priority || fields.category_id !== (task.category_id ?? null)) {
+        const fields = { trigger_id: v.trigger, subject: v.subject.trim(), body: v.body.trim() || null, priority: v.priority, category_id: v.category };
+        if (fields.trigger_id !== (task.trigger_id ?? null) || fields.subject !== task.subject || fields.body !== (task.body ?? null) || fields.priority !== task.priority || fields.category_id !== (task.category_id ?? null)) {
           must(await supabase.from('office_tasks').update(fields).eq('id', task.id));
         }
         const oldA = new Map(task.office_task_assignees.map((a) => [assigneeKey(a), a]));
@@ -163,7 +176,7 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
     <Modal opened onClose={onClose} title={task ? 'שינוי פרטי המשימה' : 'משימה חדשה'} size="lg">
       <Stack>
         <Group grow align="flex-start">
-          <Select label="טריגר" required data={TRIGGERS} value={v.trigger} onChange={(x) => setV({ ...v, trigger: x as Trigger })} />
+          <Select label="טריגר" placeholder="בלי טריגר" clearable data={dir.trigOptions} value={v.trigger} onChange={(x) => setV({ ...v, trigger: x })} />
           <Select label="קטגוריה" placeholder="בלי קטגוריה" clearable data={dir.catOptions} value={v.category} onChange={(x) => setV({ ...v, category: x })} />
           <Select label="עדיפות" required data={PRIORITIES} value={v.priority} allowDeselect={false} onChange={(x) => x && setV({ ...v, priority: x as Priority })} />
         </Group>
@@ -180,7 +193,7 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
         {task && <Text size="xs" c="dimmed">כל שינוי נרשם בהיסטוריה של המשימה.</Text>}
         {error && <Alert color="red">{error}</Alert>}
         <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
-          <Button onClick={save} loading={busy} disabled={!v.trigger || !v.subject.trim()}>{task ? 'שמירת השינויים' : 'יצירה'}</Button></Group>
+          <Button onClick={save} loading={busy} disabled={!v.subject.trim()}>{task ? 'שמירת השינויים' : 'יצירה'}</Button></Group>
       </Stack>
     </Modal>
   );
@@ -214,7 +227,8 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
         <Group gap="xs">
           <Badge color={STATUS_COLOR[task.status]}>{STATUS_HE[task.status]}</Badge>
           <Badge variant="light" color={PRIORITY_COLOR[task.priority]}>עדיפות {PRIORITY_HE[task.priority]}</Badge>
-          <Badge variant="outline">{TRIGGER_HE[task.trigger_kind]}</Badge>
+          {dir.trigLabel(task.trigger_id) && <Badge variant="outline">{dir.trigLabel(task.trigger_id)}</Badge>}
+          {task.series_id && <Badge variant="light" color="indigo" leftSection={<IconRepeat size={12} />}>חוזרת · {task.occurrence_on && dayjs(task.occurrence_on).format('DD.MM.YYYY')}</Badge>}
           {dir.catLabel(task.category_id) && <Badge variant="light" color="cyan">{dir.catLabel(task.category_id)}</Badge>}
           <Text size="xs" c="dimmed">נפתחה ע"י {author}, {new Date(task.created_at).toLocaleString('he-IL')}</Text>
         </Group>
@@ -266,6 +280,155 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
   );
 }
 
+
+// A recurring task: everything a task has, and how often (decision 130). Editing it changes
+// the tasks opened from now on; the tasks already opened stay as they are.
+const FREQ = [{ value: 'daily', label: 'יומית' }, { value: 'weekly', label: 'שבועית' }, { value: 'monthly', label: 'חודשית' }, { value: 'yearly', label: 'שנתית' }];
+const today = () => dayjs().format('YYYY-MM-DD');
+function SeriesForm({ dir, series, onClose }: { dir: Directory; series?: Series; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [v, setV] = useState({
+    subject: series?.subject ?? '', body: series?.body ?? '', priority: (series?.priority ?? 'medium') as Priority,
+    category: series?.category_id ?? null as string | null, trigger: series?.trigger_id ?? null as string | null,
+    links: (series?.links ?? []).map(linkValue), assignees: [...(series?.users ?? []).map((u) => `u:${u}`), ...(series?.parties ?? []).map((p) => `p:${p}`)],
+    frequency: (series?.frequency ?? 'monthly') as Series['frequency'], workdays_only: series?.workdays_only ?? true, weekday: series?.weekday ?? 0,
+    month_day: series?.month_day ?? 1, last_day: series?.last_day ?? false, year_month: series?.year_month ?? 1,
+    start_on: series?.start_on ?? today(), end_on: series?.end_on ?? null as string | null, lead_days: series?.lead_days ?? 0,
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const rule = { ...v, weekday: v.frequency === 'weekly' ? v.weekday : null, month_day: ['monthly', 'yearly'].includes(v.frequency) && !(v.frequency === 'monthly' && v.last_day) ? v.month_day : null,
+    last_day: v.frequency === 'monthly' && v.last_day, year_month: v.frequency === 'yearly' ? v.year_month : null, workdays_only: v.frequency === 'daily' && v.workdays_only };
+  const next = nextOccurrence(rule, series?.last_spawned ? dayjs(series.last_spawned).add(1, 'day').format('YYYY-MM-DD') : v.start_on);
+  async function save() {
+    setBusy(true); setError(null);
+    const a = v.assignees.map(toAssignee);
+    const row = {
+      subject: v.subject.trim(), body: v.body.trim() || null, priority: v.priority, category_id: v.category, trigger_id: v.trigger,
+      users: a.filter((x) => x.user_id).map((x) => x.user_id), parties: a.filter((x) => x.party_id).map((x) => x.party_id), links: v.links.map(toLink),
+      frequency: v.frequency, workdays_only: rule.workdays_only, weekday: rule.weekday, month_day: rule.month_day, last_day: rule.last_day,
+      year_month: rule.year_month, start_on: v.start_on, end_on: v.end_on, lead_days: v.lead_days, updated_at: new Date().toISOString(),
+    };
+    const r = series ? await supabase.from('office_task_series').update(row).eq('id', series.id) : await supabase.from('office_task_series').insert(row);
+    if (r.error) { setBusy(false); setError(r.error.message); return; }
+    const opened = await supabase.rpc('spawn_recurring_tasks');
+    setBusy(false);
+    await qc.invalidateQueries({ queryKey: ['office-task-series'] });
+    await qc.invalidateQueries({ queryKey: ['office-tasks'] });
+    notifications.show({ color: 'teal', message: opened.data ? `נשמר, ונפתחו ${opened.data} משימות שהמועד שלהן הגיע` : 'נשמר' });
+    onClose();
+  }
+  return (
+    <Modal opened onClose={onClose} title={series ? 'עריכת משימה חוזרת' : 'משימה חוזרת חדשה'} size="lg">
+      <Stack>
+        <TextInput label="נושא" required value={v.subject} onChange={(e) => setV({ ...v, subject: e.currentTarget.value })} />
+        <div>
+          <Textarea label="תוכן" autosize minRows={2} value={v.body} onChange={(e) => setV({ ...v, body: e.currentTarget.value })} />
+          <AddLink onAdd={(l) => setV({ ...v, body: append(v.body, l) })} />
+        </div>
+        <Group grow align="flex-start">
+          <Select label="טריגר" placeholder="בלי טריגר" clearable data={dir.trigOptions} value={v.trigger} onChange={(x) => setV({ ...v, trigger: x })} />
+          <Select label="קטגוריה" placeholder="בלי קטגוריה" clearable data={dir.catOptions} value={v.category} onChange={(x) => setV({ ...v, category: x })} />
+          <Select label="עדיפות" data={PRIORITIES} value={v.priority} allowDeselect={false} onChange={(x) => x && setV({ ...v, priority: x as Priority })} />
+        </Group>
+        <MultiSelect label="קשור ל" searchable clearable data={dir.linkOptions} value={v.links} onChange={(x) => setV({ ...v, links: x })} nothingFoundMessage="לא נמצא" limit={60} />
+        <MultiSelect label="לטיפול של" searchable clearable data={dir.assigneeOptions} value={v.assignees} onChange={(x) => setV({ ...v, assignees: x })} nothingFoundMessage="לא נמצא" limit={60} />
+        <Paper withBorder p="sm">
+          <Stack gap="xs">
+            <SegmentedControl value={v.frequency} onChange={(x) => setV({ ...v, frequency: x as Series['frequency'] })} data={FREQ} />
+            {v.frequency === 'daily' && <Switch label="רק בימי עבודה (א׳–ה׳)" checked={v.workdays_only} onChange={(e) => setV({ ...v, workdays_only: e.currentTarget.checked })} />}
+            {v.frequency === 'weekly' && <Select label="ביום" w={160} allowDeselect={false} value={String(v.weekday)} onChange={(x) => x && setV({ ...v, weekday: Number(x) })}
+              data={WEEKDAY_HE.map((d, i) => ({ value: String(i), label: d }))} />}
+            {v.frequency === 'monthly' && <Group align="flex-end">
+              <NumberInput label="ביום בחודש" w={130} min={1} max={31} disabled={v.last_day} value={v.month_day} onChange={(x) => setV({ ...v, month_day: Number(x) || 1 })} />
+              <Switch label="היום האחרון בחודש" checked={v.last_day} onChange={(e) => setV({ ...v, last_day: e.currentTarget.checked })} mb={8} />
+            </Group>}
+            {v.frequency === 'yearly' && <Group>
+              <NumberInput label="יום" w={100} min={1} max={31} value={v.month_day} onChange={(x) => setV({ ...v, month_day: Number(x) || 1 })} />
+              <Select label="חודש" w={150} allowDeselect={false} value={String(v.year_month)} onChange={(x) => x && setV({ ...v, year_month: Number(x) })}
+                data={MONTH_HE.map((m, i) => ({ value: String(i + 1), label: m }))} />
+            </Group>}
+            {['monthly', 'yearly'].includes(v.frequency) && <Text size="xs" c="dimmed">יום שאין בחודש (31 בחודש קצר, 29 בפברואר) נופל ביום האחרון של החודש.</Text>}
+            <Group grow>
+              <DateInput label="מתאריך" valueFormat="DD.MM.YYYY" value={v.start_on} onChange={(d) => d && setV({ ...v, start_on: dayjs(d).format('YYYY-MM-DD') })} />
+              <DateInput label="עד תאריך (לא חובה)" valueFormat="DD.MM.YYYY" clearable value={v.end_on} onChange={(d) => setV({ ...v, end_on: d ? dayjs(d).format('YYYY-MM-DD') : null })} />
+              <NumberInput label="להופיע ימים לפני" min={0} max={60} value={v.lead_days} onChange={(x) => setV({ ...v, lead_days: Number(x) || 0 })} />
+            </Group>
+            <Text size="sm">{recurrenceText(rule)} · המועד הבא: <b>{next ? dayjs(next).format('DD.MM.YYYY') : 'אין (עבר תאריך הסיום)'}</b></Text>
+          </Stack>
+        </Paper>
+        {series && <Text size="xs" c="dimmed">השינוי חל על המשימות שייפתחו מעכשיו. משימות שכבר נפתחו לא משתנות.</Text>}
+        {error && <Alert color="red">{error}</Alert>}
+        <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
+          <Button onClick={save} loading={busy} disabled={!v.subject.trim()}>שמירה</Button></Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+function SeriesList({ dir }: { dir: Directory }) {
+  const qc = useQueryClient();
+  const series = useSeries();
+  const me = useMe();
+  const access = useAccess();
+  const [editing, setEditing] = useState<Series | 'new' | null>(null);
+  const toggle = async (s: Series, active: boolean) => {
+    const r = await supabase.from('office_task_series').update({ active }).eq('id', s.id);
+    if (r.error) notifications.show({ color: 'red', message: r.error.message });
+    await qc.invalidateQueries({ queryKey: ['office-task-series'] });
+  };
+  const remove = (s: Series) => modals.openConfirmModal({
+    title: 'מחיקת משימה חוזרת', children: <Text size="sm">"{s.subject}" לא תיפתח יותר. המשימות שכבר נפתחו ממנה נשארות.</Text>,
+    labels: { confirm: 'מחיקה', cancel: 'ביטול' }, confirmProps: { color: 'red' },
+    onConfirm: async () => {
+      const r = await supabase.from('office_task_series').delete().eq('id', s.id);
+      if (r.error) notifications.show({ color: 'red', message: r.error.message });
+      await qc.invalidateQueries({ queryKey: ['office-task-series'] });
+    },
+  });
+  const list = series.data ?? [];
+  return (
+    <Stack>
+      <Group justify="space-between">
+        <Text size="sm" c="dimmed">נרשמות פעם אחת; בכל מועד נפתחת מהן משימה רגילה (כל בוקר, ובפתיחת הדף). השהיה עוצרת את הפתיחה עד שמחדשים.</Text>
+        <Button leftSection={<IconPlus size={16} />} onClick={() => setEditing('new')}>משימה חוזרת חדשה</Button>
+      </Group>
+      {series.error && <Alert color="red">{(series.error as Error).message}</Alert>}
+      {!list.length && !series.isLoading && <Text c="dimmed">אין משימות חוזרות.</Text>}
+      {list.map((s) => {
+        const next = s.active ? nextOccurrence(s, s.last_spawned ? dayjs(s.last_spawned).add(1, 'day').format('YYYY-MM-DD') : s.start_on) : null;
+        const people = [...s.users.map((u) => dir.nameOf({ user_id: u, party_id: null })), ...s.parties.map((p) => dir.nameOf({ user_id: null, party_id: p }))];
+        return (
+          <Card key={s.id} withBorder padding="sm" opacity={s.active ? 1 : 0.6}>
+            <Group justify="space-between" wrap="nowrap" align="flex-start">
+              <Stack gap={4} style={{ minWidth: 0 }}>
+                <Group gap="xs">
+                  <Text fw={600}>{s.subject}</Text>
+                  <Badge size="sm" variant="light" color={PRIORITY_COLOR[s.priority]}>{PRIORITY_HE[s.priority]}</Badge>
+                  {dir.trigLabel(s.trigger_id) && <Badge size="sm" variant="outline">{dir.trigLabel(s.trigger_id)}</Badge>}
+                  {dir.catLabel(s.category_id) && <Badge size="sm" variant="light" color="cyan">{dir.catLabel(s.category_id)}</Badge>}
+                </Group>
+                <Text size="sm"><IconRepeat size={12} /> {recurrenceText(s)}</Text>
+                <Text size="xs" c="dimmed">{people.length ? `בטיפול של ${people.join(', ')}` : 'בלי מטפל'}
+                  {s.links.length ? ` · ${s.links.map(dir.linkName).join(', ')}` : ''}</Text>
+              </Stack>
+              <Stack gap={4} align="flex-end">
+                <Text size="xs" c="dimmed">{s.active ? (next ? `המועד הבא: ${dayjs(next).format('DD.MM.YYYY')}` : 'הסתיימה') : 'מושהית'}</Text>
+                <Group gap={4} wrap="nowrap">
+                  <Switch size="xs" label="פעילה" checked={s.active} onChange={(e) => toggle(s, e.currentTarget.checked)} />
+                  <ActionIcon variant="subtle" onClick={() => setEditing(s)} aria-label="עריכה"><IconPencil size={14} /></ActionIcon>
+                  {(access.isAdmin || s.created_by === me) && <ActionIcon variant="subtle" color="red" onClick={() => remove(s)} aria-label="מחיקה"><IconTrash size={14} /></ActionIcon>}
+                </Group>
+              </Stack>
+            </Group>
+          </Card>
+        );
+      })}
+      {editing && <SeriesForm dir={dir} series={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
+    </Stack>
+  );
+}
+
 export function Tasks() {
   const access = useAccess();
   const me = useMe();
@@ -279,6 +442,16 @@ export function Tasks() {
   const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<{ task: OfficeTask; to: Assignee[] } | null>(null);
   const all = tasks.data ?? [];
+  const qc = useQueryClient();
+  const [tab, setTab] = useState<string>('tasks');
+  // Recurring tasks whose date has come open now too, if the morning run has not yet.
+  useEffect(() => {
+    if (access.isClient) return;
+    supabase.rpc('spawn_recurring_tasks').then(({ data }) => { if (data) qc.invalidateQueries({ queryKey: ['office-tasks'] }); });
+  }, [access.isClient, qc]);
+  // A task from a recurring one whose earlier task is not done yet.
+  const stillOpen = new Set(all.filter((t) => t.series_id && all.some((o) => o.series_id === t.series_id && o.id !== t.id
+    && (o.occurrence_on ?? '') < (t.occurrence_on ?? '') && o.status !== 'done')).map((t) => t.id));
   const open = params.get('task');
   const current = all.find((t) => t.id === open) ?? null;
   const counts = openByAssignee(all);
@@ -289,14 +462,18 @@ export function Tasks() {
   const shown = sortTasks(all.filter((t) => (state === 'all' || (state === 'done') === (t.status === 'done'))
     && (!who || (who === 'mine' ? t.office_task_assignees.some((a) => a.user_id === me) : who === 'sent' ? t.created_by === me
       : t.office_task_assignees.some((a) => assigneeKey(a) === who)))
-    && (!cat || (cat === 'none' ? !t.category_id : t.category_id === cat))), sort, dir.nameOf, dir.catRank);
+    && (!cat || (cat === 'none' ? !t.category_id : t.category_id === cat))), sort, dir.nameOf, { trigger: dir.trigRank, category: dir.catRank });
 
   return (
     <Stack>
       <Group justify="space-between">
         <Title order={2}>משימות</Title>
-        {!access.isClient && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>משימה חדשה</Button>}
+        {!access.isClient && tab === 'tasks' && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>משימה חדשה</Button>}
       </Group>
+      <Tabs value={tab} onChange={(x) => x && setTab(x)}>
+        <Tabs.List><Tabs.Tab value="tasks">משימות</Tabs.Tab>{!access.isClient && <Tabs.Tab value="series" leftSection={<IconRepeat size={14} />}>משימות חוזרות</Tabs.Tab>}</Tabs.List>
+      </Tabs>
+      {tab === 'series' ? <SeriesList dir={dir} /> : <>
       <Group gap="sm" align="flex-end">
         <SegmentedControl value={state} onChange={(x) => setState(x as typeof state)}
           data={[{ value: 'open', label: 'פתוחות' }, { value: 'done', label: 'טופלו' }, { value: 'all', label: 'הכול' }]} />
@@ -321,7 +498,9 @@ export function Tasks() {
                 <Group gap="xs">
                   <Text fw={600}>{t.subject}</Text>
                   <Badge size="sm" variant="light" color={PRIORITY_COLOR[t.priority]}>{PRIORITY_HE[t.priority]}</Badge>
-                  <Badge size="sm" variant="outline">{TRIGGER_HE[t.trigger_kind]}</Badge>
+                  {dir.trigLabel(t.trigger_id) && <Badge size="sm" variant="outline">{dir.trigLabel(t.trigger_id)}</Badge>}
+                  {t.series_id && <Badge size="sm" variant="light" color="indigo" leftSection={<IconRepeat size={10} />}>{t.occurrence_on && dayjs(t.occurrence_on).format('DD.MM')}</Badge>}
+                  {stillOpen.has(t.id) && <Badge size="sm" variant="light" color="orange">גם הקודמת עוד פתוחה</Badge>}
                   {dir.catLabel(t.category_id) && <Badge size="sm" variant="light" color="cyan">{dir.catLabel(t.category_id)}</Badge>}
                 </Group>
                 <Text size="xs" c="dimmed" lineClamp={1}>
@@ -337,6 +516,7 @@ export function Tasks() {
           </Card>
         ))}
       </Stack>
+      </>}
       {adding && <TaskForm dir={dir} onClose={() => setAdding(false)} onSaved={(t, to) => { setAdding(false); setCreated({ task: t, to }); }} />}
       {current && <TaskView key={current.id} task={current} dir={dir} onClose={() => setParams({})} />}
     </Stack>
