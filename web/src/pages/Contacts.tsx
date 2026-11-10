@@ -6,6 +6,7 @@ import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
 import { QueryState } from '../components/common';
 import { useContacts } from '../lib/queries';
+import { Phone } from '../components/Phone';
 
 export const ROLE_HE: Record<string, string> = {
   client: 'לקוח', contact: 'איש קשר', tenant: 'שוכר', manager: 'מנהל נכסים', lawyer: 'עו"ד', hotel: 'מלון',
@@ -58,7 +59,7 @@ export function Contacts() {
                   <Table.Tr key={c.id}>
                     <Table.Td><Anchor component={Link} to={`/contacts/${c.id}`} fw={500} size="sm">{c.display_name}</Anchor>{c.kind === 'company' && <Badge size="xs" ml={6} variant="light">חברה</Badge>}</Table.Td>
                     <Table.Td><Group gap={4}>{c.party_roles.map((r) => <Badge key={r.role} size="sm" variant="light" color="gray">{ROLE_HE[r.role] ?? r.role}</Badge>)}</Group></Table.Td>
-                    <Table.Td dir="ltr" style={{ textAlign: 'right' }}>{c.phone ?? '—'}</Table.Td>
+                    <Table.Td><Phone phone={c.phone} /></Table.Td>
                     <Table.Td dir="ltr" style={{ textAlign: 'right' }}>{c.email ?? '—'}</Table.Td>
                   </Table.Tr>
                 ))}

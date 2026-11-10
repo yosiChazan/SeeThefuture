@@ -8,6 +8,7 @@ import { CountryBadge, CountryFilter, QueryState, SortHeader } from '../componen
 import { idNumberOf, RELATION_HE, useClients, usePartyLinks, type ClientRow } from '../lib/queries';
 import { COUNTRY_HE } from '../lib/format';
 import type { Country } from '../lib/types';
+import { Phone } from '../components/Phone';
 
 // Countries come from the client's properties; parties themselves span countries.
 const countriesOf = (c: ClientRow) => [...new Set(c.ownerships.map((o) => o.property?.country_code).filter((x): x is Country => !!x))];
@@ -104,7 +105,7 @@ export function Clients() {
                     <Table.Td dir="ltr" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{idNumberOf(c) ?? '—'}</Table.Td>
                     <Table.Td><Group gap={4}>{countriesOf(c).map((x) => <CountryBadge key={x} code={x} />)}</Group></Table.Td>
                     <Table.Td>{propertyCount(c) || '—'}</Table.Td>
-                    <Table.Td dir="ltr" style={{ textAlign: 'right' }}>{c.phone ?? '—'}</Table.Td>
+                    <Table.Td><Phone phone={c.phone} /></Table.Td>
                     <Table.Td dir="ltr" style={{ textAlign: 'right' }}>{c.email ?? '—'}</Table.Td>
                   </Table.Tr>,
                   ...(membersOf.get(c.id) ?? []).map((m) => (
