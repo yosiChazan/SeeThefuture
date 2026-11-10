@@ -11,11 +11,11 @@ import type { Country } from '../lib/types';
 
 const COLOR = { report: 'blue', airtable: 'orange', excel: 'green', manual: 'gray', unknown: 'red' } as const;
 
-interface SourceFile { source: string; country_code: Country; storage_path: string; file_name: string | null }
+interface SourceFile { source: string; country_code: Country; storage_path: string | null; url: string | null; file_name: string | null }
 // The spreadsheets transactions came from (decision 137), loaded once for every row.
 function useSourceFiles() {
   return useQuery({ queryKey: ['source-files'], staleTime: 5 * 60 * 1000,
-    queryFn: async () => new Map((must(await supabase.from('source_files').select('source, country_code, storage_path, file_name')) as SourceFile[]).map((f) => [f.source, f])) });
+    queryFn: async () => new Map((must(await supabase.from('source_files').select('source, country_code, storage_path, url, file_name')) as SourceFile[]).map((f) => [f.source, f])) });
 }
 
 // Uploading the spreadsheet once; every transaction from it then links to it.
@@ -28,7 +28,7 @@ function UploadSource({ source, country, onClose }: { source: string; country: C
     setBusy(true);
     const path = `${country}/sources/${crypto.randomUUID()}_${file.name.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-100)}`;
     const up = await supabase.storage.from('imports').upload(path, file, { contentType: file.type || undefined });
-    const row = up.error ? up : await supabase.from('source_files').upsert({ source, country_code: country, storage_path: path, file_name: file.name });
+    const row = up.error ? up : await supabase.from('source_files').upsert({ source, country_code: country, storage_path: path, url: null, file_name: file.name });
     setBusy(false);
     if (row.error) { notifications.show({ color: 'red', message: row.error.message }); return; }
     notifications.show({ color: 'teal', message: 'הקובץ הועלה, וכל התנועות ממנו מקושרות אליו' });
@@ -60,12 +60,13 @@ export function SourceBadge({ source, importBatchId, country }: { source?: strin
     const canUpload = !!country && access.canApprove(country as Country);
     const open = async () => {
       if (!f) { if (canUpload) setUploading(true); return; }
-      const { data, error } = await supabase.storage.from('imports').createSignedUrl(f.storage_path, 600, { download: f.file_name ?? undefined });
+      if (f.url) { window.open(f.url, '_blank', 'noopener'); return; }
+      const { data, error } = await supabase.storage.from('imports').createSignedUrl(f.storage_path!, 600, { download: f.file_name ?? undefined });
       if (error) notifications.show({ color: 'red', message: error.message }); else window.open(data.signedUrl, '_blank');
     };
     return (
       <>
-        <Tooltip label={f ? `${s.detail} · לחיצה פותחת את הקובץ` : canUpload ? `${s.detail} · הקובץ עוד לא הועלה: לחיצה להעלאה` : `${s.detail} · הקובץ עוד לא הועלה`} withinPortal>
+        <Tooltip label={f ? `${s.detail} · לחיצה פותחת את ${f.file_name ?? 'הקובץ'}${f.url ? ' בדרייב' : ''}` : canUpload ? `${s.detail} · הקובץ עוד לא הועלה: לחיצה להעלאה` : `${s.detail} · הקובץ עוד לא הועלה`} withinPortal>
           <span onClick={open}>{badge(!!f || canUpload)}</span>
         </Tooltip>
         {uploading && <UploadSource source={source!} country={country as Country} onClose={() => setUploading(false)} />}
