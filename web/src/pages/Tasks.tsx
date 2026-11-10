@@ -200,9 +200,27 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
 }
 
 // One task: its details, its history, and the answer (a reply and the state).
+// A done task may be deleted by its author, management or an admin (decision 134).
+function useCanDelete() {
+  const access = useAccess();
+  const me = useMe();
+  return (t: OfficeTask) => t.status === 'done' && (access.isManagement || access.isAdmin || t.created_by === me);
+}
 function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; onClose: () => void }) {
   const qc = useQueryClient();
   const access = useAccess();
+  const canDelete = useCanDelete();
+  const remove = () => modals.openConfirmModal({
+    title: 'מחיקת משימה', children: <Text size="sm">"{task.subject}" תימחק עם ההיסטוריה שלה. אי אפשר לשחזר.</Text>,
+    labels: { confirm: 'מחיקה', cancel: 'ביטול' }, confirmProps: { color: 'red' },
+    onConfirm: async () => {
+      const r = await supabase.from('office_tasks').delete().eq('id', task.id).select('id');
+      if (r.error || !r.data?.length) { notifications.show({ color: 'red', message: r.error?.message ?? 'המשימה לא נמחקה' }); return; }
+      notifications.show({ color: 'teal', message: 'המשימה נמחקה' });
+      await qc.invalidateQueries({ queryKey: ['office-tasks'] });
+      onClose();
+    },
+  });
   const events = useEvents(task.id);
   const [reply, setReply] = useState('');
   const [status, setStatus] = useState<TaskStatus>(task.status);
@@ -267,6 +285,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
                 <Select size="xs" w={150} label="מצב" data={STATUSES} value={status} allowDeselect={false} onChange={(x) => x && setStatus(x as TaskStatus)} />
               </Group>
               <Group gap="xs">
+                {canDelete(task) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={remove}>מחיקה</Button>}
                 {!access.isClient && <Button size="xs" variant="default" onClick={() => setEditing(true)}>העברה ושינוי פרטים</Button>}
                 <Button size="xs" onClick={send} loading={busy} disabled={!reply.trim() && status === task.status}>שליחה</Button>
               </Group>
@@ -487,6 +506,7 @@ export function Tasks() {
   const [sort, setSort] = useState<SortKey>('updated');
   const [state, setState] = useState<'open' | 'done' | 'all'>('open');
   const [filters, setFilters] = useState<TaskFilter[]>([]);
+  const canDelete = useCanDelete();
   const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<{ task: OfficeTask; to: Assignee[] } | null>(null);
   const all = tasks.data ?? [];
@@ -509,6 +529,19 @@ export function Tasks() {
   ];
   const shown = sortTasks(filterTasks(all.filter((t) => state === 'all' || (state === 'done') === (t.status === 'done')), filters, me),
     sort, dir.nameOf, { trigger: dir.trigRank, category: dir.catRank });
+  // Deleting the done tasks shown (after the filters), those the viewer may delete.
+  const removeDone = () => {
+    const ids = shown.filter(canDelete).map((t) => t.id);
+    modals.openConfirmModal({
+      title: 'מחיקת משימות שטופלו', children: <Text size="sm">{ids.length} משימות שטופלו, כפי שהן מסוננות עכשיו, יימחקו עם ההיסטוריה שלהן. אי אפשר לשחזר.</Text>,
+      labels: { confirm: 'מחיקה', cancel: 'ביטול' }, confirmProps: { color: 'red' },
+      onConfirm: async () => {
+        const r = await supabase.from('office_tasks').delete().in('id', ids).select('id');
+        notifications.show(r.error ? { color: 'red', message: r.error.message } : { color: 'teal', message: `נמחקו ${r.data?.length ?? 0} משימות` });
+        await qc.invalidateQueries({ queryKey: ['office-tasks'] });
+      },
+    });
+  };
   // The values each filter offers, as in sorting.
   const choices: Partial<Record<FilterField, { value: string; label: string }[]>> = {
     priority: [{ value: 'high', label: PRIORITY_HE.high }, { value: 'medium', label: PRIORITY_HE.medium }, { value: 'low', label: PRIORITY_HE.low }],
@@ -533,6 +566,7 @@ export function Tasks() {
         <Select label="מיון" w={170} allowDeselect={false} value={sort} onChange={(x) => x && setSort(x as SortKey)}
           data={[{ value: 'updated', label: 'עדכון אחרון' }, { value: 'created', label: 'תאריך פתיחה' }, { value: 'priority', label: 'דחיפות' }, { value: 'subject', label: 'נושא' }, { value: 'assignee', label: 'בטיפול של' }, { value: 'trigger', label: 'טריגר' }, { value: 'category', label: 'קטגוריה' }]} />
         <Text size="sm" c="dimmed">{shown.length} משימות</Text>
+        {state === 'done' && shown.some(canDelete) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={removeDone}>מחיקת המשימות שטופלו ({shown.filter(canDelete).length})</Button>}
       </Group>
       <TaskFilters filters={filters} setFilters={setFilters} choices={choices} />
       {tasks.error && <Alert color="red">{(tasks.error as Error).message}</Alert>}

@@ -1178,6 +1178,23 @@ exception when others then
 end $$;
 reset role;
 
+-- Deleting a task (decision 134): only once done, by its author, management or an admin.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+delete from app.office_tasks where subject = 'לבדוק חוזה';
+reset role;
+select pg_temp.check(exists (select 1 from app.office_tasks where subject = 'לבדוק חוזה'), 'the employee a task is with does not delete it');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+delete from app.office_tasks where subject = 'לבדוק חוזה';
+reset role;
+select pg_temp.check(exists (select 1 from app.office_tasks where subject = 'לבדוק חוזה'), 'an open task is not deleted, even by its author');
+update app.office_tasks set status = 'done' where subject = 'לבדוק חוזה';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+delete from app.office_tasks where subject = 'לבדוק חוזה';
+reset role;
+select pg_temp.check(not exists (select 1 from app.office_tasks where subject = 'לבדוק חוזה')
+  and not exists (select 1 from app.office_task_events e where not exists (select 1 from app.office_tasks t where t.id = e.task_id)),
+  'its author deletes a task once done, with its history');
+
 -- Recurring tasks (decision 130): a monthly one on the 31st opens on the last day of a short
 -- month, once per date however often it runs; the tasks are seen like any task.
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
