@@ -11,11 +11,21 @@ import type { Country } from '../lib/types';
 
 const COLOR = { report: 'blue', airtable: 'orange', excel: 'green', manual: 'gray', unknown: 'red' } as const;
 
-interface SourceFile { source: string; country_code: Country; storage_path: string | null; url: string | null; file_name: string | null }
-// The spreadsheets transactions came from (decision 137), loaded once for every row.
-function useSourceFiles() {
-  return useQuery({ queryKey: ['source-files'], staleTime: 5 * 60 * 1000,
-    queryFn: async () => new Map((must(await supabase.from('source_files').select('source, country_code, storage_path, url, file_name')) as SourceFile[]).map((f) => [f.source, f])) });
+// Where each transaction came from, for the transactions the viewer may see it of: only who
+// recorded it and an admin (decision 138). One call for all the rows shown.
+export interface TxnSource { id: string; source: string | null; file_url: string | null; file_path: string | null; file_name: string | null }
+export function useTransactionSources(ids: string[]) {
+  const key = [...new Set(ids)].sort();
+  return useQuery({
+    queryKey: ['transaction-sources', key], enabled: key.length > 0, staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const out = new Map<string, TxnSource>();
+      for (let i = 0; i < key.length; i += 300) {
+        for (const r of must(await supabase.rpc('transaction_sources', { p_ids: key.slice(i, i + 300) })) as TxnSource[]) out.set(r.id, r);
+      }
+      return out;
+    },
+  });
 }
 
 // Uploading the spreadsheet once; every transaction from it then links to it.
@@ -32,7 +42,7 @@ function UploadSource({ source, country, onClose }: { source: string; country: C
     setBusy(false);
     if (row.error) { notifications.show({ color: 'red', message: row.error.message }); return; }
     notifications.show({ color: 'teal', message: 'הקובץ הועלה, וכל התנועות ממנו מקושרות אליו' });
-    await qc.invalidateQueries({ queryKey: ['source-files'] });
+    await qc.invalidateQueries({ queryKey: ['transaction-sources'] });
     onClose();
   }
   return (
@@ -49,14 +59,14 @@ function UploadSource({ source, country, onClose }: { source: string; country: C
 // A small mark on a ledger row: where the transaction came from (SPEC decisions 136, 137). Every
 // source but "by hand" is a link: a report opens at intake, a row in Airtable opens there, a
 // spreadsheet opens the file (once uploaded; finance uploads it from here).
-export function SourceBadge({ source, importBatchId, country }: { source?: string | null; importBatchId?: string | null; country?: string | null }) {
+export function SourceBadge({ src, importBatchId, country }: { src: TxnSource; importBatchId?: string | null; country?: string | null }) {
+  const source = src.source;
   const s = sourceInfo(source, importBatchId);
-  const files = useSourceFiles();
   const access = useAccess();
   const [uploading, setUploading] = useState(false);
   const badge = (clickable: boolean) => <Badge size="xs" variant="light" color={COLOR[s.kind]} style={clickable ? { cursor: 'pointer' } : undefined}>{s.label}</Badge>;
   if (s.kind === 'excel') {
-    const f = files.data?.get(source!);
+    const f = src.file_url || src.file_path ? { url: src.file_url, storage_path: src.file_path, file_name: src.file_name } : null;
     const canUpload = !!country && access.canApprove(country as Country);
     const open = async () => {
       if (!f) { if (canUpload) setUploading(true); return; }

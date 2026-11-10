@@ -2,7 +2,7 @@ import { Button, Group, Paper, SegmentedControl, Select, Stack, Table, Text } fr
 import { useState } from 'react';
 import { ACCOUNT_KIND_HE, CATEGORY_HE, amountLabel, date, money } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
-import { SourceBadge } from './SourceBadge';
+import { SourceBadge, useTransactionSources, type TxnSource } from './SourceBadge';
 import type { Account, Currency } from '../lib/types';
 
 const FROM = '2026-01-01';
@@ -22,6 +22,9 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
   const [range, setRange] = useState<'2026' | 'all'>('2026');
   const [view, setView] = useState<'date' | 'account'>('date');
   const shown = accounts.filter((a) => entries.some((e) => e.account_id === a.id));
+  // The source column shows only for the viewer who may see a source here (decision 138).
+  const sources = useTransactionSources(entries.map((e) => e.transaction.id));
+  const showSrc = (sources.data?.size ?? 0) > 0;
   return (
     <Stack>
       <Group gap="sm">
@@ -31,7 +34,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
           data={[{ value: '2026', label: 'מתחילת 2026' }, { value: 'all', label: 'כל התנועות' }]} />
       </Group>
       {!shown.length && <Text c="dimmed" size="sm">עוד אין תנועות. הן ייכנסו עם קליטת הדוחות מהמנהלים המקומיים.</Text>}
-      {view === 'date' && !!shown.length && <ByDate accounts={shown} entries={entries} from={range === '2026' ? FROM : null} property={property} edit={edit} />}
+      {view === 'date' && !!shown.length && <ByDate accounts={shown} entries={entries} from={range === '2026' ? FROM : null} property={property} edit={edit} sources={showSrc ? sources.data : undefined} />}
       {view === 'account' && shown.map((a) => {
         const mine = entries.filter((e) => e.account_id === a.id);
         const before = range === '2026' ? mine.filter((e) => e.transaction.occurred_on < FROM) : [];
@@ -47,13 +50,13 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing={4} striped>
                 <Table.Thead>
-                  <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={70}>מקור</Table.Th><Table.Th w={120}>סכום</Table.Th><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
+                  <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th>{showSrc && <Table.Th w={70}>מקור</Table.Th>}<Table.Th w={120}>סכום</Table.Th><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {range === '2026' && (
                     <Table.Tr fw={600}>
                       <Table.Td>01.01.2026</Table.Td>
-                      <Table.Td colSpan={3}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
+                      <Table.Td colSpan={showSrc ? 3 : 2}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
                       <Table.Td />
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
                       {edit && <Table.Td />}
@@ -66,7 +69,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                         <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
                         <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
                         <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
-                        <Table.Td><SourceBadge source={e.transaction.source} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} /></Table.Td>
+                        {showSrc && <Table.Td>{sources.data?.get(e.transaction.id) && <SourceBadge src={sources.data.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
                         {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
@@ -86,9 +89,11 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
 const accountName = (a: Account, property: boolean) =>
   `${ACCOUNT_KIND_HE[a.kind] ?? a.kind} · ${a.holder.display_name}${property ? ` · של ${a.beneficiary.display_name}` : ''}`;
 
-function ByDate({ accounts, entries, from, property, edit }: {
+function ByDate({ accounts, entries, from, property, edit, sources }: {
   accounts: Account[]; entries: EntryRow[]; from: string | null; property: boolean; edit?: { can: (e: EntryRow) => boolean; open: (transactionId: string) => void };
+  sources?: Map<string, TxnSource>;
 }) {
+  const showSrc = !!sources;
   const [account, setAccount] = useState<string | null>(null);
   const [currency, setCurrency] = useState<string | null>(null);
   const byId = new Map(accounts.map((a) => [a.id, a]));
@@ -108,7 +113,7 @@ function ByDate({ accounts, entries, from, property, edit }: {
       <Table.ScrollContainer minWidth={700}>
         <Table verticalSpacing={4} striped>
           <Table.Thead>
-            <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={200}>קופה</Table.Th><Table.Th w={70}>מקור</Table.Th><Table.Th w={70}>מטבע</Table.Th><Table.Th w={120}>סכום</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
+            <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={200}>קופה</Table.Th>{showSrc && <Table.Th w={70}>מקור</Table.Th>}<Table.Th w={70}>מטבע</Table.Th><Table.Th w={120}>סכום</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {rows.map((e) => {
@@ -119,7 +124,7 @@ function ByDate({ accounts, entries, from, property, edit }: {
                   <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
                   <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
                   <Table.Td><Text size="xs">{accountName(a, property)}</Text></Table.Td>
-                  <Table.Td><SourceBadge source={e.transaction.source} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} /></Table.Td>
+                  {showSrc && <Table.Td>{sources?.get(e.transaction.id) && <SourceBadge src={sources.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                   <Table.Td>{e.currency}</Table.Td>
                   <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                   {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}

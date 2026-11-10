@@ -126,7 +126,7 @@ export function useAccountEntries(accountIds: string[]) {
       const out: EntryRow[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('entries')
-          .select('id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code, source)')
+          .select('id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code)')
           .in('account_id', accountIds).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as EntryRow[];
         out.push(...page);
         if (page.length < 1000) break;
@@ -144,7 +144,7 @@ export function usePropertyEntries(propertyId: string) {
       const out: (EntryRow & { account: Account })[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('entries')
-          .select(`id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code, source), account:accounts!inner(${ACCOUNT_COLS})`)
+          .select(`id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code), account:accounts!inner(${ACCOUNT_COLS})`)
           .eq('property_id', propertyId).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as (EntryRow & { account: Account })[];
         out.push(...page);
         if (page.length < 1000) break;
