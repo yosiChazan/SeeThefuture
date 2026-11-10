@@ -1,7 +1,7 @@
 import { AppShell, Badge, Burger, Button, Group, Image, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconAddressBook, IconBuildingCommunity, IconChecklist, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUserShield, IconUsers, IconChartBar, IconCash } from '@tabler/icons-react';
+  IconAddressBook, IconBuildingCommunity, IconChecklist, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUserShield, IconUsers, IconChartBar, IconCash, IconListCheck } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Navigate, NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { useAccess } from '../lib/access';
@@ -18,6 +18,7 @@ const NAV = [
   { to: '/completeness', label: 'השלמת פרטים', icon: IconChecklist },
   { to: '/stats', label: 'סטטיסטיקות', icon: IconChartBar },
   { to: '/cash', label: 'קופות', icon: IconCash },
+  { to: '/tasks', label: 'משימות', icon: IconListCheck },
 ];
 
 // Screens from SPEC §6.1 that wait for later stages (§9).
@@ -38,7 +39,7 @@ export function Layout() {
   const [view, setView] = useState<'stats' | 'full'>(readView);
   const statsOnly = access.isManagement && !access.isAdmin && view === 'stats';
   const switchView = (v: 'stats' | 'full') => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ } };
-  if (statsOnly && pathname !== '/stats') return <Navigate to="/stats" replace />;
+  if (statsOnly && pathname !== '/stats' && pathname !== '/tasks') return <Navigate to="/stats" replace />;
   const role = access.isAdmin ? 'מנהל מערכת' : access.isManagement ? 'הנהלה' : access.countries.map((c) => COUNTRY_HE[c]).join(', ');
 
   return (
@@ -63,7 +64,7 @@ export function Layout() {
       <AppShell.Navbar p="xs">
         <AppShell.Section grow component={ScrollArea}>
           <Stack gap={2}>
-            {(statsOnly ? NAV.filter((n) => n.to === '/stats') : NAV).map((n) => (
+            {(statsOnly ? NAV.filter((n) => n.to === '/stats' || n.to === '/tasks') : NAV).map((n) => (
               <NavLink key={n.to} component={RouterLink} to={n.to} label={n.label} onClick={close}
                 leftSection={<n.icon size={18} />} active={n.to === '/' ? pathname === '/' : pathname.startsWith(n.to)} />
             ))}

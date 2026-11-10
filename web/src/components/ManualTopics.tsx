@@ -62,7 +62,7 @@ export function LinkedText({ text, size = 'sm' }: { text: string; size?: string 
 
 // "Add a link": an address and, if wanted, the words to show instead of it. Appends
 // [words](address) to the text, or the bare address when no words are given.
-function AddLink({ onAdd }: { onAdd: (link: string) => void }) {
+export function AddLink({ onAdd }: { onAdd: (link: string) => void }) {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState(''), [url, setUrl] = useState('');
   const target = appPath(url, window.location.origin);
@@ -84,7 +84,7 @@ function AddLink({ onAdd }: { onAdd: (link: string) => void }) {
     </Popover>
   );
 }
-const append = (text: string, link: string) => (text && !/\s$/.test(text) ? `${text} ` : text) + link;
+export const append = (text: string, link: string) => (text && !/\s$/.test(text) ? `${text} ` : text) + link;
 
 function FixLink({ url }: { url: string }) {
   const inApp = url.startsWith('/');

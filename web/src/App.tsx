@@ -7,6 +7,7 @@ import { Contacts } from './pages/Contacts';
 import { Completeness } from './pages/Completeness';
 import { Stats } from './pages/Stats';
 import { CashBoxes } from './pages/CashBoxes';
+import { Tasks } from './pages/Tasks';
 import { DriveZipImport } from './pages/DriveZipImport';
 import { Dashboard } from './pages/Dashboard';
 import { Intake } from './pages/Intake';
@@ -35,6 +36,7 @@ export function App() {
             <Route path="completeness" element={<Completeness />} />
             <Route path="stats" element={<Stats />} />
             <Route path="cash" element={<CashBoxes />} />
+            <Route path="tasks" element={<Tasks />} />
             <Route path="documents-zip" element={<DriveZipImport />} />
             <Route path="leases" element={<Leases />} />
             <Route path="leases/:id" element={<LeaseCard />} />
