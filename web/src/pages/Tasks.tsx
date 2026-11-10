@@ -23,6 +23,10 @@ interface Person { user_id: string; display_name: string; email: string | null; 
 function usePeople() {
   return useQuery({ queryKey: ['task-people'], queryFn: async () => must(await supabase.rpc('task_people')) as Person[] });
 }
+export interface TaskCategory { id: string; label: string; position: number }
+export function useTaskCategories() {
+  return useQuery({ queryKey: ['task-categories'], queryFn: async () => must(await supabase.from('task_categories').select('id, label, position').order('position').order('label')) as TaskCategory[] });
+}
 function useTasks() {
   return useQuery({
     queryKey: ['office-tasks'],
@@ -45,6 +49,7 @@ function useDirectory() {
   const clients = useClients();
   const contacts = useContacts();
   const properties = useProperties();
+  const cats = useTaskCategories();
   return useMemo(() => {
     const users = new Map((people.data ?? []).map((p) => [p.user_id, p]));
     const parties = new Map<string, { name: string; email: string | null }>();
@@ -72,8 +77,12 @@ function useDirectory() {
       { group: 'אנשי קשר', items: (contacts.data ?? []).map((c) => ({ value: `contact:${c.id}`, label: c.display_name })) },
       { group: 'מדינות', items: COUNTRIES.map((c) => ({ value: `country:${c}`, label: COUNTRY_HE[c] })) },
     ];
-    return { nameOf, emailOf, linkName, linkPath, assigneeOptions, linkOptions, users };
-  }, [people.data, clients.data, contacts.data, properties.data, access.isClient]);
+    const catList = cats.data ?? [];
+    const catLabel = (id: string | null | undefined) => catList.find((c) => c.id === id)?.label ?? null;
+    const catRank = (id: string | null | undefined) => { const i = catList.findIndex((c) => c.id === id); return i < 0 ? 9999 : i; };
+    const catOptions = catList.map((c) => ({ value: c.id, label: c.label }));
+    return { nameOf, emailOf, linkName, linkPath, assigneeOptions, linkOptions, users, catLabel, catRank, catOptions };
+  }, [people.data, clients.data, contacts.data, properties.data, cats.data, access.isClient]);
 }
 type Directory = ReturnType<typeof useDirectory>;
 
@@ -115,7 +124,7 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
   const qc = useQueryClient();
   const [v, setV] = useState({
     trigger: (task?.trigger_kind ?? null) as Trigger | null, subject: task?.subject ?? '', body: task?.body ?? '',
-    priority: (task?.priority ?? 'medium') as Priority,
+    priority: (task?.priority ?? 'medium') as Priority, category: (task?.category_id ?? null) as string | null,
     links: (task?.office_task_links ?? []).map(linkValue), assignees: (task?.office_task_assignees ?? []).map(assigneeKey),
   });
   const [busy, setBusy] = useState(false);
@@ -129,11 +138,11 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
         id = must(await supabase.rpc('create_office_task', {
           p_trigger: v.trigger, p_subject: v.subject, p_body: v.body, p_priority: v.priority,
           p_users: assignees.filter((a) => a.user_id).map((a) => a.user_id), p_parties: assignees.filter((a) => a.party_id).map((a) => a.party_id),
-          p_links: v.links.map(toLink),
+          p_links: v.links.map(toLink), p_category: v.category,
         })) as string;
       } else {
-        const fields = { trigger_kind: v.trigger, subject: v.subject.trim(), body: v.body.trim() || null, priority: v.priority };
-        if (fields.trigger_kind !== task.trigger_kind || fields.subject !== task.subject || fields.body !== (task.body ?? null) || fields.priority !== task.priority) {
+        const fields = { trigger_kind: v.trigger, subject: v.subject.trim(), body: v.body.trim() || null, priority: v.priority, category_id: v.category };
+        if (fields.trigger_kind !== task.trigger_kind || fields.subject !== task.subject || fields.body !== (task.body ?? null) || fields.priority !== task.priority || fields.category_id !== (task.category_id ?? null)) {
           must(await supabase.from('office_tasks').update(fields).eq('id', task.id));
         }
         const oldA = new Map(task.office_task_assignees.map((a) => [assigneeKey(a), a]));
@@ -155,6 +164,7 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
       <Stack>
         <Group grow align="flex-start">
           <Select label="טריגר" required data={TRIGGERS} value={v.trigger} onChange={(x) => setV({ ...v, trigger: x as Trigger })} />
+          <Select label="קטגוריה" placeholder="בלי קטגוריה" clearable data={dir.catOptions} value={v.category} onChange={(x) => setV({ ...v, category: x })} />
           <Select label="עדיפות" required data={PRIORITIES} value={v.priority} allowDeselect={false} onChange={(x) => x && setV({ ...v, priority: x as Priority })} />
         </Group>
         <TextInput label="נושא" required value={v.subject} onChange={(e) => setV({ ...v, subject: e.currentTarget.value })} />
@@ -205,6 +215,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
           <Badge color={STATUS_COLOR[task.status]}>{STATUS_HE[task.status]}</Badge>
           <Badge variant="light" color={PRIORITY_COLOR[task.priority]}>עדיפות {PRIORITY_HE[task.priority]}</Badge>
           <Badge variant="outline">{TRIGGER_HE[task.trigger_kind]}</Badge>
+          {dir.catLabel(task.category_id) && <Badge variant="light" color="cyan">{dir.catLabel(task.category_id)}</Badge>}
           <Text size="xs" c="dimmed">נפתחה ע"י {author}, {new Date(task.created_at).toLocaleString('he-IL')}</Text>
         </Group>
         {task.body && <Paper withBorder p="sm"><LinkedText text={task.body} /></Paper>}
@@ -264,6 +275,7 @@ export function Tasks() {
   const [sort, setSort] = useState<SortKey>('updated');
   const [state, setState] = useState<'open' | 'done' | 'all'>('open');
   const [who, setWho] = useState<string | null>(null);
+  const [cat, setCat] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<{ task: OfficeTask; to: Assignee[] } | null>(null);
   const all = tasks.data ?? [];
@@ -276,7 +288,8 @@ export function Tasks() {
   ];
   const shown = sortTasks(all.filter((t) => (state === 'all' || (state === 'done') === (t.status === 'done'))
     && (!who || (who === 'mine' ? t.office_task_assignees.some((a) => a.user_id === me) : who === 'sent' ? t.created_by === me
-      : t.office_task_assignees.some((a) => assigneeKey(a) === who)))), sort, dir.nameOf);
+      : t.office_task_assignees.some((a) => assigneeKey(a) === who)))
+    && (!cat || (cat === 'none' ? !t.category_id : t.category_id === cat))), sort, dir.nameOf, dir.catRank);
 
   return (
     <Stack>
@@ -288,7 +301,8 @@ export function Tasks() {
         <SegmentedControl value={state} onChange={(x) => setState(x as typeof state)}
           data={[{ value: 'open', label: 'פתוחות' }, { value: 'done', label: 'טופלו' }, { value: 'all', label: 'הכול' }]} />
         <Select label="מיון" w={170} allowDeselect={false} value={sort} onChange={(x) => x && setSort(x as SortKey)}
-          data={[{ value: 'updated', label: 'עדכון אחרון' }, { value: 'created', label: 'תאריך פתיחה' }, { value: 'priority', label: 'דחיפות' }, { value: 'subject', label: 'נושא' }, { value: 'assignee', label: 'בטיפול של' }]} />
+          data={[{ value: 'updated', label: 'עדכון אחרון' }, { value: 'created', label: 'תאריך פתיחה' }, { value: 'priority', label: 'דחיפות' }, { value: 'subject', label: 'נושא' }, { value: 'assignee', label: 'בטיפול של' }, { value: 'trigger', label: 'טריגר' }, { value: 'category', label: 'קטגוריה' }]} />
+        <Select label="קטגוריה" w={170} clearable placeholder="כל הקטגוריות" data={[...dir.catOptions, { value: 'none', label: 'בלי קטגוריה' }]} value={cat} onChange={setCat} />
         <Select label="בטיפול של" w={240} clearable placeholder="כל המשימות שאני רואה" data={whoOptions} value={who} onChange={setWho} searchable />
         <Text size="sm" c="dimmed">{shown.length} משימות</Text>
       </Group>
@@ -308,6 +322,7 @@ export function Tasks() {
                   <Text fw={600}>{t.subject}</Text>
                   <Badge size="sm" variant="light" color={PRIORITY_COLOR[t.priority]}>{PRIORITY_HE[t.priority]}</Badge>
                   <Badge size="sm" variant="outline">{TRIGGER_HE[t.trigger_kind]}</Badge>
+                  {dir.catLabel(t.category_id) && <Badge size="sm" variant="light" color="cyan">{dir.catLabel(t.category_id)}</Badge>}
                 </Group>
                 <Text size="xs" c="dimmed" lineClamp={1}>
                   {t.office_task_assignees.length ? `בטיפול של ${t.office_task_assignees.map(dir.nameOf).join(', ')}` : 'לא הועברה לטיפול'}
