@@ -66,7 +66,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                         <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
                         <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
                         <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
-                        <Table.Td><SourceBadge source={e.transaction.source} importBatchId={e.transaction.import_batch_id} /></Table.Td>
+                        <Table.Td><SourceBadge source={e.transaction.source} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} /></Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
                         {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
@@ -119,7 +119,7 @@ function ByDate({ accounts, entries, from, property, edit }: {
                   <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
                   <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
                   <Table.Td><Text size="xs">{accountName(a, property)}</Text></Table.Td>
-                  <Table.Td><SourceBadge source={e.transaction.source} importBatchId={e.transaction.import_batch_id} /></Table.Td>
+                  <Table.Td><SourceBadge source={e.transaction.source} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} /></Table.Td>
                   <Table.Td>{e.currency}</Table.Td>
                   <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                   {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
