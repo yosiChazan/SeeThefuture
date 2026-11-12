@@ -154,7 +154,7 @@ External references (מיפוי שמות בין מקורות)
 Utility contracts (רומניה בעיקר)
   utility_contracts  property_id, type: electricity | gas | internet | building_assoc,
                      provider, client_code, status, deadline, payer: tenant | owner | building
-                     (בלי סיסמאות: הן ב-Bitwarden)
+                     (בלי סיסמאות: הן ב-KeePass)
 
 Tasks
   tasks              title, notes, assignee_user_id, due_date, status,
@@ -174,7 +174,7 @@ Purchase & Construction
 Documents
   documents          entity (property/party/lease/purchase), type, storage_path,
                      sensitivity: normal | sensitive, uploaded_by
-                     (סיסמאות, CVV ו-PIN לא נשמרים כאן. הם עוברים ל-Bitwarden)
+                     (סיסמאות, CVV ו-PIN לא נשמרים כאן. הם עוברים ל-KeePass)
 
 Ingestion
   import_sources     name, adapter (vitaly_rent_xlsx, gershon_utilities_xlsx,
@@ -271,15 +271,15 @@ Dropbox API    ─┼─> adapter לכל פורמט ─> import_batch (טיוט�
 | הרשאות | Row Level Security בבסיס הנתונים, לפי תפקיד ומדינה, ולקוח רואה רק את עצמו |
 | מסמכים רגישים | אחסון פרטי, קישורי הורדה זמניים (signed URL), ורישום של כל צפייה |
 | כניסה | 2FA חובה לעובדים, וקוד חד-פעמי ללקוחות |
-| **פרטי כרטיסים, PIN, PUK וסיסמאות** | **לא נשמרים במערכת.** עוברים ל-Bitwarden עם כספת לכל מדינה. במערכת נשמרים רק בנק, 4 ספרות אחרונות, תוקף וסטטוס |
-| **פרטי כניסה לבנקאות אונליין של לקוחות** (Bank of Georgia, כ-36 לקוחות) | כמו בשורה הקודמת: נשמרים רק ב-Bitwarden. במערכת נשמרים בנק, IBAN, SWIFT וסטטוס |
+| **פרטי כרטיסים, PIN, PUK וסיסמאות** | **לא נשמרים במערכת.** עוברים ל-KeePass (כספת מקומית של יוסי). במערכת נשמרים רק בנק, 4 ספרות אחרונות, תוקף וסטטוס |
+| **פרטי כניסה לבנקאות אונליין של לקוחות** (Bank of Georgia, כ-36 לקוחות) | כמו בשורה הקודמת: נשמרים רק ב-KeePass. במערכת נשמרים בנק, IBAN, SWIFT וסטטוס |
 | יומן | `audit_log` לכל שינוי בנתונים כספיים ולכל גישה למסמך רגיש |
 | גיבוי | גיבוי יומי אוטומטי |
 
 **פעולות מיידיות (עוד לפני שהפרויקט מתחיל):**
 - [ ] לבטל את קישור השיתוף הציבורי של Airtable.
 - [ ] למחוק מהמחשב את קובצי ה-CSV שיוצאו.
-- [ ] לשקול להעביר כבר עכשיו את טבלת `Bank account` ל-Bitwarden.
+- [ ] לשקול להעביר כבר עכשיו את טבלת `Bank account` ל-KeePass.
 
 ---
 
@@ -304,9 +304,9 @@ Dropbox API    ─┼─> adapter לכל פורמט ─> import_batch (טיוט�
 | אחסון ממשק | **Cloudflare Pages** | חינם, ומותר לשימוש מסחרי |
 | מיילים | **Resend** | חינם עד 3,000 מיילים בחודש |
 | וואטסאפ | **WhatsApp Cloud API** (Meta, ישירות) | בלי עמלת ספק ביניים |
-| סיסמאות | **Bitwarden Teams** | כ-4$ למשתמש בחודש |
+| סיסמאות | **KeePass** (תוכנה מקומית, כבר בשימוש אצל יוסי) | חינם |
 
-**עלות משוערת:** כ-25$ בחודש קבוע, ועוד כמה דולרים לתבניות וואטסאפ ול-Bitwarden. בתוך מסגרת של 30–40$.
+**עלות משוערת:** כ-25$ בחודש קבוע, ועוד כמה דולרים לתבניות וואטסאפ. בתוך מסגרת של 30–40$.
 
 **תחזוקה:** TypeScript בכל השכבות, migrations של בסיס הנתונים בגרסאות בתוך ה-repo, בדיקות לכל adapter, וקובץ `CLAUDE.md` עם מסמך האפיון בתוך ה-repo.
 

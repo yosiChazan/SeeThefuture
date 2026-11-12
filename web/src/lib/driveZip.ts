@@ -6,7 +6,7 @@ export interface ZipFile { path: string; size: number }
 export interface Target { id: string; building: string; unit: string; owners: string[] }
 
 // Folders and files that are never copied: bank account details, passwords and cards (they
-// belong in Bitwarden, CLAUDE.md). Videos are copied, as photos (decision 111). No size limit (decision 110):
+// belong in KeePass, CLAUDE.md). Videos are copied, as photos (decision 111). No size limit (decision 110):
 // a file larger than the project's upload limit fails on upload and is reported.
 const SECRET = /(פרטי\s*חשבון|סיסמ|כרטיס\s*אשראי|password|passw|card|\bpin\b|ukrgasbank|privatbank|monobank|iban)/i;
 export const VIDEO = /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i;
