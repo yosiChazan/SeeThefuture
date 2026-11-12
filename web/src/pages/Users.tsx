@@ -1,6 +1,7 @@
 import {
   Alert, Badge, Button, Checkbox, CopyButton, Group, Modal, Paper, PasswordInput, Radio, Select, Stack, Table, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
+import { SendMailButton } from '../components/SendMailButton';
 import { notifications } from '@mantine/notifications';
 import { IconHistory, IconKey, IconMail, IconPlus, IconShieldOff, IconTrash, IconUserCog } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -117,11 +118,12 @@ function MailButton({ name, email, password, admin = false, temporary = false, r
       <Text size="sm" fw={600}>{reset ? 'מייל למשתמש עם הסיסמה החדשה' : 'מייל למשתמש עם פרטי הכניסה'}</Text>
       {password && <Checkbox label="לכלול את הסיסמה במייל" checked={withPassword} onChange={(e) => setWithPassword(e.currentTarget.checked)} />}
       <Group gap="xs">
+        <SendMailButton to={email} subject={subject} text={body} />
         <Button component="a" href={gmail} target="_blank" rel="noopener" leftSection={<IconMail size={16} />} variant="light">פתיחה ב-Gmail</Button>
         <Button component="a" href={mailto} variant="default">תוכנת מייל במחשב</Button>
         <CopyButton value={`${subject}\n\n${body}`}>{({ copied, copy }) => <Button variant="subtle" onClick={copy}>{copied ? 'הועתק' : 'העתקת ההודעה'}</Button>}</CopyButton>
       </Group>
-      <Text size="xs" c="dimmed">המייל לא נשלח מהמערכת: נפתחת טיוטה מוכנה, ואתה שולח אותה מהתיבה שלך אל {email}. אם לא נפתח כלום, מעתיקים את ההודעה ומדביקים במייל או בוואטסאפ. {password && !withPassword && 'בלי הסיסמה, מעבירים אותה בנפרד (וואטסאפ או SMS).'}</Text>
+      <Text size="xs" c="dimmed">"שליחת מייל" שולח מכתובת המערכת אל {email}, והתשובות יגיעו אליך. או טיוטה מוכנה שאתה שולח מהתיבה שלך. אם לא נפתח כלום, מעתיקים את ההודעה ומדביקים במייל או בוואטסאפ. {password && !withPassword && 'בלי הסיסמה, מעבירים אותה בנפרד (וואטסאפ או SMS).'}</Text>
     </Stack>
   );
 }
