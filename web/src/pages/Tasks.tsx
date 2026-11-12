@@ -17,6 +17,7 @@ import {
 import { useClients, useContacts, useProperties } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
 import { gmailLink, mailtoLink } from '../lib/topicMail';
+import { SendMailButton } from '../components/SendMailButton';
 
 // Tasks (SPEC decisions 128–130). Each task is seen only by its author, whoever it is with,
 // management and admins; the database enforces it. All of them may answer it. Recurring
@@ -109,8 +110,8 @@ const toAssignee = (v: string): Assignee => (v.startsWith('u:') ? { user_id: v.s
 const PRIORITIES = (Object.keys(PRIORITY_HE) as Priority[]).map((k) => ({ value: k, label: PRIORITY_HE[k] }));
 const STATUSES = (Object.keys(STATUS_HE) as TaskStatus[]).map((k) => ({ value: k, label: STATUS_HE[k] }));
 
-// The e-mail to each person a task is with: Gmail or the computer's mail app. The system
-// sends nothing itself; the sender sends it from their own mailbox.
+// The e-mail to each person a task is with: sent from the system on a press (replies go to
+// the sender), or a draft in Gmail or the computer's mail app.
 function MailLinks({ task, to, dir, from }: { task: OfficeTask; to: Assignee[]; dir: Directory; from: string }) {
   const withMail = to.filter((a) => dir.emailOf(a));
   if (!withMail.length) return <Text size="xs" c="dimmed">אין כתובת מייל לאף אחד מהם.</Text>;
@@ -123,6 +124,7 @@ function MailLinks({ task, to, dir, from }: { task: OfficeTask; to: Assignee[]; 
           <Group key={assigneeKey(a)} gap="xs">
             <IconMail size={14} />
             <Text size="sm">{dir.nameOf(a)}</Text>
+            <SendMailButton size="xs" to={email} subject={m.subject} text={m.body} />
             <Anchor size="sm" href={gmailLink(email, m.subject, m.body)} target="_blank" rel="noopener noreferrer">Gmail</Anchor>
             <Anchor size="sm" href={mailtoLink(email, m.subject, m.body)}>תוכנת מייל</Anchor>
           </Group>

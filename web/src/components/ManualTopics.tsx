@@ -9,6 +9,7 @@ import { useAccess } from '../lib/access';
 import { appPath, fixLinkOk, namedLink, splitLinks } from '../lib/links';
 import { must, supabase } from '../lib/supabase';
 import { gmailLink, mailtoLink, topicMail, topicMailHtml } from '../lib/topicMail';
+import { SendMailButton } from './SendMailButton';
 
 // Topics added by hand on the completeness page (SPEC decision 92): a question or a task,
 // sent to an employee (or to no one), about any number of clients, contacts and
@@ -102,7 +103,7 @@ function useAboutOptions({ clients, contacts, properties }: Lists) {
 }
 
 // A ready-made e-mail to the employee a topic was sent to: Gmail, the computer's mail app,
-// or copy. The system sends nothing itself; the sender sends it from their own mailbox.
+// or copy, or sent from the system's address on a press (replies go to the sender).
 function MailDraft({ to, topic, from }: { to: Staff; topic: { title: string; notes: string | null; fix_url: string | null }; from: string }) {
   const input = { title: topic.title, notes: topic.notes, fixUrl: topic.fix_url, to: to.display_name, from, origin: window.location.origin };
   const { subject, body } = topicMail(input);
@@ -133,13 +134,14 @@ function MailDraft({ to, topic, from }: { to: Staff; topic: { title: string; not
       <Alert color="blue" variant="light" p="xs">
         <Text size="sm">בטיוטה שתיפתח ב-Gmail גוף ההודעה ריק: <b>לחץ בגוף ההודעה והדבק (Ctrl+V)</b>. ההודעה כבר מועתקת, עם הקישורים.</Text>
       </Alert>
+      <SendMailButton size="xs" to={to.email} subject={subject} text={body} html={topicMailHtml(input)} />
       <Group gap="xs">
-        <Button size="xs" leftSection={<IconMail size={14} />} onClick={gmail}>פתיחת טיוטה ב-Gmail</Button>
+        <Button size="xs" variant="light" leftSection={<IconMail size={14} />} onClick={gmail}>פתיחת טיוטה ב-Gmail</Button>
         <Button size="xs" variant="default" onClick={async () => { if (!(await copyRich())) notifications.show({ color: 'red', message: 'ההעתקה נכשלה' }); }}>{copied ? 'הועתק ✓' : 'העתקה עם קישורים'}</Button>
         <Button size="xs" variant="subtle" component="a" href={gmailLink(to.email, subject, body)} target="_blank" rel="noopener">Gmail בטקסט רגיל</Button>
         <Button size="xs" variant="subtle" component="a" href={mailtoLink(to.email, subject, body)}>תוכנת מייל</Button>
       </Group>
-      <Text size="xs" c="dimmed">אל {to.email}. שולחים מהתיבה שלך. "Gmail בטקסט רגיל" פותח טיוטה מלאה, אבל עם כתובות במקום קישורים.</Text>
+      <Text size="xs" c="dimmed">אל {to.email}. "שליחת מייל" שולח מכתובת המערכת, והתשובות יגיעו אליך. או טיוטה מהתיבה שלך: "Gmail בטקסט רגיל" פותח טיוטה מלאה, אבל עם כתובות במקום קישורים.</Text>
     </Stack>
   );
 }
