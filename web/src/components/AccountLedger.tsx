@@ -1,8 +1,9 @@
-import { Button, Group, Paper, SegmentedControl, Select, Stack, Table, Text } from '@mantine/core';
+import { Affix, Button, Checkbox, Group, Paper, SegmentedControl, Select, Stack, Table, Text } from '@mantine/core';
 import { useState } from 'react';
 import { ACCOUNT_KIND_HE, categoryLabel, amountLabel, date, money } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
 import { nextSort, sortLedger, type LedgerKey, type LedgerSort } from '../lib/ledgerSort';
+import { toggleRows, totalsByCurrency } from '../lib/selection';
 import { SourceBadge, useTransactionSources, type TxnSource } from './SourceBadge';
 import type { Account, Currency } from '../lib/types';
 
@@ -17,6 +18,35 @@ function SortTh({ k, sort, set, w, children }: { k: LedgerKey; sort: LedgerSort;
     </Table.Th>
   );
 }
+// Marking rows to add them up (decision 148): a click on a row (Shift: the whole range from the
+// last click), or its box; the header's box marks or clears every row shown. The total of what
+// is marked, per currency, floats at the bottom of the screen.
+export interface Marks { selected: Set<string>; toggle: (order: string[], id: string, shift: boolean) => void; setMany: (ids: string[], on: boolean) => void }
+function useMarks(): Marks & { clear: () => void } {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [last, setLast] = useState<string | null>(null);
+  return {
+    selected,
+    toggle: (order, id, shift) => { setSelected((s) => toggleRows(s, order, id, last, shift)); setLast(id); },
+    setMany: (ids, on) => setSelected((s) => { const n = new Set(s); for (const x of ids) { if (on) n.add(x); else n.delete(x); } return n; }),
+    clear: () => { setSelected(new Set()); setLast(null); },
+  };
+}
+const rowClick = (m: Marks, order: string[], id: string) => (ev: React.MouseEvent) => {
+  if ((ev.target as HTMLElement).closest('button, a, input')) return;
+  if (ev.shiftKey) window.getSelection()?.removeAllRanges();
+  m.toggle(order, id, ev.shiftKey);
+};
+const markStyle = (on: boolean) => ({ cursor: 'pointer', backgroundColor: on ? 'var(--mantine-color-blue-light)' : undefined });
+function MarkAll({ m, ids }: { m: Marks; ids: string[] }) {
+  const n = ids.filter((x) => m.selected.has(x)).length;
+  return <Table.Th w={32}><Checkbox size="xs" aria-label="סימון הכל" checked={n > 0 && n === ids.length} indeterminate={n > 0 && n < ids.length} onChange={() => m.setMany(ids, n < ids.length)} /></Table.Th>;
+}
+function MarkBox({ m, order, id }: { m: Marks; order: string[]; id: string }) {
+  return <Table.Td><Checkbox size="xs" aria-label="סימון" checked={m.selected.has(id)} onChange={() => undefined}
+    onClick={(ev) => { ev.stopPropagation(); m.toggle(order, id, ev.shiftKey); }} /></Table.Td>;
+}
+
 const typeOf = (e: EntryRow) => categoryLabel(e.transaction.category, e.property?.building?.city?.name_en);
 const descOf = (e: EntryRow) => e.memo ?? e.transaction.description ?? '';
 
@@ -35,6 +65,9 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
   const [range, setRange] = useState<'2026' | 'all'>('2026');
   const [view, setView] = useState<'date' | 'account'>('date');
   const [sortA, setSortA] = useState<LedgerSort>({ key: 'date', desc: false });
+  const marks = useMarks();
+  const marked = entries.filter((e) => marks.selected.has(e.id));
+  const sums = totalsByCurrency(marked.map((e) => ({ amount: Number(e.amount), currency: e.currency })));
   const shown = accounts.filter((a) => entries.some((e) => e.account_id === a.id));
   // The source column shows only for the viewer who may see a source here (decision 138).
   const sources = useTransactionSources(entries.map((e) => e.transaction.id));
@@ -48,7 +81,17 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
           data={[{ value: '2026', label: 'מתחילת 2026' }, { value: 'all', label: 'כל התנועות' }]} />
       </Group>
       {!shown.length && <Text c="dimmed" size="sm">עוד אין תנועות. הן ייכנסו עם קליטת הדוחות מהמנהלים המקומיים.</Text>}
-      {view === 'date' && !!shown.length && <ByDate accounts={shown} entries={entries} from={range === '2026' ? FROM : null} property={property} edit={edit} sources={showSrc ? sources.data : undefined} />}
+      {view === 'date' && !!shown.length && <ByDate accounts={shown} entries={entries} from={range === '2026' ? FROM : null} property={property} edit={edit} sources={showSrc ? sources.data : undefined} marks={marks} />}
+      {marked.length > 0 && (
+        <Affix position={{ bottom: 16, left: 16, right: 16 }}>
+          <Paper withBorder shadow="md" p="xs" radius="md" maw={640} mx="auto">
+            <Group justify="space-between" wrap="nowrap" gap="sm">
+              <Text size="sm">נבחרו <b>{marked.length}</b> שורות · סה"כ {sums.map((x, i) => <b key={x.currency}>{i ? ' · ' : ''}<span dir="ltr">{money(x.total, x.currency as Currency)}</span></b>)}</Text>
+              <Button size="compact-xs" variant="subtle" onClick={marks.clear}>ניקוי</Button>
+            </Group>
+          </Paper>
+        </Affix>
+      )}
       {view === 'account' && shown.map((a) => {
         const mine = entries.filter((e) => e.account_id === a.id);
         const before = range === '2026' ? mine.filter((e) => e.transaction.occurred_on < FROM) : [];
@@ -59,6 +102,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
         running = before.reduce((s, e) => s + Number(e.amount), 0);
         const sorted = sortLedger(rows, sortA, (e) => ({ date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), amount: Number(e.amount), source: sources.data?.get(e.transaction.id)?.source ?? '' }));
         const label = property ? 'מהנכס' : amountLabel(a.kind);
+        const order = sorted.map((x) => x.id);
         return (
           <Paper key={a.id} withBorder p="sm">
             <Group justify="space-between" mb="xs">
@@ -68,11 +112,12 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing={4} striped>
                 <Table.Thead>
-                  <Table.Tr><SortTh k="date" sort={sortA} set={setSortA} w={100}>תאריך</SortTh><SortTh k="type" sort={sortA} set={setSortA} w={110}>סוג</SortTh><SortTh k="desc" sort={sortA} set={setSortA}>תיאור</SortTh>{showSrc && <SortTh k="source" sort={sortA} set={setSortA} w={70}>מקור</SortTh>}<SortTh k="amount" sort={sortA} set={setSortA} w={120}>סכום</SortTh><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
+                  <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sortA} set={setSortA} w={100}>תאריך</SortTh><SortTh k="type" sort={sortA} set={setSortA} w={110}>סוג</SortTh><SortTh k="desc" sort={sortA} set={setSortA}>תיאור</SortTh>{showSrc && <SortTh k="source" sort={sortA} set={setSortA} w={70}>מקור</SortTh>}<SortTh k="amount" sort={sortA} set={setSortA} w={120}>סכום</SortTh><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {range === '2026' && (
                     <Table.Tr fw={600}>
+                      <Table.Td />
                       <Table.Td>01.01.2026</Table.Td>
                       <Table.Td colSpan={showSrc ? 3 : 2}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
                       <Table.Td />
@@ -82,7 +127,8 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                   )}
                   {sorted.map((e) => {
                     return (
-                      <Table.Tr key={e.id}>
+                      <Table.Tr key={e.id} onClick={rowClick(marks, order, e.id)} style={markStyle(marks.selected.has(e.id))}>
+                        <MarkBox m={marks} order={order} id={e.id} />
                         <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
                         <Table.Td>{typeOf(e)}</Table.Td>
                         <Table.Td><Text size="sm" lineClamp={2}>{descOf(e)}</Text></Table.Td>
@@ -106,9 +152,9 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
 const accountName = (a: Account, property: boolean) =>
   `${ACCOUNT_KIND_HE[a.kind] ?? a.kind} · ${a.holder.display_name}${property ? ` · של ${a.beneficiary.display_name}` : ''}`;
 
-function ByDate({ accounts, entries, from, property, edit, sources }: {
+function ByDate({ accounts, entries, from, property, edit, sources, marks }: {
   accounts: Account[]; entries: EntryRow[]; from: string | null; property: boolean; edit?: { can: (e: EntryRow) => boolean; open: (transactionId: string) => void };
-  sources?: Map<string, TxnSource>;
+  sources?: Map<string, TxnSource>; marks: Marks;
 }) {
   const showSrc = !!sources;
   const [account, setAccount] = useState<string | null>(null);
@@ -123,6 +169,7 @@ function ByDate({ accounts, entries, from, property, edit, sources }: {
     currency: e.currency, amount: Number(e.amount), source: sources?.get(e.transaction.id)?.source ?? '',
   }));
   const currencies = [...new Set(accounts.map((a) => a.currency))].sort();
+  const order = rows.map((e) => e.id);
   return (
     <Paper withBorder p="sm">
       <Group gap="sm" mb="xs">
@@ -134,13 +181,14 @@ function ByDate({ accounts, entries, from, property, edit, sources }: {
       <Table.ScrollContainer minWidth={700}>
         <Table verticalSpacing={4} striped>
           <Table.Thead>
-            <Table.Tr><SortTh k="date" sort={sort} set={setSort} w={100}>תאריך</SortTh><SortTh k="type" sort={sort} set={setSort} w={110}>סוג</SortTh><SortTh k="desc" sort={sort} set={setSort}>תיאור</SortTh><SortTh k="account" sort={sort} set={setSort} w={200}>קופה</SortTh>{showSrc && <SortTh k="source" sort={sort} set={setSort} w={70}>מקור</SortTh>}<SortTh k="currency" sort={sort} set={setSort} w={70}>מטבע</SortTh><SortTh k="amount" sort={sort} set={setSort} w={120}>סכום</SortTh>{edit && <Table.Th w={60} />}</Table.Tr>
+            <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sort} set={setSort} w={100}>תאריך</SortTh><SortTh k="type" sort={sort} set={setSort} w={110}>סוג</SortTh><SortTh k="desc" sort={sort} set={setSort}>תיאור</SortTh><SortTh k="account" sort={sort} set={setSort} w={200}>קופה</SortTh>{showSrc && <SortTh k="source" sort={sort} set={setSort} w={70}>מקור</SortTh>}<SortTh k="currency" sort={sort} set={setSort} w={70}>מטבע</SortTh><SortTh k="amount" sort={sort} set={setSort} w={120}>סכום</SortTh>{edit && <Table.Th w={60} />}</Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {rows.map((e) => {
               const a = byId.get(e.account_id ?? '')!;
               return (
-                <Table.Tr key={e.id}>
+                <Table.Tr key={e.id} onClick={rowClick(marks, order, e.id)} style={markStyle(marks.selected.has(e.id))}>
+                  <MarkBox m={marks} order={order} id={e.id} />
                   <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
                   <Table.Td>{typeOf(e)}</Table.Td>
                   <Table.Td><Text size="sm" lineClamp={2}>{descOf(e)}</Text></Table.Td>
