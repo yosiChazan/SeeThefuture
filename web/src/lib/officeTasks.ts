@@ -19,7 +19,7 @@ export interface OfficeTask {
   id: string; created_by: string; created_at: string; updated_at: string; trigger_id: string | null; subject: string; body: string | null;
   priority: Priority; status: TaskStatus; category_id?: string | null; series_id?: string | null; occurrence_on?: string | null; office_task_assignees: Assignee[]; office_task_links: TaskLink[];
 }
-export interface TaskEvent { id: string; task_id: string; kind: string; body: string | null; data: Record<string, unknown> | null; created_by: string | null; created_at: string; parent_id?: string | null }
+export interface TaskEvent { id: string; task_id: string; kind: string; body: string | null; data: Record<string, unknown> | null; created_by: string | null; created_at: string; parent_id?: string | null; files?: string[]; edited_at?: string | null }
 
 // Replies as a tree (decision 142): a reply answers the task or another reply; "טופל" (resolve)
 // ends a branch. A branch is open while its last reply has nothing under it.
