@@ -1,5 +1,5 @@
 import { Alert, Badge, Button, Checkbox, Group, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
-import { DateInput, MonthPickerInput } from '@mantine/dates';
+import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconPlus } from '@tabler/icons-react';
@@ -160,9 +160,9 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
       <Stack>
         <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out' | 'fx', category: x === 'in' ? 'rent' : x === 'out' ? 'repair' : 'fx' })}
           data={[{ value: 'in', label: 'הכנסה' }, { value: 'out', label: 'הוצאה' }, ...(editing ? [] : [{ value: 'fx', label: 'המרה' }])]} />
-        <SimpleGrid cols={{ base: 1, sm: 3 }}>
-          <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null })} valueFormat="DD.MM.YYYY" />
-          <MonthPickerInput label="עבור חודש" required value={v.period} onChange={(d) => setV({ ...v, period: d ? dayjs(d).startOf('month').format('YYYY-MM-DD') : null })} valueFormat="MM.YYYY" />
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          {/* The month is the date's month (decision 150). */}
+          <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null, period: d ? dayjs(d).startOf('month').format('YYYY-MM-DD') : null })} valueFormat="DD.MM.YYYY" />
           {!isFx && <Select label="סוג" required data={cats} value={v.category} onChange={(x) => setV({ ...v, category: x })} allowDeselect={false} />}
         </SimpleGrid>
         <SimpleGrid cols={{ base: 1, sm: 3 }}>
