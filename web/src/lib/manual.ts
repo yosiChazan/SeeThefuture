@@ -62,13 +62,14 @@ export async function loadUnits(cfg: ManualConfig, managerId: string, period: st
       const current = p.management_agreements.filter((a) => covers(a, period));
       const agreement = current.find((a) => a.manager_party_id === managerId) ?? null;
       const other = current.find((a) => a.manager_party_id !== managerId);
-      const schedule = p.rent_schedule.find((s) => s.currency === 'UAH' && covers(s, period)) ?? null;
+      // Yarach's rent is in hryvnia, or in dollars converted on the 1st (Arcadia, SPEC decision 141).
+      const schedule = p.rent_schedule.find((s) => covers(s, period)) ?? null;
       const title = propertyTitle(p);
       return {
         id: p.id, title, ref: title,
         owner: p.ownerships.filter((o) => covers(o, period)).map((o) => o.party.display_name).join(', ') || undefined,
         agreement, otherManager: other ? other.manager.display_name : null, schedule,
-        expected: schedule ? Number(schedule.amount) : undefined,
+        expected: schedule ? Number(schedule.amount) : undefined, currency: schedule?.currency ?? 'UAH',
         feePct: agreement?.fee_pct != null ? Number(agreement.fee_pct) : cfg.defaultFee,
       };
     })
@@ -88,14 +89,17 @@ async function close(table: 'management_agreements' | 'rent_schedule', row: Vers
   return 'closed';
 }
 
-export interface UnitChange { managed: boolean; expected?: number | null; feePct?: number | null }
+export interface UnitChange { managed: boolean; expected?: number | null; feePct?: number | null; currency?: string }
+
+// Yarach's agreements carry the office's fee where there is one (Arcadia, Frenkel: 10%).
+const model = (cfg: ManualConfig, fee: number | null | undefined) => (cfg.kind === 'yarach' ? ((fee ?? 0) > 0 ? 'pct_of_gross' : 'none') : cfg.feeModel);
 
 export async function saveUnit(cfg: ManualConfig, managerId: string, period: string, u: AreaUnit, c: UnitChange) {
   const from = period < OPENING ? period : OPENING;
   // The manager.
   if (c.managed && !u.agreement) {
     must(await supabase.from('management_agreements').insert({
-      property_id: u.id, manager_party_id: managerId, fee_model: cfg.feeModel, fee_pct: c.feePct ?? cfg.defaultFee, valid_from: from,
+      property_id: u.id, manager_party_id: managerId, fee_model: model(cfg, c.feePct ?? cfg.defaultFee), fee_pct: c.feePct ?? cfg.defaultFee, valid_from: from,
     }));
   } else if (!c.managed && u.agreement) {
     if (await close('management_agreements', u.agreement, period) === 'same-month') {
@@ -103,20 +107,21 @@ export async function saveUnit(cfg: ManualConfig, managerId: string, period: str
     }
   } else if (c.managed && u.agreement && c.feePct != null && c.feePct !== Number(u.agreement.fee_pct)) {
     if (await close('management_agreements', u.agreement, period) === 'same-month') {
-      must(await supabase.from('management_agreements').update({ fee_pct: c.feePct }).eq('id', u.agreement.id));
+      must(await supabase.from('management_agreements').update({ fee_pct: c.feePct, fee_model: model(cfg, c.feePct) }).eq('id', u.agreement.id));
     } else {
       must(await supabase.from('management_agreements').insert({
-        property_id: u.id, manager_party_id: managerId, fee_model: cfg.feeModel, fee_pct: c.feePct, valid_from: period,
+        property_id: u.id, manager_party_id: managerId, fee_model: model(cfg, c.feePct), fee_pct: c.feePct, valid_from: period,
       }));
     }
   }
   // Expected rent (Yarach): a new amount from this month on.
-  if (c.expected !== undefined && (c.expected ?? 0) !== (u.expected ?? 0)) {
+  const currency = c.currency ?? u.currency ?? 'UAH';
+  if (c.expected !== undefined && ((c.expected ?? 0) !== (u.expected ?? 0) || currency !== (u.currency ?? 'UAH'))) {
     const amount = c.expected ?? 0;
     if (u.schedule && await close('rent_schedule', u.schedule, period) === 'same-month') {
-      must(await supabase.from('rent_schedule').update({ amount }).eq('id', u.schedule.id));
+      must(await supabase.from('rent_schedule').update({ amount, currency }).eq('id', u.schedule.id));
     } else if (amount > 0) {
-      must(await supabase.from('rent_schedule').insert({ property_id: u.id, amount, currency: 'UAH', valid_from: u.schedule ? period : from }));
+      must(await supabase.from('rent_schedule').insert({ property_id: u.id, amount, currency, valid_from: u.schedule ? period : from }));
     }
   }
 }

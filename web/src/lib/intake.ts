@@ -12,7 +12,10 @@ export type RowStatus = 'matched' | 'unmatched' | 'duplicate' | 'ignored';
 
 // Stored in import_batches.notes: what the adapter found about the file as a whole.
 // `form`: what was typed in a manual form, so the next version of the month starts from it.
-export interface BatchNotes { period: string; file_name: string; warnings: string[]; checks?: string[]; form?: unknown; files?: string[] }
+export interface BatchNotes {
+  period: string; file_name: string; warnings: string[]; checks?: string[]; form?: unknown; files?: string[];
+  accrual?: { rate: number | null; rate_date: string | null };   // Yarach's monthly charge: the dollar rate used
+}
 
 export interface Batch {
   id: string;
