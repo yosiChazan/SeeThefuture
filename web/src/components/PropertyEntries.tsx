@@ -158,11 +158,12 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
   return (
     <Modal opened onClose={onClose} title={editing ? 'עריכת תנועה' : 'תנועה חדשה בנכס'} size="lg">
       <Stack>
-        <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out' | 'fx', category: x === 'in' ? 'rent' : x === 'out' ? 'repair' : 'fx' })}
+        <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out' | 'fx', category: x === 'in' ? 'rent' : x === 'out' ? 'repair' : 'fx', ...(x === 'fx' && v.on ? { period: dayjs(v.on).startOf('month').format('YYYY-MM-DD') } : {}) })}
           data={[{ value: 'in', label: 'הכנסה' }, { value: 'out', label: 'הוצאה' }, ...(editing ? [] : [{ value: 'fx', label: 'המרה' }])]} />
         <SimpleGrid cols={{ base: 1, sm: 3 }}>
-          <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null })} valueFormat="DD.MM.YYYY" />
-          <MonthPickerInput label="עבור חודש" required value={v.period} onChange={(d) => setV({ ...v, period: d ? dayjs(d).startOf('month').format('YYYY-MM-DD') : null })} valueFormat="MM.YYYY" />
+          {/* A conversion has no "for month": its month is the date's (decision 150). */}
+          <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null, ...(isFx ? { period: d ? dayjs(d).startOf('month').format('YYYY-MM-DD') : null } : {}) })} valueFormat="DD.MM.YYYY" />
+          {!isFx && <MonthPickerInput label="עבור חודש" required value={v.period} onChange={(d) => setV({ ...v, period: d ? dayjs(d).startOf('month').format('YYYY-MM-DD') : null })} valueFormat="MM.YYYY" />}
           {!isFx && <Select label="סוג" required data={cats} value={v.category} onChange={(x) => setV({ ...v, category: x })} allowDeselect={false} />}
         </SimpleGrid>
         <SimpleGrid cols={{ base: 1, sm: 3 }}>
