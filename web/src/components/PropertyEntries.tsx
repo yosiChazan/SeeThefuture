@@ -92,18 +92,23 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
   }, [accounts, managers.data, local.data, editing]);
 
   const [v, setV] = useState(editing ? {
-    on: editing.occurred_on as string | null, period: editing.period as string | null, dir: (editing.total < 0 ? 'out' : 'in') as 'in' | 'out',
+    on: editing.occurred_on as string | null, period: editing.period as string | null, dir: (editing.total < 0 ? 'out' : 'in') as 'in' | 'out' | 'fx',
     category: editing.category as string | null, amount: Math.abs(editing.total) as number | '', currency: editing.currency, where: editing.where as string | null,
     description: editing.description ?? '', post: false,
   } : {
     on: dayjs().format('YYYY-MM-DD') as string | null, period: dayjs().startOf('month').format('YYYY-MM-DD') as string | null,
-    dir: 'in' as 'in' | 'out', category: 'rent' as string | null, amount: '' as number | '', currency: CURRENCY_OF[country], where: null as string | null, description: '',
+    dir: 'in' as 'in' | 'out' | 'fx', category: 'rent' as string | null, amount: '' as number | '', currency: CURRENCY_OF[country], where: null as string | null, description: '',
     post: false,
   });
+  // A conversion (decision 149): one transaction, two entries in two currencies, with the
+  // same holder by default (Gershon's hryvnia into Gershon's dollars).
+  const [fx, setFx] = useState({ toAmount: '' as number | '', toCurrency: (CURRENCY_OF[country] === 'USD' ? 'UAH' : 'USD') as Currency, toWhere: null as string | null });
+  const isFx = v.dir === 'fx';
+  const rate = isFx && Number(v.amount) > 0 && Number(fx.toAmount) > 0 ? Number(v.amount) / Number(fx.toAmount) : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cats = (v.dir === 'in' ? INCOME : EXPENSE).map((c) => ({ value: c, label: CATEGORY_HE[c] ?? c }));
-  const ready = v.on && v.period && v.category && v.amount && v.where;
+  const ready = v.on && v.period && v.amount && v.where && (isFx ? Number(fx.toAmount) > 0 && fx.toCurrency !== v.currency : v.category);
 
   async function save() {
     setBusy(true); setError(null);
@@ -119,12 +124,26 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
         onClose();
         return;
       }
+      if (isFx) {
+        const [toKind, toHolder] = (fx.toWhere ?? v.where!).split('|');
+        const r4 = Math.round(rate! * 10000) / 10000;
+        const desc = v.description.trim() || `המרה ${Number(v.amount).toLocaleString('en-US')} ${v.currency} ← ${Number(fx.toAmount).toLocaleString('en-US')} ${fx.toCurrency} (שער ${r4})`;
+        txn = (must(await supabase.from('transactions').insert({ country_code: country, occurred_on: v.on, period: v.period, category: 'fx', description: desc, status: 'draft' })
+          .select('id').single()) as { id: string }).id;
+        const side = (amt: number, cur: Currency, k: string, h: string, rateOf: number | null) => supabase.rpc('post_import_entry', {
+          p_txn: txn, p_property: propertyId, p_source_holder: h === 'beneficiary' ? null : h, p_country: country, p_on: v.on,
+          e: { amount: amt, currency: cur, memo: v.description.trim() || null, ...(rateOf ? { fx_rate: rateOf } : {}), account: { kind: k, holder: h === 'beneficiary' ? 'beneficiary' : 'source' } },
+        });
+        must(await side(-Math.abs(Number(v.amount)), v.currency, kind, holder, null));
+        must(await side(Math.abs(Number(fx.toAmount)), fx.toCurrency, toKind, toHolder, r4));
+      } else {
       txn = (must(await supabase.from('transactions').insert({ country_code: country, occurred_on: v.on, period: v.period, category: v.category, description: v.description.trim() || null, status: 'draft' })
         .select('id').single()) as { id: string }).id;
       must(await supabase.rpc('post_import_entry', {
         p_txn: txn, p_property: propertyId, p_source_holder: holder === 'beneficiary' ? null : holder, p_country: country, p_on: v.on,
         e: { amount, currency: v.currency, memo: v.description.trim() || null, account: { kind, holder: holder === 'beneficiary' ? 'beneficiary' : 'source' } },
       }));
+      }
       if (v.post) must(await supabase.from('transactions').update({ status: 'posted' }).eq('id', txn));
       notifications.show({ color: 'teal', message: v.post ? 'התנועה נרשמה' : 'התנועה נשמרה וממתינה לאישור כספים' });
       await qc.invalidateQueries({ queryKey: ['property-drafts', propertyId] });
@@ -139,20 +158,30 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
   return (
     <Modal opened onClose={onClose} title={editing ? 'עריכת תנועה' : 'תנועה חדשה בנכס'} size="lg">
       <Stack>
-        <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out', category: x === 'in' ? 'rent' : 'repair' })}
-          data={[{ value: 'in', label: 'הכנסה' }, { value: 'out', label: 'הוצאה' }]} />
+        <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out' | 'fx', category: x === 'in' ? 'rent' : x === 'out' ? 'repair' : 'fx' })}
+          data={[{ value: 'in', label: 'הכנסה' }, { value: 'out', label: 'הוצאה' }, ...(editing ? [] : [{ value: 'fx', label: 'המרה' }])]} />
         <SimpleGrid cols={{ base: 1, sm: 3 }}>
           <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null })} valueFormat="DD.MM.YYYY" />
           <MonthPickerInput label="עבור חודש" required value={v.period} onChange={(d) => setV({ ...v, period: d ? dayjs(d).startOf('month').format('YYYY-MM-DD') : null })} valueFormat="MM.YYYY" />
-          <Select label="סוג" required data={cats} value={v.category} onChange={(x) => setV({ ...v, category: x })} allowDeselect={false} />
+          {!isFx && <Select label="סוג" required data={cats} value={v.category} onChange={(x) => setV({ ...v, category: x })} allowDeselect={false} />}
         </SimpleGrid>
         <SimpleGrid cols={{ base: 1, sm: 3 }}>
-          <NumberInput label="סכום" required min={0} thousandSeparator="," value={v.amount} onChange={(x) => setV({ ...v, amount: x === '' ? '' : Number(x) })} />
+          <NumberInput label={isFx ? 'סכום שהומר (יוצא)' : 'סכום'} required min={0} thousandSeparator="," value={v.amount} onChange={(x) => setV({ ...v, amount: x === '' ? '' : Number(x) })} />
           <Select label="מטבע" data={CURRENCIES} value={v.currency} allowDeselect={false} onChange={(x) => x && setV({ ...v, currency: x as Currency })} />
           <Select label="אצל מי הכסף" required data={holders} value={v.where} onChange={(x) => setV({ ...v, where: x })} placeholder="בחירת חשבון" />
         </SimpleGrid>
+        {isFx && (
+          <SimpleGrid cols={{ base: 1, sm: 3 }}>
+            <NumberInput label="התקבל (נכנס)" required min={0} thousandSeparator="," decimalScale={2} value={fx.toAmount} onChange={(x) => setFx({ ...fx, toAmount: x === '' ? '' : Number(x) })}
+              description={rate ? `שער: ${Math.round(rate * 10000) / 10000} ${v.currency} ל-1 ${fx.toCurrency}` : ' '} />
+            <Select label="למטבע" data={CURRENCIES.filter((c) => c !== v.currency)} value={fx.toCurrency} allowDeselect={false} onChange={(x) => x && setFx({ ...fx, toCurrency: x as Currency })} />
+            <Select label="לאן (אם לא אותו מקום)" data={holders} value={fx.toWhere} onChange={(x) => setFx({ ...fx, toWhere: x })} placeholder="אותו מקום" clearable />
+          </SimpleGrid>
+        )}
         <TextInput label="פירוט" value={v.description} onChange={(e) => setV({ ...v, description: e.currentTarget.value })} placeholder="למשל: תיקון דוד מים" />
-        <Text size="xs" c="dimmed">הסכום מתחלק בין הבעלים של הנכס בתאריך הזה לפי האחוזים שלהם. בלי המרת מטבע: המטבע צריך להיות של החשבון.</Text>
+        <Text size="xs" c="dimmed">{isFx
+          ? 'המרה היא תנועה אחת עם שתי שורות: הסכום יוצא במטבע אחד ונכנס במטבע השני, אצל אותו מחזיק (או במקום שבחרת). הסכומים מתחלקים בין הבעלים לפי האחוזים שלהם.'
+          : 'הסכום מתחלק בין הבעלים של הנכס בתאריך הזה לפי האחוזים שלהם. בלי המרת מטבע: המטבע צריך להיות של החשבון.'}</Text>
         {!editing && access.canApprove(country) && <Checkbox label="לרשום מיד (אישור כספים)" checked={v.post} onChange={(e) => setV({ ...v, post: e.currentTarget.checked })} />}
         {editing?.status === 'posted' && <Text size="xs" c="dimmed">התנועה כבר נרשמה: היא לא משתנה, אלא מבוטלת ונרשמת במקומה תנועה מתוקנת (שתיהן נשארות בהיסטוריה).</Text>}
         {error && <Alert color="red">{error}</Alert>}
@@ -205,7 +234,7 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
                 <Table.Td>{CATEGORY_HE[d.category] ?? d.category}{d.description ? ` · ${d.description}` : ''}</Table.Td>
                 <Table.Td>{d.lines.map((l, i) => <div key={i}>{money(l.amount, l.currency)} <Text span size="xs" c="dimmed">{l.who}</Text></div>)}</Table.Td>
                 <Table.Td><Group gap={4} wrap="nowrap" justify="flex-end">
-                  {canEditDraft(d) && <Button size="compact-xs" variant="light" onClick={() => setEditing(d)}>עריכה</Button>}
+                  {canEditDraft(d) && d.category !== 'fx' && <Button size="compact-xs" variant="light" onClick={() => setEditing(d)}>עריכה</Button>}
                   {access.canApprove(country) && <Button size="compact-xs" color="teal" onClick={() => approve(d)}>אישור</Button>}
                   {(access.canApprove(country) || d.created_by === me) && <Button size="compact-xs" variant="subtle" color="red" onClick={() => remove(d)}>מחיקה</Button>}
                 </Group></Table.Td>
