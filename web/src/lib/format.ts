@@ -23,7 +23,7 @@ export const CURRENCIES = Object.keys(CURRENCY_SIGN) as Currency[];
 export const ACCOUNT_KIND_HE: Record<string, string> = {
   rent_pool: 'שכירות אצל המנהל (מירח)', expense_pool: 'הקופה הקטנה (הוצאות בניין)', manager_cash: 'מזומן אצל מנהל',
   hotel_balance: 'יתרה במלון', client_bank: 'חשבון בנק של הלקוח', company: 'חשבון חברה', legacy_card: 'כרטיס ישן',
-  deposit_held: 'פיקדון שוכר אצל המנהל',
+  deposit_held: 'פיקדון שוכר אצל המנהל', office_due: 'חוב לקופת המשרד (דמי ניהול STF)',
 };
 
 export const CATEGORY_HE: Record<string, string> = {

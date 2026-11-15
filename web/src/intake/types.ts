@@ -24,7 +24,7 @@ export interface ProposedEntry {
   fx_rate?: number;
   // "source": the manager holding the money; "beneficiary": the owner's own account.
   // A party id names a holder other than the source (Yarach's transfers reach Gershon).
-  account?: { kind: 'manager_cash' | 'rent_pool' | 'expense_pool' | 'legacy_card' | 'client_bank' | 'hotel_balance' | 'deposit_held'; holder: 'source' | 'beneficiary' | (string & {}) };
+  account?: { kind: 'manager_cash' | 'rent_pool' | 'expense_pool' | 'legacy_card' | 'client_bank' | 'hotel_balance' | 'deposit_held' | 'office_due'; holder: 'source' | 'beneficiary' | (string & {}) };
   external?: 'source';
 }
 
