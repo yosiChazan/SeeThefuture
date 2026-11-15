@@ -1,9 +1,9 @@
-import { ActionIcon, Alert, Anchor, Badge, Box, Button, Card, Group, Modal, MultiSelect, NumberInput, Paper, SegmentedControl, Select, Stack, Switch, Tabs, Text, Textarea, TextInput, Timeline, Title } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Box, Button, Card, FileButton, Group, Image, Modal, MultiSelect, NumberInput, Paper, SegmentedControl, Select, Stack, Switch, Tabs, Text, Textarea, TextInput, Timeline, Title } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import dayjs from 'dayjs';
 import { notifications } from '@mantine/notifications';
-import { IconCheck, IconMail, IconPencil, IconPlus, IconRepeat, IconTrash } from '@tabler/icons-react';
+import { IconCheck, IconMail, IconPencil, IconPhoto, IconPlus, IconRepeat, IconTrash, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -225,6 +225,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
   });
   const events = useEvents(task.id);
   const [reply, setReply] = useState('');
+  const [images, setImages] = useState<File[]>([]);
   const [status, setStatus] = useState<TaskStatus>(task.status);
   const [editing, setEditing] = useState(false);
   const [mailTo, setMailTo] = useState<Assignee[] | null>(null);
@@ -232,9 +233,12 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
   async function send() {
     setBusy(true);
     try {
-      if (reply.trim()) must(await supabase.from('office_task_events').insert({ task_id: task.id, kind: 'reply', body: reply.trim() }));
+      if (reply.trim() || images.length) {
+        const files = await uploadTaskFiles(task.id, images);
+        must(await supabase.from('office_task_events').insert({ task_id: task.id, kind: 'reply', body: reply.trim() || null, files }));
+      }
       if (status !== task.status) must(await supabase.from('office_tasks').update({ status }).eq('id', task.id));
-      setReply('');
+      setReply(''); setImages([]);
       await qc.invalidateQueries({ queryKey: ['office-tasks'] });
       await qc.invalidateQueries({ queryKey: ['office-task-events', task.id] });
       await qc.invalidateQueries({ queryKey: ['office-task-branches'] });
@@ -287,12 +291,13 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
             <Group justify="space-between" align="flex-end">
               <Group gap="xs" align="flex-end">
                 <AddLink onAdd={(l) => setReply(append(reply, l))} />
+                <AddImages files={images} onChange={setImages} />
                 <Select size="xs" w={150} label="מצב" data={STATUSES} value={status} allowDeselect={false} onChange={(x) => x && setStatus(x as TaskStatus)} />
               </Group>
               <Group gap="xs">
                 {canDelete(task) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={remove}>מחיקה</Button>}
                 {!access.isClient && <Button size="xs" variant="default" onClick={() => setEditing(true)}>העברה ושינוי פרטים</Button>}
-                <Button size="xs" onClick={send} loading={busy} disabled={!reply.trim() && status === task.status}>שליחה</Button>
+                <Button size="xs" onClick={send} loading={busy} disabled={!reply.trim() && !images.length && status === task.status}>שליחה</Button>
               </Group>
             </Group>
           </Stack>
@@ -642,53 +647,153 @@ function Threads({ task, events, dir }: { task: OfficeTask; events: TaskEvent[];
 
 function ThreadItem({ node, task, dir, depth }: { node: ThreadNode; task: OfficeTask; dir: Directory; depth: number }) {
   const qc = useQueryClient();
+  const access = useAccess();
+  const me = useMe();
   const [answering, setAnswering] = useState<'reply' | 'resolve' | null>(null);
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<TaskEvent | null>(null);
   const e = node.event;
   const name = (id: string | null) => (id ? dir.users.get(id)?.display_name ?? 'לא ידוע' : 'המערכת');
-  async function send() {
-    setBusy(true);
-    try {
-      must(await supabase.from('office_task_events').insert({ task_id: task.id, kind: answering, parent_id: e.id, body: text.trim() || null }));
-      setText(''); setAnswering(null);
-      await qc.invalidateQueries({ queryKey: ['office-task-events', task.id] });
-      await qc.invalidateQueries({ queryKey: ['office-task-branches'] });
-    } catch (err) { notifications.show({ color: 'red', message: (err as Error).message }); } finally { setBusy(false); }
+  const canEdit = (x: TaskEvent) => access.isAdmin || x.created_by === me;
+  const refresh = async () => {
+    await qc.invalidateQueries({ queryKey: ['office-task-events', task.id] });
+    await qc.invalidateQueries({ queryKey: ['office-task-branches'] });
+  };
+  async function add(text: string, files: string[]) {
+    must(await supabase.from('office_task_events').insert({ task_id: task.id, kind: answering, parent_id: e.id, body: text || null, files }));
+    setAnswering(null); await refresh();
   }
+  async function save(x: TaskEvent, text: string, files: string[]) {
+    const r = await supabase.from('office_task_events').update({ body: text || null, files }).eq('id', x.id).select('id');
+    if (r.error || !r.data?.length) throw new Error(r.error?.message ?? 'אין הרשאה לערוך');
+    setEditing(null); await refresh();
+  }
+  const meta = (x: TaskEvent) => <Text span size="xs" c="dimmed">{new Date(x.created_at).toLocaleString('he-IL')}{x.edited_at ? ' · נערך' : ''}</Text>;
   return (
     <Box style={depth ? { borderInlineStart: '2px solid var(--mantine-color-gray-3)', paddingInlineStart: 12, marginInlineStart: 6 } : undefined}>
       <Paper withBorder p="xs" radius="md">
         <Group justify="space-between" gap="xs" wrap="nowrap">
-          <Text size="sm"><b>{name(e.created_by)}</b> <Text span size="xs" c="dimmed">{new Date(e.created_at).toLocaleString('he-IL')}</Text></Text>
+          <Text size="sm"><b>{name(e.created_by)}</b> {meta(e)}</Text>
           {node.open && <Badge size="xs" color="orange" variant="light">בטיפול</Badge>}
         </Group>
-        {e.body && <LinkedText text={e.body} />}
-        <Group gap={4} mt={4}>
-          <Button size="compact-xs" variant="subtle" onClick={() => setAnswering(answering === 'reply' ? null : 'reply')}>תגובה</Button>
-          {!node.resolved && <Button size="compact-xs" variant="subtle" color="teal" leftSection={<IconCheck size={12} />} onClick={() => setAnswering(answering === 'resolve' ? null : 'resolve')}>טופל</Button>}
-        </Group>
-        {answering && (
-          <Stack gap={4} mt={4}>
-            <Textarea size="xs" autosize minRows={1} placeholder={answering === 'resolve' ? 'מה נעשה (לא חובה)' : 'תגובה'} value={text} onChange={(x) => setText(x.currentTarget.value)} />
-            <Group gap={4} justify="flex-end">
-              <Button size="compact-xs" variant="default" onClick={() => { setAnswering(null); setText(''); }}>ביטול</Button>
-              <Button size="compact-xs" color={answering === 'resolve' ? 'teal' : undefined} onClick={send} loading={busy} disabled={answering === 'reply' && !text.trim()}>
-                {answering === 'resolve' ? 'סימון כטופל' : 'שליחה'}
-              </Button>
+        {editing?.id === e.id ? (
+          <Composer taskId={task.id} initialText={e.body ?? ''} initialFiles={e.files ?? []} submitLabel="שמירה" onCancel={() => setEditing(null)} onSubmit={(t, f) => save(e, t, f)} />
+        ) : (
+          <>
+            {e.body && <LinkedText text={e.body} />}
+            <TaskFiles files={e.files ?? []} />
+            <Group gap={4} mt={4}>
+              <Button size="compact-xs" variant="subtle" onClick={() => setAnswering(answering === 'reply' ? null : 'reply')}>תגובה</Button>
+              {!node.resolved && <Button size="compact-xs" variant="subtle" color="teal" leftSection={<IconCheck size={12} />} onClick={() => setAnswering(answering === 'resolve' ? null : 'resolve')}>טופל</Button>}
+              {canEdit(e) && <Button size="compact-xs" variant="subtle" color="gray" leftSection={<IconPencil size={12} />} onClick={() => setEditing(e)}>עריכה</Button>}
             </Group>
-          </Stack>
+          </>
+        )}
+        {answering && (
+          <Composer taskId={task.id} placeholder={answering === 'resolve' ? 'מה נעשה (לא חובה)' : 'תגובה'} allowEmpty={answering === 'resolve'}
+            submitLabel={answering === 'resolve' ? 'סימון כטופל' : 'שליחה'} color={answering === 'resolve' ? 'teal' : undefined}
+            onCancel={() => setAnswering(null)} onSubmit={add} />
         )}
       </Paper>
       <Stack gap={6} mt={6}>
         {node.children.map((c) => <ThreadItem key={c.event.id} node={c} task={task} dir={dir} depth={depth + 1} />)}
         {node.resolved && (
           <Box style={{ borderInlineStart: '2px solid var(--mantine-color-teal-4)', paddingInlineStart: 12, marginInlineStart: 6 }}>
-            <Text size="sm" c="teal"><IconCheck size={14} style={{ verticalAlign: 'middle' }} /> <b>טופל</b> · {name(node.resolved.created_by)} · <Text span size="xs" c="dimmed">{new Date(node.resolved.created_at).toLocaleString('he-IL')}</Text></Text>
-            {node.resolved.body && <LinkedText text={node.resolved.body} />}
+            <Group gap={4}>
+              <Text size="sm" c="teal"><IconCheck size={14} style={{ verticalAlign: 'middle' }} /> <b>טופל</b> · {name(node.resolved.created_by)} · {meta(node.resolved)}</Text>
+              {canEdit(node.resolved) && editing?.id !== node.resolved.id && <Button size="compact-xs" variant="subtle" color="gray" onClick={() => setEditing(node.resolved)}>עריכה</Button>}
+            </Group>
+            {editing?.id === node.resolved.id ? (
+              <Composer taskId={task.id} initialText={node.resolved.body ?? ''} initialFiles={node.resolved.files ?? []} allowEmpty submitLabel="שמירה"
+                onCancel={() => setEditing(null)} onSubmit={(t, f) => save(node.resolved!, t, f)} />
+            ) : (
+              <>
+                {node.resolved.body && <LinkedText text={node.resolved.body} />}
+                <TaskFiles files={node.resolved.files ?? []} />
+              </>
+            )}
           </Box>
         )}
       </Stack>
     </Box>
+  );
+}
+
+// Pictures of a task's replies: private bucket "tasks", "<task id>/<random>-<name>" (decision 143).
+const safeFile = (n: string) => n.normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-80) || 'image';
+async function uploadTaskFiles(taskId: string, files: File[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const f of files) {
+    const path = `${taskId}/${crypto.randomUUID()}-${safeFile(f.name)}`;
+    const up = await supabase.storage.from('tasks').upload(path, f, { contentType: f.type || undefined });
+    if (up.error) throw new Error(`העלאת ${f.name} נכשלה: ${up.error.message}`);
+    out.push(path);
+  }
+  return out;
+}
+
+function TaskFiles({ files, onRemove }: { files: string[]; onRemove?: (f: string) => void }) {
+  const urls = useQuery({
+    queryKey: ['task-files', files.join('|')], enabled: files.length > 0, staleTime: 50 * 60_000,
+    queryFn: async () => new Map((must(await supabase.storage.from('tasks').createSignedUrls(files, 3600)) as { path: string | null; signedUrl: string }[]).map((x) => [x.path ?? '', x.signedUrl])),
+  });
+  if (!files.length) return null;
+  return (
+    <Group gap={6} mt={4}>
+      {files.map((f) => (
+        <Box key={f} pos="relative">
+          <Anchor href={urls.data?.get(f)} target="_blank" rel="noopener noreferrer">
+            <Image src={urls.data?.get(f)} w={96} h={72} fit="cover" radius="sm" alt={f.split('/').pop()} fallbackSrc="data:image/gif;base64,R0lGODlhAQABAAAAACw=" />
+          </Anchor>
+          {onRemove && <ActionIcon size="xs" color="red" variant="filled" pos="absolute" top={2} left={2} onClick={() => onRemove(f)} aria-label="הסרה"><IconX size={10} /></ActionIcon>}
+        </Box>
+      ))}
+    </Group>
+  );
+}
+
+function AddImages({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
+  return (
+    <Group gap={4}>
+      <FileButton multiple accept="image/*" onChange={(f) => onChange([...files, ...f])}>
+        {(props) => <Button {...props} size="compact-xs" variant="subtle" leftSection={<IconPhoto size={14} />}>הוספת תמונה</Button>}
+      </FileButton>
+      {files.map((f, i) => (
+        <Badge key={i} size="sm" variant="light" rightSection={<IconX size={10} style={{ cursor: 'pointer' }} onClick={() => onChange(files.filter((_, j) => j !== i))} />}>{f.name}</Badge>
+      ))}
+    </Group>
+  );
+}
+
+// Writing or editing a reply: text, a link, pictures (decision 143).
+function Composer({ taskId, initialText = '', initialFiles = [], placeholder, submitLabel, allowEmpty, color, onCancel, onSubmit }: {
+  taskId: string; initialText?: string; initialFiles?: string[]; placeholder?: string; submitLabel: string; allowEmpty?: boolean; color?: string;
+  onCancel: () => void; onSubmit: (text: string, files: string[]) => Promise<void>;
+}) {
+  const [text, setText] = useState(initialText);
+  const [kept, setKept] = useState(initialFiles);
+  const [fresh, setFresh] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const empty = !text.trim() && !kept.length && !fresh.length;
+  async function go() {
+    setBusy(true);
+    try { await onSubmit(text.trim(), [...kept, ...await uploadTaskFiles(taskId, fresh)]); }
+    catch (err) { notifications.show({ color: 'red', message: (err as Error).message }); }
+    finally { setBusy(false); }
+  }
+  return (
+    <Stack gap={4} mt={4}>
+      <Textarea size="xs" autosize minRows={1} placeholder={placeholder} value={text} onChange={(x) => setText(x.currentTarget.value)} />
+      <TaskFiles files={kept} onRemove={(f) => setKept((k) => k.filter((x) => x !== f))} />
+      <Group gap={4} justify="space-between">
+        <Group gap={4}>
+          <AddLink onAdd={(l) => setText((t) => append(t, l))} />
+          <AddImages files={fresh} onChange={setFresh} />
+        </Group>
+        <Group gap={4}>
+          <Button size="compact-xs" variant="default" onClick={onCancel}>ביטול</Button>
+          <Button size="compact-xs" color={color} onClick={go} loading={busy} disabled={!allowEmpty && empty}>{submitLabel}</Button>
+        </Group>
+      </Group>
+    </Stack>
   );
 }
