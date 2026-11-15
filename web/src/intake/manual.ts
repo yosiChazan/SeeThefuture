@@ -16,7 +16,8 @@ export interface ManagedUnit {
   id: string;
   ref: string;          // "Arcadia 106": how the review screen names the row
   owner?: string;
-  expected?: number;    // Yarach: expected monthly rent in UAH for the month
+  expected?: number;    // Yarach: expected monthly rent for the month
+  currency?: string;    // of the expected rent: UAH, or USD converted on the 1st
   feePct?: number;      // Liana: her share, from the management agreement
 }
 

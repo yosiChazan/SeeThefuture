@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Badge, Button, Checkbox, Collapse, FileInput, Group, List, Modal, NumberInput, Paper, Stack, Table, Text, Title } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Button, Checkbox, Collapse, FileInput, Group, List, Modal, NumberInput, Paper, SegmentedControl, Stack, Table, Text, Title } from '@mantine/core';
 import { DateInput, MonthPickerInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
 import { IconPhoto, IconPlus, IconTrash } from '@tabler/icons-react';
@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { buildLiana, buildYarach, type LianaForm, type Transfer, type YarachForm } from '../intake/manual';
 import type { ParseResult } from '../intake/types';
 import { createBatch, latestForm, type Source } from '../lib/intake';
+import { must, supabase } from '../lib/supabase';
 import { gershonId, loadUnits, MANUAL, pendingVersion, saveUnit, type AreaUnit, type UnitChange } from '../lib/manual';
 import { monthLabel } from '../pages/Intake';
 
@@ -20,15 +21,15 @@ const numOrNull = (v: string | number) => (v === '' || v === null ? null : Numbe
 // (Liana). Saved to management_agreements and rent_schedule from the form's month.
 function Units({ source, period, units, onSaved }: { source: Source; period: string; units: AreaUnit[]; onSaved: () => Promise<unknown> }) {
   const cfg = MANUAL[source.adapter];
-  const init = () => new Map(units.map((u) => [u.id, { managed: !!u.agreement, expected: u.expected ?? null, feePct: u.feePct ?? null } as UnitChange]));
+  const init = () => new Map(units.map((u) => [u.id, { managed: !!u.agreement, expected: u.expected ?? null, feePct: u.feePct ?? null, currency: u.currency ?? 'UAH' } as UnitChange]));
   const [draft, setDraft] = useState(init);
   const [busy, setBusy] = useState(false);
   useEffect(() => setDraft(init()), [units]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (id: string, patch: Partial<UnitChange>) => setDraft((d) => new Map(d).set(id, { ...d.get(id)!, ...patch }));
   const changed = units.filter((u) => {
     const c = draft.get(u.id)!;
-    return c.managed !== !!u.agreement || (cfg.kind === 'yarach' && (c.expected ?? 0) !== (u.expected ?? 0))
-      || (cfg.kind === 'liana' && c.managed && !!u.agreement && c.feePct !== u.feePct);
+    return c.managed !== !!u.agreement || (cfg.kind === 'yarach' && ((c.expected ?? 0) !== (u.expected ?? 0) || (c.currency ?? 'UAH') !== (u.currency ?? 'UAH')))
+      || (c.managed && !!u.agreement && (c.feePct ?? 0) !== (u.feePct ?? 0));
   });
 
   async function save() {
@@ -45,14 +46,14 @@ function Units({ source, period, units, onSaved }: { source: Source; period: str
   return (
     <Stack gap="xs">
       <Text size="xs" c="dimmed">
-        סמנו את הדירות ש{cfg.manager} מנהל{cfg.kind === 'liana' ? 'ת' : ''}{cfg.kind === 'yarach' ? ' ואת השכירות הצפויה של כל אחת בגריבנה. ההעברות מתחלקות לפי השכירות הצפויה' : ' ואת העמלה שלה'}.
+        סמנו את הדירות ש{cfg.manager} מנהל{cfg.kind === 'liana' ? 'ת' : ''}{cfg.kind === 'yarach' ? ', את השכירות של כל אחת (בגריבנה, או בדולר שמומר לפי השער ב-1 לחודש) ואת דמי הניהול של המשרד. ב-1 לכל חודש השכירות נזקפת ללקוחות כיתרה אצל גרשון' : ' ואת העמלה שלה'}.
         {' '}שינוי חל מ{monthLabel(period)} והלאה, וההיסטוריה נשמרת.
       </Text>
       <Table.ScrollContainer minWidth={520}>
         <Table verticalSpacing={4}>
           <Table.Thead>
             <Table.Tr><Table.Th>בניהול</Table.Th><Table.Th>דירה</Table.Th><Table.Th>בעלים</Table.Th>
-              <Table.Th>{cfg.kind === 'yarach' ? 'שכירות צפויה (₴)' : 'עמלה (%)'}</Table.Th></Table.Tr>
+              {cfg.kind === 'yarach' && <Table.Th>שכירות לחודש</Table.Th>}<Table.Th>{cfg.kind === 'yarach' ? 'דמי ניהול (%)' : 'עמלה (%)'}</Table.Th></Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {units.map((u) => {
@@ -62,10 +63,16 @@ function Units({ source, period, units, onSaved }: { source: Source; period: str
                   <Table.Td><Checkbox checked={c.managed} onChange={(e) => set(u.id, { managed: e.currentTarget.checked })} /></Table.Td>
                   <Table.Td><Text size="sm">{u.title}</Text>{u.otherManager && <Badge size="xs" variant="light" color="gray">מנוהלת גם ע"י {u.otherManager}</Badge>}</Table.Td>
                   <Table.Td><Text size="xs" c="dimmed">{u.owner ?? 'ללא בעלים'}</Text></Table.Td>
-                  <Table.Td w={160}>
-                    {cfg.kind === 'yarach'
-                      ? <NumberInput size="xs" min={0} thousandSeparator="," disabled={!c.managed} value={c.expected ?? ''} onChange={(v) => set(u.id, { expected: numOrNull(v) })} />
-                      : <NumberInput size="xs" min={0} max={100} disabled={!c.managed} value={c.feePct ?? ''} onChange={(v) => set(u.id, { feePct: numOrNull(v) })} />}
+                  {cfg.kind === 'yarach' && (
+                    <Table.Td w={200}>
+                      <Group gap={4} wrap="nowrap">
+                        <NumberInput size="xs" min={0} thousandSeparator="," disabled={!c.managed} value={c.expected ?? ''} onChange={(v) => set(u.id, { expected: numOrNull(v) })} w={110} />
+                        <SegmentedControl size="xs" disabled={!c.managed} value={c.currency ?? 'UAH'} onChange={(v) => set(u.id, { currency: v })} data={[{ value: 'UAH', label: '₴' }, { value: 'USD', label: '$' }]} />
+                      </Group>
+                    </Table.Td>
+                  )}
+                  <Table.Td w={110}>
+                    <NumberInput size="xs" min={0} max={100} disabled={!c.managed} value={c.feePct ?? ''} onChange={(v) => set(u.id, { feePct: numOrNull(v) })} />
                   </Table.Td>
                 </Table.Tr>
               );
@@ -81,6 +88,77 @@ function Units({ source, period, units, onSaved }: { source: Source; period: str
 }
 
 export function ManualReport({ source, onClose }: { source: Source; onClose: () => void }) {
+  if (MANUAL[source.adapter].kind === 'yarach') return <YarachTransfers source={source} onClose={onClose} />;
+  return <MonthlyReport source={source} onClose={onClose} />;
+}
+
+// Yarach (SPEC decision 141): his transfers are money received from him in Gershon's box, one
+// sum each, not split between clients. The rent itself is charged to the clients on the 1st.
+function YarachTransfers({ source, onClose }: { source: Source; onClose: () => void }) {
+  const cfg = MANUAL[source.adapter];
+  const qc = useQueryClient();
+  const period = dayjs().startOf('month').format('YYYY-MM-DD');
+  const [showUnits, setShowUnits] = useState(false);
+  const [transfers, setTransfers] = useState<Transfer[]>([{ on: '', amount: 0 }]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const units = useQuery({ queryKey: ['manual-units', source.id, period], queryFn: () => loadUnits(cfg, source.holder_party_id!, period), enabled: !!source.holder_party_id });
+  const gershon = useQuery({ queryKey: ['gershon-id'], queryFn: gershonId });
+  const managed = (units.data ?? []).filter((u) => u.agreement);
+  const filled = transfers.filter((t) => t.on || t.amount);
+  const bad = filled.some((t) => !t.on || !(t.amount > 0));
+  const total = filled.reduce((a, t) => a + (t.amount || 0), 0);
+  const setTransfer = (i: number, patch: Partial<Transfer>) => setTransfers((ts) => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+
+  async function save() {
+    setBusy(true); setError(null);
+    try {
+      const box = (await supabase.from('cash_boxes').select('id').eq('holder_party_id', gershon.data!).limit(1)).data?.[0] as { id: string } | undefined;
+      if (!box) throw new Error('לא נמצאה קופת גרשון');
+      must(await supabase.from('cash_movements').insert(filled.map((t) => ({
+        box_id: box.id, occurred_on: t.on, amount: t.amount, currency: 'UAH', kind: 'from_manager', party_id: source.holder_party_id, notes: 'העברה של ירח',
+      }))));
+      await qc.invalidateQueries();
+      notifications.show({ color: 'teal', message: `${filled.length} העברות נרשמו בקופת גרשון` });
+      onClose();
+    } catch (e) { setError((e as Error).message); setBusy(false); }
+  }
+
+  return (
+    <Modal opened onClose={onClose} title="ירח: העברות לגרשון" size="xl">
+      <Stack>
+        <Paper withBorder p="sm">
+          <Group justify="space-between">
+            <Text size="sm" fw={500}>הדירות של ירח (אודסה): {managed.length}</Text>
+            <Button size="xs" variant="subtle" onClick={() => setShowUnits((s) => !s)}>{showUnits ? 'סגירה' : 'עריכת הדירות'}</Button>
+          </Group>
+          <Collapse in={showUnits}>
+            {units.data && <Units source={source} period={period} units={units.data} onSaved={() => units.refetch()} />}
+          </Collapse>
+        </Paper>
+        <Text size="sm" c="dimmed">כל העברה נרשמת בקופת גרשון כ"התקבל ממנהל" מירח, ומקטינה את מה שירח חייב. היא לא מתחלקת בין הלקוחות: השכירות נזקפת להם ב-1 לחודש.</Text>
+        {transfers.map((t, i) => (
+          <Group key={i} gap="xs" wrap="nowrap">
+            <DateInput placeholder="תאריך" value={t.on || null} onChange={(d) => setTransfer(i, { on: iso(d) })} valueFormat="DD.MM.YYYY" w={150} />
+            <NumberInput placeholder="סכום ₴" min={0} thousandSeparator="," value={t.amount || ''} onChange={(v) => setTransfer(i, { amount: Number(v) || 0 })} w={170} />
+            <ActionIcon variant="subtle" color="red" onClick={() => setTransfers((ts) => ts.filter((_, j) => j !== i))} aria-label="הסרה"><IconTrash size={16} /></ActionIcon>
+          </Group>
+        ))}
+        <Group justify="space-between">
+          <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={() => setTransfers((ts) => [...ts, { on: '', amount: 0 }])}>העברה</Button>
+          <Text size="sm">סה"כ {fmt(total)} ₴</Text>
+        </Group>
+        {error && <Alert color="red" title="ההעברות לא נרשמו">{error}</Alert>}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>ביטול</Button>
+          <Button onClick={save} loading={busy} disabled={!filled.length || bad || !gershon.data}>רישום בקופת גרשון</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+function MonthlyReport({ source, onClose }: { source: Source; onClose: () => void }) {
   const cfg = MANUAL[source.adapter];
   const navigate = useNavigate();
   const qc = useQueryClient();

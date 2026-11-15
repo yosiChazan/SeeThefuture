@@ -1,10 +1,10 @@
-import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Menu, Modal, Paper, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Menu, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle, IconArrowBackUp, IconCheck, IconDownload, IconEyeOff } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CountryBadge, QueryState } from '../components/common';
 import { useAccess } from '../lib/access';
 import { CATEGORY_HE, date, money, owners, propertyTitle } from '../lib/format';
@@ -230,6 +230,8 @@ export function IntakeBatch() {
             </Alert>
           )}
 
+          {notes?.accrual && <AccrualRate batchStatus={batch.status} period={notes.period} rate={notes.accrual.rate} rateDate={notes.accrual.rate_date} />}
+
           {!!notes?.warnings.length && (
             <Alert color="orange" title="בדיקות על הקובץ כולו">
               <List size="sm">{notes.warnings.map((w) => <List.Item key={w}>{w}</List.Item>)}</List>
@@ -389,5 +391,40 @@ export function IntakeBatch() {
         </Stack>
       );
     }}</QueryState>
+  );
+}
+
+// Yarach's monthly charge (SPEC decision 141): the dollar rate it used, and redrafting the
+// month with another one. The open draft is replaced; an approved month stays as it is.
+function AccrualRate({ batchStatus, period, rate, rateDate }: { batchStatus: string; period: string; rate: number | null; rateDate: string | null }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [v, setV] = useState<number | ''>(rate ?? '');
+  const [busy, setBusy] = useState(false);
+  const open = batchStatus === 'in_review' || batchStatus === 'parsed';
+  async function redraft() {
+    if (!v || v <= 0) return;
+    setBusy(true);
+    const { data, error } = await supabase.rpc('yarach_accrual', { p_period: period, p_rate: v });
+    setBusy(false);
+    if (error) { notifications.show({ color: 'red', title: 'הבנייה מחדש נכשלה', message: error.message }); return; }
+    await qc.invalidateQueries();
+    notifications.show({ color: 'teal', message: 'החודש נבנה מחדש עם השער החדש' });
+    navigate(`/intake/${data as string}`);
+  }
+  return (
+    <Paper withBorder p="sm">
+      <Group gap="sm" align="flex-end">
+        <Text size="sm">
+          שער הדולר: <b>{rate ?? 'אין'}</b>{rateDate ? ` ₴ (מ-${dayjs(rateDate).format('DD.MM.YYYY')})` : ''}
+        </Text>
+        {open && (
+          <>
+            <NumberInput size="xs" label="שער אחר" value={v} onChange={(x) => setV(x === '' ? '' : Number(x))} min={0} decimalScale={4} w={120} />
+            <Button size="xs" variant="light" onClick={redraft} loading={busy} disabled={!v || v === rate}>בנייה מחדש עם השער</Button>
+          </>
+        )}
+      </Group>
+    </Paper>
   );
 }
