@@ -1,6 +1,6 @@
 import { Button, Group, Paper, SegmentedControl, Select, Stack, Table, Text } from '@mantine/core';
 import { useState } from 'react';
-import { ACCOUNT_KIND_HE, CATEGORY_HE, amountLabel, date, money } from '../lib/format';
+import { ACCOUNT_KIND_HE, categoryLabel, amountLabel, date, money } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
 import { SourceBadge, useTransactionSources, type TxnSource } from './SourceBadge';
 import type { Account, Currency } from '../lib/types';
@@ -67,7 +67,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                     return (
                       <Table.Tr key={e.id}>
                         <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
-                        <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
+                        <Table.Td>{categoryLabel(e.transaction.category, e.property?.building?.city?.name_en)}</Table.Td>
                         <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
                         {showSrc && <Table.Td>{sources.data?.get(e.transaction.id) && <SourceBadge src={sources.data.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
@@ -121,7 +121,7 @@ function ByDate({ accounts, entries, from, property, edit, sources }: {
               return (
                 <Table.Tr key={e.id}>
                   <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
-                  <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
+                  <Table.Td>{categoryLabel(e.transaction.category, e.property?.building?.city?.name_en)}</Table.Td>
                   <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
                   <Table.Td><Text size="xs">{accountName(a, property)}</Text></Table.Td>
                   {showSrc && <Table.Td>{sources?.get(e.transaction.id) && <SourceBadge src={sources.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
