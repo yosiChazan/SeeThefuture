@@ -2,10 +2,23 @@ import { Button, Group, Paper, SegmentedControl, Select, Stack, Table, Text } fr
 import { useState } from 'react';
 import { ACCOUNT_KIND_HE, categoryLabel, amountLabel, date, money } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
+import { nextSort, sortLedger, type LedgerKey, type LedgerSort } from '../lib/ledgerSort';
 import { SourceBadge, useTransactionSources, type TxnSource } from './SourceBadge';
 import type { Account, Currency } from '../lib/types';
 
 const FROM = '2026-01-01';
+
+// A column title that sorts the table on a click, up and down (decision 147).
+function SortTh({ k, sort, set, w, children }: { k: LedgerKey; sort: LedgerSort; set: (s: LedgerSort) => void; w?: number; children: React.ReactNode }) {
+  const on = sort.key === k;
+  return (
+    <Table.Th w={w} onClick={() => set(nextSort(sort, k))} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+      {children} <Text span size="xs" c={on ? undefined : 'dimmed'}>{on ? (sort.desc ? '▼' : '▲') : '↕'}</Text>
+    </Table.Th>
+  );
+}
+const typeOf = (e: EntryRow) => categoryLabel(e.transaction.category, e.property?.building?.city?.name_en);
+const descOf = (e: EntryRow) => e.memo ?? e.transaction.description ?? '';
 
 // One card per account: entries with a running total. From 2026 by default, with
 // everything before 1.1.2026 summed into one opening line; or the whole history.
@@ -21,6 +34,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
 }) {
   const [range, setRange] = useState<'2026' | 'all'>('2026');
   const [view, setView] = useState<'date' | 'account'>('date');
+  const [sortA, setSortA] = useState<LedgerSort>({ key: 'date', desc: false });
   const shown = accounts.filter((a) => entries.some((e) => e.account_id === a.id));
   // The source column shows only for the viewer who may see a source here (decision 138).
   const sources = useTransactionSources(entries.map((e) => e.transaction.id));
@@ -40,6 +54,10 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
         const before = range === '2026' ? mine.filter((e) => e.transaction.occurred_on < FROM) : [];
         const rows = range === '2026' ? mine.filter((e) => e.transaction.occurred_on >= FROM) : mine;
         let running = before.reduce((s, e) => s + Number(e.amount), 0);
+        // The running total follows the date; another order keeps each row's total as it was then.
+        const totals = new Map(rows.map((e) => [e.id, (running += Number(e.amount))]));
+        running = before.reduce((s, e) => s + Number(e.amount), 0);
+        const sorted = sortLedger(rows, sortA, (e) => ({ date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), amount: Number(e.amount), source: sources.data?.get(e.transaction.id)?.source ?? '' }));
         const label = property ? 'מהנכס' : amountLabel(a.kind);
         return (
           <Paper key={a.id} withBorder p="sm">
@@ -50,7 +68,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing={4} striped>
                 <Table.Thead>
-                  <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th>{showSrc && <Table.Th w={70}>מקור</Table.Th>}<Table.Th w={120}>סכום</Table.Th><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
+                  <Table.Tr><SortTh k="date" sort={sortA} set={setSortA} w={100}>תאריך</SortTh><SortTh k="type" sort={sortA} set={setSortA} w={110}>סוג</SortTh><SortTh k="desc" sort={sortA} set={setSortA}>תיאור</SortTh>{showSrc && <SortTh k="source" sort={sortA} set={setSortA} w={70}>מקור</SortTh>}<SortTh k="amount" sort={sortA} set={setSortA} w={120}>סכום</SortTh><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {range === '2026' && (
@@ -62,16 +80,15 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                       {edit && <Table.Td />}
                     </Table.Tr>
                   )}
-                  {rows.map((e) => {
-                    running += Number(e.amount);
+                  {sorted.map((e) => {
                     return (
                       <Table.Tr key={e.id}>
                         <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
-                        <Table.Td>{categoryLabel(e.transaction.category, e.property?.building?.city?.name_en)}</Table.Td>
-                        <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
+                        <Table.Td>{typeOf(e)}</Table.Td>
+                        <Table.Td><Text size="sm" lineClamp={2}>{descOf(e)}</Text></Table.Td>
                         {showSrc && <Table.Td>{sources.data?.get(e.transaction.id) && <SourceBadge src={sources.data.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
-                        <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
+                        <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(totals.get(e.id) ?? 0, a.currency)}</Table.Td>
                         {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
                       </Table.Tr>
                     );
@@ -96,11 +113,15 @@ function ByDate({ accounts, entries, from, property, edit, sources }: {
   const showSrc = !!sources;
   const [account, setAccount] = useState<string | null>(null);
   const [currency, setCurrency] = useState<string | null>(null);
+  const [sort, setSort] = useState<LedgerSort>({ key: 'date', desc: true });
   const byId = new Map(accounts.map((a) => [a.id, a]));
-  const rows = entries
+  const picked = entries
     .filter((e) => byId.has(e.account_id ?? '') && (!from || e.transaction.occurred_on >= from))
-    .filter((e) => (!account || e.account_id === account) && (!currency || e.currency === currency))
-    .sort((x, y) => y.transaction.occurred_on.localeCompare(x.transaction.occurred_on));
+    .filter((e) => (!account || e.account_id === account) && (!currency || e.currency === currency));
+  const rows = sortLedger(picked, sort, (e) => ({
+    date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), account: byId.get(e.account_id ?? '') ? accountName(byId.get(e.account_id ?? '')!, property) : '',
+    currency: e.currency, amount: Number(e.amount), source: sources?.get(e.transaction.id)?.source ?? '',
+  }));
   const currencies = [...new Set(accounts.map((a) => a.currency))].sort();
   return (
     <Paper withBorder p="sm">
@@ -113,7 +134,7 @@ function ByDate({ accounts, entries, from, property, edit, sources }: {
       <Table.ScrollContainer minWidth={700}>
         <Table verticalSpacing={4} striped>
           <Table.Thead>
-            <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={200}>קופה</Table.Th>{showSrc && <Table.Th w={70}>מקור</Table.Th>}<Table.Th w={70}>מטבע</Table.Th><Table.Th w={120}>סכום</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
+            <Table.Tr><SortTh k="date" sort={sort} set={setSort} w={100}>תאריך</SortTh><SortTh k="type" sort={sort} set={setSort} w={110}>סוג</SortTh><SortTh k="desc" sort={sort} set={setSort}>תיאור</SortTh><SortTh k="account" sort={sort} set={setSort} w={200}>קופה</SortTh>{showSrc && <SortTh k="source" sort={sort} set={setSort} w={70}>מקור</SortTh>}<SortTh k="currency" sort={sort} set={setSort} w={70}>מטבע</SortTh><SortTh k="amount" sort={sort} set={setSort} w={120}>סכום</SortTh>{edit && <Table.Th w={60} />}</Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {rows.map((e) => {
@@ -121,8 +142,8 @@ function ByDate({ accounts, entries, from, property, edit, sources }: {
               return (
                 <Table.Tr key={e.id}>
                   <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
-                  <Table.Td>{categoryLabel(e.transaction.category, e.property?.building?.city?.name_en)}</Table.Td>
-                  <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
+                  <Table.Td>{typeOf(e)}</Table.Td>
+                  <Table.Td><Text size="sm" lineClamp={2}>{descOf(e)}</Text></Table.Td>
                   <Table.Td><Text size="xs">{accountName(a, property)}</Text></Table.Td>
                   {showSrc && <Table.Td>{sources?.get(e.transaction.id) && <SourceBadge src={sources.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                   <Table.Td>{e.currency}</Table.Td>
