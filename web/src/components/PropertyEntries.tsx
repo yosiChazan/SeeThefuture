@@ -30,7 +30,7 @@ interface Draft {
   id: string; occurred_on: string; period: string; category: string; description: string | null; created_by: string | null; status: string;
   where: string;   // "<account kind>|<holder id or 'beneficiary'>", as in the form
   currency: Currency; total: number;
-  lines: { amount: number; currency: Currency; who: string }[];
+  lines: { amount: number; currency: Currency; who: string; where: string }[];
 }
 
 function useDrafts(propertyId: string) {
@@ -48,7 +48,7 @@ function useDrafts(propertyId: string) {
         const where = a ? `${a.kind}|${a.kind === 'client_bank' || a.holder_party_id === a.beneficiary_party_id ? 'beneficiary' : a.holder_party_id}` : '';
         const d = m.get(r.transaction.id) ?? m.set(r.transaction.id, { ...r.transaction, where, currency: r.currency, total: 0, lines: [] }).get(r.transaction.id)!;
         d.total += Number(r.amount);
-        d.lines.push({ amount: Number(r.amount), currency: r.currency, who: a ? `${a.beneficiary.display_name} (אצל ${a.holder.display_name})` : '' });
+        d.lines.push({ amount: Number(r.amount), currency: r.currency, who: a ? `${a.beneficiary.display_name} (אצל ${a.holder.display_name})` : '', where });
       }
       return [...m.values()].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on));
     },
@@ -91,7 +91,15 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
     return [...m].map(([value, label]) => ({ value, label }));
   }, [accounts, managers.data, local.data, editing]);
 
-  const [v, setV] = useState(editing ? {
+  // A conversion being edited: what went out (the negative lines) and what came in.
+  const fxOut = editing?.category === 'fx' ? editing.lines.filter((l) => l.amount < 0) : [];
+  const fxIn = editing?.category === 'fx' ? editing.lines.filter((l) => l.amount > 0) : [];
+  const sumOf = (ls: { amount: number }[]) => Math.round(Math.abs(ls.reduce((a, l) => a + l.amount, 0)) * 100) / 100;
+  const [v, setV] = useState(editing?.category === 'fx' ? {
+    on: editing.occurred_on as string | null, period: editing.period as string | null, dir: 'fx' as 'in' | 'out' | 'fx',
+    category: 'fx' as string | null, amount: sumOf(fxOut) as number | '', currency: (fxOut[0]?.currency ?? editing.currency) as Currency, where: (fxOut[0]?.where ?? editing.where) as string | null,
+    description: editing.description ?? '', post: false,
+  } : editing ? {
     on: editing.occurred_on as string | null, period: editing.period as string | null, dir: (editing.total < 0 ? 'out' : 'in') as 'in' | 'out' | 'fx',
     category: editing.category as string | null, amount: Math.abs(editing.total) as number | '', currency: editing.currency, where: editing.where as string | null,
     description: editing.description ?? '', post: false,
@@ -102,7 +110,9 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
   });
   // A conversion (decision 149): one transaction, two entries in two currencies, with the
   // same holder by default (Gershon's hryvnia into Gershon's dollars).
-  const [fx, setFx] = useState({ toAmount: '' as number | '', toCurrency: (CURRENCY_OF[country] === 'USD' ? 'UAH' : 'USD') as Currency, toWhere: null as string | null });
+  const [fx, setFx] = useState(fxIn.length ? {
+    toAmount: sumOf(fxIn) as number | '', toCurrency: fxIn[0].currency, toWhere: (fxIn[0].where !== fxOut[0]?.where ? fxIn[0].where : null) as string | null,
+  } : { toAmount: '' as number | '', toCurrency: (CURRENCY_OF[country] === 'USD' ? 'UAH' : 'USD') as Currency, toWhere: null as string | null });
   const isFx = v.dir === 'fx';
   const rate = isFx && Number(v.amount) > 0 && Number(fx.toAmount) > 0 ? Number(v.amount) / Number(fx.toAmount) : null;
   const [busy, setBusy] = useState(false);
@@ -110,20 +120,12 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
   const cats = (v.dir === 'in' ? INCOME : EXPENSE).map((c) => ({ value: c, label: CATEGORY_HE[c] ?? c }));
   const ready = v.on && v.period && v.amount && v.where && (isFx ? Number(fx.toAmount) > 0 && fx.toCurrency !== v.currency : v.category);
 
-  async function save() {
-    setBusy(true); setError(null);
+  // Saves a new movement from the form (a conversion: two entries), waiting or posted.
+  async function create(post: boolean): Promise<string> {
     let txn: string | null = null;
+    const amount = Math.abs(Number(v.amount)) * (v.dir === 'in' ? 1 : -1);
+    const [kind, holder] = v.where!.split('|');
     try {
-      const amount = Math.abs(Number(v.amount)) * (v.dir === 'in' ? 1 : -1);
-      const [kind, holder] = v.where!.split('|');
-      if (editing) {
-        must(await supabase.rpc('edit_manual_entry', { p_txn: editing.id, p_on: v.on, p_period: v.period, p_category: v.category, p_description: v.description.trim() || null,
-          p_amount: amount, p_currency: v.currency, p_kind: kind, p_holder: holder === 'beneficiary' ? null : holder }));
-        notifications.show({ color: 'teal', message: editing.status === 'posted' ? 'התנועה תוקנה: הקודמת בוטלה והמתוקנת נרשמה' : 'התנועה עודכנה' });
-        await qc.invalidateQueries();   // the property's and the owners' ledgers
-        onClose();
-        return;
-      }
       if (isFx) {
         const [toKind, toHolder] = (fx.toWhere ?? v.where!).split('|');
         const r4 = Math.round(rate! * 10000) / 10000;
@@ -144,13 +146,50 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
         e: { amount, currency: v.currency, memo: v.description.trim() || null, account: { kind, holder: holder === 'beneficiary' ? 'beneficiary' : 'source' } },
       }));
       }
-      if (v.post) must(await supabase.from('transactions').update({ status: 'posted' }).eq('id', txn));
+      if (post) must(await supabase.from('transactions').update({ status: 'posted' }).eq('id', txn));
+      return txn!;
+    } catch (e) {
+      if (txn) await supabase.from('transactions').delete().eq('id', txn);
+      throw e;
+    }
+  }
+
+  async function save() {
+    setBusy(true); setError(null);
+    try {
+      const amount = Math.abs(Number(v.amount)) * (v.dir === 'in' ? 1 : -1);
+      const [kind, holder] = v.where!.split('|');
+      // A conversion, or an entry turned into one or out of one (decision 151): the new one is
+      // saved as the old one was (waiting, or posted), then the old one goes (deleted while
+      // waiting; voided once posted, so both stay in the history).
+      if (editing && (isFx || editing.category === 'fx')) {
+        const posted = editing.status === 'posted';
+        const fresh = await create(posted);
+        const gone = posted ? await supabase.from('transactions').update({ status: 'void' }).eq('id', editing.id).select('id')
+          : await supabase.from('transactions').delete().eq('id', editing.id).select('id');
+        if (gone.error || !gone.data?.length) {
+          if (posted) await supabase.from('transactions').update({ status: 'void' }).eq('id', fresh); else await supabase.from('transactions').delete().eq('id', fresh);
+          throw new Error(gone.error?.message ?? 'אין הרשאה להחליף את התנועה');
+        }
+        notifications.show({ color: 'teal', message: posted ? 'התנועה תוקנה: הקודמת בוטלה והמתוקנת נרשמה' : 'התנועה עודכנה' });
+        await qc.invalidateQueries();
+        onClose();
+        return;
+      }
+      if (editing) {
+        must(await supabase.rpc('edit_manual_entry', { p_txn: editing.id, p_on: v.on, p_period: v.period, p_category: v.category, p_description: v.description.trim() || null,
+          p_amount: amount, p_currency: v.currency, p_kind: kind, p_holder: holder === 'beneficiary' ? null : holder }));
+        notifications.show({ color: 'teal', message: editing.status === 'posted' ? 'התנועה תוקנה: הקודמת בוטלה והמתוקנת נרשמה' : 'התנועה עודכנה' });
+        await qc.invalidateQueries();   // the property's and the owners' ledgers
+        onClose();
+        return;
+      }
+      await create(v.post);
       notifications.show({ color: 'teal', message: v.post ? 'התנועה נרשמה' : 'התנועה נשמרה וממתינה לאישור כספים' });
       await qc.invalidateQueries({ queryKey: ['property-drafts', propertyId] });
       await qc.invalidateQueries({ queryKey: ['property-entries', propertyId] });
       onClose();
     } catch (e) {
-      if (txn) await supabase.from('transactions').delete().eq('id', txn);
       setError((e as Error).message.includes('has no owner') ? 'לנכס אין בעלים בתאריך הזה' : (e as Error).message);
     } finally { setBusy(false); }
   }
@@ -159,7 +198,7 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
     <Modal opened onClose={onClose} title={editing ? 'עריכת תנועה' : 'תנועה חדשה בנכס'} size="lg">
       <Stack>
         <SegmentedControl value={v.dir} onChange={(x) => setV({ ...v, dir: x as 'in' | 'out' | 'fx', category: x === 'in' ? 'rent' : x === 'out' ? 'repair' : 'fx', ...(x === 'fx' && v.on ? { period: dayjs(v.on).startOf('month').format('YYYY-MM-DD') } : {}) })}
-          data={[{ value: 'in', label: 'הכנסה' }, { value: 'out', label: 'הוצאה' }, ...(editing ? [] : [{ value: 'fx', label: 'המרה' }])]} />
+          data={[{ value: 'in', label: 'הכנסה' }, { value: 'out', label: 'הוצאה' }, { value: 'fx', label: 'המרה' }]} />
         <SimpleGrid cols={{ base: 1, sm: 3 }}>
           {/* A conversion has no "for month": its month is the date's (decision 150). */}
           <DateInput label="תאריך" required value={v.on} onChange={(d) => setV({ ...v, on: d ? dayjs(d).format('YYYY-MM-DD') : null, ...(isFx ? { period: d ? dayjs(d).startOf('month').format('YYYY-MM-DD') : null } : {}) })} valueFormat="DD.MM.YYYY" />
@@ -235,7 +274,7 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
                 <Table.Td>{CATEGORY_HE[d.category] ?? d.category}{d.description ? ` · ${d.description}` : ''}</Table.Td>
                 <Table.Td>{d.lines.map((l, i) => <div key={i}>{money(l.amount, l.currency)} <Text span size="xs" c="dimmed">{l.who}</Text></div>)}</Table.Td>
                 <Table.Td><Group gap={4} wrap="nowrap" justify="flex-end">
-                  {canEditDraft(d) && d.category !== 'fx' && <Button size="compact-xs" variant="light" onClick={() => setEditing(d)}>עריכה</Button>}
+                  {canEditDraft(d) && <Button size="compact-xs" variant="light" onClick={() => setEditing(d)}>עריכה</Button>}
                   {access.canApprove(country) && <Button size="compact-xs" color="teal" onClick={() => approve(d)}>אישור</Button>}
                   {(access.canApprove(country) || d.created_by === me) && <Button size="compact-xs" variant="subtle" color="red" onClick={() => remove(d)}>מחיקה</Button>}
                 </Group></Table.Td>
@@ -273,7 +312,8 @@ function EditTransaction({ txnId, onClose }: { txnId: string; onClose: () => voi
       const a = rows[0].account;
       const draft: Draft = { ...rows[0].transaction, currency: rows[0].currency, total: rows.reduce((x, r) => x + Number(r.amount), 0),
         where: `${a.kind}|${a.kind === 'client_bank' || a.holder_party_id === a.beneficiary_party_id ? 'beneficiary' : a.holder_party_id}`,
-        lines: rows.map((r) => ({ amount: Number(r.amount), currency: r.currency, who: `${r.account.beneficiary.display_name} (אצל ${r.account.holder.display_name})` })) };
+        lines: rows.map((r) => ({ amount: Number(r.amount), currency: r.currency, who: `${r.account.beneficiary.display_name} (אצל ${r.account.holder.display_name})`,
+          where: `${r.account.kind}|${r.account.kind === 'client_bank' || r.account.holder_party_id === r.account.beneficiary_party_id ? 'beneficiary' : r.account.holder_party_id}` })) };
       return { draft, propertyId: rows[0].property_id, country: rows[0].transaction.country_code };
     },
   });
