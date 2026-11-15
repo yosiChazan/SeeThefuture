@@ -1,4 +1,4 @@
-import { Alert, Anchor, Badge, Button, Group, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Collapse, Group, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
@@ -9,7 +9,7 @@ import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { division, KIND_HE, summarize, type AutoIn, type CashMovement } from '../lib/cash';
-import { date, money } from '../lib/format';
+import { date, money, propertyTitle } from '../lib/format';
 import { useClients, useContacts } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
 import type { Country, Currency } from '../lib/types';
@@ -562,27 +562,87 @@ function YarachDebt({ canDraft }: { canDraft: boolean }) {
 }
 
 // What managers hold for the office (decision 146): Odessa's STF fees, credited to the office
-// on every fee line and left with Gershon until he sends them to us.
+// on every fee line and left with Gershon until he sends them to us. With the breakdown: by
+// client and apartment, each opening to its months; or by month.
+interface CreditRow { amount: number; currency: string; account_id: string; property: { id: string; unit_no: string; building: { name: string; project: { name: string } | null }; ownerships: { valid_to: string | null; party: { display_name: string } }[] } | null; transaction: { period: string; category: string; status: string } }
 function OfficeAtManagers() {
+  const [open, setOpen] = useState(false);
+  const [by, setBy] = useState<'client' | 'month'>('client');
+  const [unit, setUnit] = useState<string | null>(null);
   const q = useQuery({
     queryKey: ['office-at-managers'],
     queryFn: async () => {
       const office = must(await supabase.rpc('office_party')) as string | null;
-      if (!office) return [];
+      if (!office) return { accs: [], rows: [] as CreditRow[] };
       const accs = must(await supabase.from('accounts').select('id, currency, holder:parties!accounts_holder_party_id_fkey(display_name)').eq('kind', 'manager_cash').eq('beneficiary_party_id', office)) as unknown as { id: string; currency: string; holder: { display_name: string } }[];
-      if (!accs.length) return [];
-      const bal = new Map((must(await supabase.from('account_balances').select('account_id, balance').in('account_id', accs.map((a) => a.id))) as { account_id: string; balance: number }[]).map((b) => [b.account_id, Number(b.balance)]));
-      return accs.map((a) => ({ who: a.holder.display_name, currency: a.currency, balance: bal.get(a.id) ?? 0 })).filter((a) => Math.abs(a.balance) > 0.005);
+      const rows: CreditRow[] = [];
+      if (accs.length) for (let at = 0; ; at += 1000) {
+        const page = must(await supabase.from('entries').select('amount, currency, account_id, property:properties(id, unit_no, building:buildings(name, project:projects(name)), ownerships(valid_to, party:parties(display_name))), transaction:transactions!inner(period, category, status)')
+          .in('account_id', accs.map((x) => x.id)).eq('transaction.status', 'posted').order('id').range(at, at + 999)) as unknown as CreditRow[];
+        rows.push(...page);
+        if (page.length < 1000) break;
+      }
+      return { accs, rows };
     },
   });
-  if (!q.data?.length) return null;
+  const accs = q.data?.accs ?? [];
+  const rows = q.data?.rows ?? [];
+  const totals = accs.map((a) => ({ who: a.holder.display_name, currency: a.currency, balance: Math.round(rows.filter((r) => r.account_id === a.id).reduce((x, r) => x + Number(r.amount), 0) * 100) / 100 }))
+    .filter((a) => Math.abs(a.balance) > 0.005);
+  if (!totals.length) return null;
+  const fees = rows.filter((r) => r.transaction.category === 'mgmt_fee');
+  const paid = rows.filter((r) => r.transaction.category !== 'mgmt_fee');   // sent to the office, conversions
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const ownerOf = (p: NonNullable<CreditRow['property']>) => p.ownerships.filter((o) => !o.valid_to).map((o) => o.party.display_name).join(', ') || '—';
+  const groups = [...fees.reduce((m, r) => {
+    const k = r.property?.id ?? '—';
+    const g = m.get(k) ?? { key: k, title: r.property ? propertyTitle(r.property) : 'בלי נכס', owner: r.property ? ownerOf(r.property) : '', total: 0, currency: r.currency, months: new Map<string, number>() };
+    g.total += Number(r.amount);
+    g.months.set(r.transaction.period, (g.months.get(r.transaction.period) ?? 0) + Number(r.amount));
+    return m.set(k, g);
+  }, new Map<string, { key: string; title: string; owner: string; total: number; currency: string; months: Map<string, number> }>()).values()]
+    .sort((a, b) => a.owner.localeCompare(b.owner, 'he') || a.title.localeCompare(b.title, 'he', { numeric: true }));
+  const months = [...fees.reduce((m, r) => m.set(r.transaction.period, (m.get(r.transaction.period) ?? 0) + Number(r.amount)), new Map<string, number>())].sort((a, b) => b[0].localeCompare(a[0]));
+  const sentTotal = r2(paid.filter((r) => r.currency === 'UAH').reduce((x, r) => x + Number(r.amount), 0));
   return (
     <Paper withBorder p="md">
-      <Title order={4} mb="xs">מגיע למשרד ממנהלים (דמי ניהול STF)</Title>
+      <Group justify="space-between" mb="xs">
+        <Title order={4}>מגיע למשרד ממנהלים (דמי ניהול STF)</Title>
+        <Button size="xs" variant="subtle" onClick={() => setOpen((o) => !o)}>{open ? 'הסתרת הפירוט' : 'פירוט'}</Button>
+      </Group>
       <Text size="xs" c="dimmed" mb="xs">כל שורת דמי ניהול באודסה נרשמת גם כזכות של המשרד, והכסף נשאר אצל גרשון עד שהוא מעביר אותו. בחלוקה של סכום מגרשון, השורה "המשרד (עמלות)" מורידה מכאן.</Text>
-      <Table fz="sm"><Table.Tbody>{q.data.map((a) => (
+      <Table fz="sm"><Table.Tbody>{totals.map((a) => (
         <Table.Tr key={a.who + a.currency}><Table.Td>אצל {a.who}</Table.Td><Table.Td><Text fw={600} size="sm">{money(a.balance, a.currency as Currency)}</Text></Table.Td></Table.Tr>
       ))}</Table.Tbody></Table>
+      <Collapse in={open}>
+        <Stack gap="xs" mt="sm">
+          <Group justify="space-between">
+            <SegmentedControl size="xs" value={by} onChange={(v) => setBy(v as 'client' | 'month')} data={[{ value: 'client', label: 'לפי לקוח ודירה' }, { value: 'month', label: 'לפי חודש' }]} />
+            <Text size="xs" c="dimmed">דמי ניהול: {money(r2(fees.reduce((x, r) => x + Number(r.amount), 0)), 'UAH')}{sentTotal ? ` · הועבר למשרד: ${money(-sentTotal, 'UAH')}` : ''}</Text>
+          </Group>
+          {by === 'client' ? (
+            <Table.ScrollContainer minWidth={520}>
+              <Table fz="sm" striped highlightOnHover verticalSpacing={4}>
+                <Table.Thead><Table.Tr><Table.Th>לקוח</Table.Th><Table.Th>דירה</Table.Th><Table.Th>חודשים</Table.Th><Table.Th>סכום</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>{groups.flatMap((g) => [
+                  <Table.Tr key={g.key} style={{ cursor: 'pointer' }} onClick={() => setUnit(unit === g.key ? null : g.key)}>
+                    <Table.Td>{g.owner}</Table.Td><Table.Td>{unit === g.key ? '▾ ' : '▸ '}{g.title}</Table.Td><Table.Td>{g.months.size}</Table.Td>
+                    <Table.Td><Text size="sm" fw={600}>{money(r2(g.total), g.currency as Currency)}</Text></Table.Td>
+                  </Table.Tr>,
+                  ...(unit === g.key ? [...g.months].sort((a, b) => b[0].localeCompare(a[0])).map(([m, v]) => (
+                    <Table.Tr key={g.key + m}><Table.Td /><Table.Td><Text size="xs" c="dimmed" ps="md">{dayjs(m).format('MM.YYYY')}</Text></Table.Td><Table.Td /><Table.Td><Text size="xs">{money(r2(v), g.currency as Currency)}</Text></Table.Td></Table.Tr>
+                  )) : []),
+                ])}</Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          ) : (
+            <Table fz="sm" striped verticalSpacing={4}>
+              <Table.Thead><Table.Tr><Table.Th>חודש</Table.Th><Table.Th>דמי ניהול</Table.Th></Table.Tr></Table.Thead>
+              <Table.Tbody>{months.map(([m, v]) => <Table.Tr key={m}><Table.Td>{dayjs(m).format('MM.YYYY')}</Table.Td><Table.Td>{money(r2(v), 'UAH')}</Table.Td></Table.Tr>)}</Table.Tbody>
+            </Table>
+          )}
+        </Stack>
+      </Collapse>
     </Paper>
   );
 }
