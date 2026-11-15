@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { describeEvent, filterTasks, nextOccurrence, openByAssignee, recurrenceText, seriesOn, sortTasks, taskMail, type OfficeTask } from './officeTasks.ts';
+import { buildThreads, describeEvent, filterTasks, openBranches, nextOccurrence, openByAssignee, recurrenceText, seriesOn, sortTasks, taskMail, type OfficeTask } from './officeTasks.ts';
 
 const t = (id: string, o: Partial<OfficeTask>): OfficeTask => ({
   id, created_by: 'u0', created_at: '2026-11-01', updated_at: '2026-11-01', trigger_id: 'g1', subject: id, body: null,
@@ -62,4 +62,20 @@ test('filters: by field, several values are any of them, several filters all hol
   assert.equal(ids([{ field: 'subject', values: ['שכירות'] }]), 'b');
   assert.equal(ids([{ field: 'created', values: ['2026-11-05', ''] }]), 'bc');
   assert.equal(ids([{ field: 'created', values: ['', '2026-11-08'] }, { field: 'priority', values: [] }]), 'ab');
+});
+
+test('replies form a tree, and each branch ends with "handled" or is still open', () => {
+  const ev = (id: string, kind: string, parent: string | null, at: string) => ({ id, task_id: 't', kind, body: id, data: null, created_by: null, created_at: at, parent_id: parent });
+  const events = [
+    ev('a', 'reply', null, '1'), ev('b', 'reply', 'a', '2'), ev('c', 'resolve', 'b', '3'),   // a → b → handled
+    ev('d', 'reply', 'a', '4'),                                                               // a → d: open
+    ev('e', 'reply', null, '5'), ev('f', 'resolve', 'e', '6'), ev('g', 'reply', 'e', '7'),    // e → handled, and e → g: open
+    ev('s', 'status', null, '8'),
+  ];
+  const t = buildThreads(events);
+  assert.deepEqual(t.map((n) => n.event.id), ['a', 'e']);
+  assert.deepEqual(t[0].children.map((n) => [n.event.id, n.open, n.resolved?.id ?? null]), [['b', false, 'c'], ['d', true, null]]);
+  assert.equal(t[1].resolved?.id, 'f');
+  assert.equal(openBranches(t), 2);
+  assert.equal(openBranches(buildThreads(events.filter((e) => !['d', 'g'].includes(e.id)))), 0);
 });
