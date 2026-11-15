@@ -33,6 +33,13 @@ export const CATEGORY_HE: Record<string, string> = {
   purchase_installment: 'תשלום רכישה', deal_fee: 'דמי עסקה', commission: 'עמלה',
 };
 
+// The category as a client reads it. In Odessa the management fee is the office's own,
+// "דמי ניהול STF" (See the Future), not the local manager's (SPEC decision 145).
+export function categoryLabel(category: string, city?: string | null): string {
+  if (category === 'mgmt_fee' && city === 'Odessa') return 'דמי ניהול STF';
+  return CATEGORY_HE[category] ?? category;
+}
+
 // The client's own bank account shows what the reports say was paid into it, not
 // the balance at the bank (we do not see what the owner takes out).
 export const amountLabel = (kind: string) => (kind === 'client_bank' ? 'הופקד אצל הלקוח' : 'יתרה');
