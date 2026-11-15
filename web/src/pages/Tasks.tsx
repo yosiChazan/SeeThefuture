@@ -1,9 +1,9 @@
-import { ActionIcon, Alert, Anchor, Badge, Button, Card, Group, Modal, MultiSelect, NumberInput, Paper, SegmentedControl, Select, Stack, Switch, Tabs, Text, Textarea, TextInput, Timeline, Title } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Box, Button, Card, Group, Modal, MultiSelect, NumberInput, Paper, SegmentedControl, Select, Stack, Switch, Tabs, Text, Textarea, TextInput, Timeline, Title } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import dayjs from 'dayjs';
 import { notifications } from '@mantine/notifications';
-import { IconMail, IconPencil, IconPlus, IconRepeat, IconTrash } from '@tabler/icons-react';
+import { IconCheck, IconMail, IconPencil, IconPlus, IconRepeat, IconTrash } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -11,7 +11,7 @@ import { AddLink, append, LinkedText, useMe } from '../components/ManualTopics';
 import { useAccess } from '../lib/access';
 import { COUNTRIES, COUNTRY_HE, propertyTitle } from '../lib/format';
 import {
-  assigneeKey, describeEvent, FILTER_FIELD_HE, filterTasks, MONTH_HE, nextOccurrence, openByAssignee, PRIORITY_COLOR, PRIORITY_HE, recurrenceText, sortTasks, STATUS_COLOR, STATUS_HE, taskMail, WEEKDAY_HE,
+  assigneeKey, buildThreads, describeEvent, openBranches, type ThreadNode, FILTER_FIELD_HE, filterTasks, MONTH_HE, nextOccurrence, openByAssignee, PRIORITY_COLOR, PRIORITY_HE, recurrenceText, sortTasks, STATUS_COLOR, STATUS_HE, taskMail, WEEKDAY_HE,
   type Assignee, type FilterField, type OfficeTask, type TaskFilter, type Priority, type Series, type SortKey, type TaskEvent, type TaskLink, type TaskStatus,
 } from '../lib/officeTasks';
 import { useClients, useContacts, useProperties } from '../lib/queries';
@@ -237,6 +237,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
       setReply('');
       await qc.invalidateQueries({ queryKey: ['office-tasks'] });
       await qc.invalidateQueries({ queryKey: ['office-task-events', task.id] });
+      await qc.invalidateQueries({ queryKey: ['office-task-branches'] });
       notifications.show({ color: 'teal', message: 'נשמר' });
     } catch (e) { notifications.show({ color: 'red', message: (e as Error).message }); } finally { setBusy(false); }
   }
@@ -268,9 +269,11 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
         </Group>
         {mailTo && <Paper withBorder p="sm"><MailLinks task={task} to={mailTo} dir={dir} from={access.displayName} /></Paper>}
 
+        <Threads task={task} events={events.data ?? []} dir={dir} />
+
         <Title order={5}>היסטוריה</Title>
         <Timeline bulletSize={12} lineWidth={2}>
-          {(events.data ?? []).map((e) => (
+          {(events.data ?? []).filter((e) => e.kind !== 'reply' && e.kind !== 'resolve').map((e) => (
             <Timeline.Item key={e.id} title={<Text size="sm"><b>{e.created_by ? dir.users.get(e.created_by)?.display_name ?? 'לא ידוע' : 'המערכת'}</b> {describeEvent(e, dir.nameOf, dir.linkName)}</Text>}>
               {e.body && <LinkedText text={e.body} />}
               <Text size="xs" c="dimmed">{new Date(e.created_at).toLocaleString('he-IL')}</Text>
@@ -280,7 +283,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
 
         <Paper withBorder p="sm">
           <Stack gap="xs">
-            <Textarea label="מענה" autosize minRows={2} value={reply} onChange={(e) => setReply(e.currentTarget.value)} />
+            <Textarea label="תגובה חדשה (פותחת ענף)" autosize minRows={2} value={reply} onChange={(e) => setReply(e.currentTarget.value)} />
             <Group justify="space-between" align="flex-end">
               <Group gap="xs" align="flex-end">
                 <AddLink onAdd={(l) => setReply(append(reply, l))} />
@@ -503,6 +506,7 @@ export function Tasks() {
   const access = useAccess();
   const me = useMe();
   const tasks = useTasks();
+  const branches = useOpenBranches((tasks.data ?? []).map((t) => t.id));
   const dir = useDirectory();
   const [params, setParams] = useSearchParams();
   const [sort, setSort] = useState<SortKey>('updated');
@@ -590,6 +594,7 @@ export function Tasks() {
                   {t.series_id && <Badge size="sm" variant="light" color="indigo" leftSection={<IconRepeat size={10} />}>{t.occurrence_on && dayjs(t.occurrence_on).format('DD.MM')}</Badge>}
                   {stillOpen.has(t.id) && <Badge size="sm" variant="light" color="orange">גם הקודמת עוד פתוחה</Badge>}
                   {dir.catLabel(t.category_id) && <Badge size="sm" variant="light" color="cyan">{dir.catLabel(t.category_id)}</Badge>}
+                  {(branches.data?.get(t.id) ?? 0) > 0 && <Badge size="sm" variant="light" color="orange">{branches.data!.get(t.id)} {branches.data!.get(t.id) === 1 ? 'ענף' : 'ענפים'} בטיפול</Badge>}
                 </Group>
                 <Text size="xs" c="dimmed" lineClamp={1}>
                   {t.office_task_assignees.length ? `בטיפול של ${t.office_task_assignees.map(dir.nameOf).join(', ')}` : 'לא הועברה לטיפול'}
@@ -608,5 +613,82 @@ export function Tasks() {
       {adding && <TaskForm dir={dir} onClose={() => setAdding(false)} onSaved={(t, to) => { setAdding(false); setCreated({ task: t, to }); }} />}
       {current && <TaskView key={current.id} task={current} dir={dir} onClose={() => setParams({})} />}
     </Stack>
+  );
+}
+
+// Open branches per task, for the list (decision 142).
+function useOpenBranches(ids: string[]) {
+  return useQuery({
+    queryKey: ['office-task-branches', ids.join(',')], enabled: ids.length > 0,
+    queryFn: async () => new Map((must(await supabase.rpc('office_task_open_branches', { p_tasks: ids })) as { task_id: string; open: number }[]).map((r) => [r.task_id, r.open])),
+  });
+}
+
+// The replies as a tree (decision 142): answer any reply, and end a branch with "טופל".
+function Threads({ task, events, dir }: { task: OfficeTask; events: TaskEvent[]; dir: Directory }) {
+  const threads = buildThreads(events);
+  if (!threads.length) return null;
+  const open = openBranches(threads);
+  return (
+    <Stack gap="xs">
+      <Group gap="xs">
+        <Title order={5}>תגובות</Title>
+        {open > 0 ? <Badge color="orange" variant="light">{open} {open === 1 ? 'ענף' : 'ענפים'} בטיפול</Badge> : <Badge color="teal" variant="light">כל הענפים טופלו</Badge>}
+      </Group>
+      {threads.map((n) => <ThreadItem key={n.event.id} node={n} task={task} dir={dir} depth={0} />)}
+    </Stack>
+  );
+}
+
+function ThreadItem({ node, task, dir, depth }: { node: ThreadNode; task: OfficeTask; dir: Directory; depth: number }) {
+  const qc = useQueryClient();
+  const [answering, setAnswering] = useState<'reply' | 'resolve' | null>(null);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const e = node.event;
+  const name = (id: string | null) => (id ? dir.users.get(id)?.display_name ?? 'לא ידוע' : 'המערכת');
+  async function send() {
+    setBusy(true);
+    try {
+      must(await supabase.from('office_task_events').insert({ task_id: task.id, kind: answering, parent_id: e.id, body: text.trim() || null }));
+      setText(''); setAnswering(null);
+      await qc.invalidateQueries({ queryKey: ['office-task-events', task.id] });
+      await qc.invalidateQueries({ queryKey: ['office-task-branches'] });
+    } catch (err) { notifications.show({ color: 'red', message: (err as Error).message }); } finally { setBusy(false); }
+  }
+  return (
+    <Box style={depth ? { borderInlineStart: '2px solid var(--mantine-color-gray-3)', paddingInlineStart: 12, marginInlineStart: 6 } : undefined}>
+      <Paper withBorder p="xs" radius="md">
+        <Group justify="space-between" gap="xs" wrap="nowrap">
+          <Text size="sm"><b>{name(e.created_by)}</b> <Text span size="xs" c="dimmed">{new Date(e.created_at).toLocaleString('he-IL')}</Text></Text>
+          {node.open && <Badge size="xs" color="orange" variant="light">בטיפול</Badge>}
+        </Group>
+        {e.body && <LinkedText text={e.body} />}
+        <Group gap={4} mt={4}>
+          <Button size="compact-xs" variant="subtle" onClick={() => setAnswering(answering === 'reply' ? null : 'reply')}>תגובה</Button>
+          {!node.resolved && <Button size="compact-xs" variant="subtle" color="teal" leftSection={<IconCheck size={12} />} onClick={() => setAnswering(answering === 'resolve' ? null : 'resolve')}>טופל</Button>}
+        </Group>
+        {answering && (
+          <Stack gap={4} mt={4}>
+            <Textarea size="xs" autosize minRows={1} placeholder={answering === 'resolve' ? 'מה נעשה (לא חובה)' : 'תגובה'} value={text} onChange={(x) => setText(x.currentTarget.value)} />
+            <Group gap={4} justify="flex-end">
+              <Button size="compact-xs" variant="default" onClick={() => { setAnswering(null); setText(''); }}>ביטול</Button>
+              <Button size="compact-xs" color={answering === 'resolve' ? 'teal' : undefined} onClick={send} loading={busy} disabled={answering === 'reply' && !text.trim()}>
+                {answering === 'resolve' ? 'סימון כטופל' : 'שליחה'}
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Paper>
+      <Stack gap={6} mt={6}>
+        {node.children.map((c) => <ThreadItem key={c.event.id} node={c} task={task} dir={dir} depth={depth + 1} />)}
+        {node.resolved && (
+          <Box style={{ borderInlineStart: '2px solid var(--mantine-color-teal-4)', paddingInlineStart: 12, marginInlineStart: 6 }}>
+            <Text size="sm" c="teal"><IconCheck size={14} style={{ verticalAlign: 'middle' }} /> <b>טופל</b> · {name(node.resolved.created_by)} · <Text span size="xs" c="dimmed">{new Date(node.resolved.created_at).toLocaleString('he-IL')}</Text></Text>
+            {node.resolved.body && <LinkedText text={node.resolved.body} />}
+          </Box>
+        )}
+      </Stack>
+    </Box>
   );
 }

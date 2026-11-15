@@ -19,7 +19,27 @@ export interface OfficeTask {
   id: string; created_by: string; created_at: string; updated_at: string; trigger_id: string | null; subject: string; body: string | null;
   priority: Priority; status: TaskStatus; category_id?: string | null; series_id?: string | null; occurrence_on?: string | null; office_task_assignees: Assignee[]; office_task_links: TaskLink[];
 }
-export interface TaskEvent { id: string; task_id: string; kind: string; body: string | null; data: Record<string, unknown> | null; created_by: string | null; created_at: string }
+export interface TaskEvent { id: string; task_id: string; kind: string; body: string | null; data: Record<string, unknown> | null; created_by: string | null; created_at: string; parent_id?: string | null }
+
+// Replies as a tree (decision 142): a reply answers the task or another reply; "טופל" (resolve)
+// ends a branch. A branch is open while its last reply has nothing under it.
+export interface ThreadNode { event: TaskEvent; children: ThreadNode[]; resolved: TaskEvent | null; open: boolean }
+export function buildThreads(events: TaskEvent[]): ThreadNode[] {
+  const replies = events.filter((e) => e.kind === 'reply');
+  const kids = new Map<string, TaskEvent[]>();
+  for (const e of events) if ((e.kind === 'reply' || e.kind === 'resolve') && e.parent_id) kids.set(e.parent_id, [...(kids.get(e.parent_id) ?? []), e]);
+  const node = (e: TaskEvent): ThreadNode => {
+    const under = (kids.get(e.id) ?? []).sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const children = under.filter((x) => x.kind === 'reply').map(node);
+    const resolved = under.find((x) => x.kind === 'resolve') ?? null;
+    return { event: e, children, resolved, open: !under.length };
+  };
+  return replies.filter((e) => !e.parent_id).sort((a, b) => a.created_at.localeCompare(b.created_at)).map(node);
+}
+// Open branches under a node (or a whole task): replies with nothing under them.
+export function openBranches(nodes: ThreadNode[]): number {
+  return nodes.reduce((n, x) => n + (x.open ? 1 : 0) + openBranches(x.children), 0);
+}
 
 export type SortKey = 'updated' | 'created' | 'priority' | 'subject' | 'assignee' | 'trigger' | 'category';
 
@@ -57,6 +77,7 @@ export function describeEvent(e: TaskEvent, who: (a: Assignee) => string, link: 
   switch (e.kind) {
     case 'created': return 'פתח/ה את המשימה';
     case 'reply': return 'ענה/תה';
+    case 'resolve': return 'סימן/ה שטופל';
     case 'status': return `שינה/תה את המצב: ${STATUS_HE[d.from as TaskStatus] ?? d.from} ← ${STATUS_HE[d.to as TaskStatus] ?? d.to}`;
     case 'assign': return `העביר/ה לטיפול של ${who(d as unknown as Assignee)}`;
     case 'unassign': return `הוציא/ה מהטיפול את ${who(d as unknown as Assignee)}`;
