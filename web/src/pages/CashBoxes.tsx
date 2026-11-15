@@ -219,7 +219,10 @@ function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left
     const done: string[] = [];
     try {
       for (const p of parts) {
-        if (p.to === OFFICE) {
+        if (p.to === OFFICE && box.holder_party_id) {
+          // The office's money at the holder (STF fees, decision 146) moves to the office.
+          must(await supabase.rpc('cash_office_fee', { p_box: box.id, p_amount: Number(p.amount), p_uah: p.uah === '' ? null : Number(p.uah), p_on: sum.occurred_on, p_notes: null, p_parent: sum.id }));
+        } else if (p.to === OFFICE) {
           must(await supabase.from('cash_movements').insert({ box_id: box.id, occurred_on: sum.occurred_on, amount: -Number(p.amount), currency: sum.currency, kind: 'office_fee', party_name: 'המשרד', parent_id: sum.id }));
         } else {
           if (rate) must(await supabase.rpc('cash_pay_client_fx', { p_box: box.id, p_from: accountFor(p)!.id, p_amount: Number(p.amount), p_uah: p.uah === '' ? null : Number(p.uah), p_on: sum.occurred_on, p_notes: null, p_parent: sum.id }));
@@ -252,7 +255,7 @@ function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left
                     data={accountsOf(p.to).map((a) => ({ value: a.id, label: `${a.label} · ${money(a.balance, from as Currency)}` }))} />
                 : <Text size="xs" w={230} c={acc ? 'dimmed' : 'red'} mb={8}>{acc ? `${acc.label} · יתרה ${money(acc.balance, from as Currency)}` : accounts.isLoading ? 'בודק…' : `אין ללקוח כסף ב-${from} בקופה`}</Text>)}
               <NumberInput label={i === 0 ? `סכום (${sum.currency})` : undefined} w={140} min={0} thousandSeparator="," value={p.amount} onChange={(x) => set(i, { amount: x === '' ? '' : Number(x) })} />
-              {rate && p.to !== OFFICE && <NumberInput label={i === 0 ? 'הומר (₴)' : undefined} w={140} min={0} thousandSeparator="," decimalScale={2} value={p.uah}
+              {rate && (p.to !== OFFICE || !!box.holder_party_id) && <NumberInput label={i === 0 ? 'הומר (₴)' : undefined} w={140} min={0} thousandSeparator="," decimalScale={2} value={p.uah}
                 placeholder={Number(p.amount) > 0 ? String(Math.round(Number(p.amount) * rate * 100) / 100) : ''} onChange={(x) => set(i, { uah: x === '' ? '' : Number(x) })} />}
               {rate && p.to !== OFFICE && p.uah !== '' && Number(p.amount) > 0 && <Text size="xs" c="dimmed" w={110} mb={8}>נשאר לו {money(Math.round((Number(p.uah) / rate - Number(p.amount)) * 100) / 100, sum.currency as Currency)}</Text>}
               <ActionIcon variant="subtle" color="red" mb={4} onClick={() => setParts((ps) => ps.filter((_, j) => j !== i))} aria-label="הסרה"><IconTrash size={16} /></ActionIcon>
@@ -420,6 +423,7 @@ export function CashBoxes() {
           </Paper>}
 
           {box?.holder_party_id && box.country_code === 'UA' && <YarachDebt canDraft={canWrite} />}
+          {box?.is_office && <OfficeAtManagers />}
 
           <Paper withBorder p="md">
             <Group justify="space-between" mb="sm">
@@ -553,6 +557,32 @@ function YarachDebt({ canDraft }: { canDraft: boolean }) {
           ))}</Table.Tbody>
         </Table>
       )}
+    </Paper>
+  );
+}
+
+// What managers hold for the office (decision 146): Odessa's STF fees, credited to the office
+// on every fee line and left with Gershon until he sends them to us.
+function OfficeAtManagers() {
+  const q = useQuery({
+    queryKey: ['office-at-managers'],
+    queryFn: async () => {
+      const office = must(await supabase.rpc('office_party')) as string | null;
+      if (!office) return [];
+      const accs = must(await supabase.from('accounts').select('id, currency, holder:parties!accounts_holder_party_id_fkey(display_name)').eq('kind', 'manager_cash').eq('beneficiary_party_id', office)) as unknown as { id: string; currency: string; holder: { display_name: string } }[];
+      if (!accs.length) return [];
+      const bal = new Map((must(await supabase.from('account_balances').select('account_id, balance').in('account_id', accs.map((a) => a.id))) as { account_id: string; balance: number }[]).map((b) => [b.account_id, Number(b.balance)]));
+      return accs.map((a) => ({ who: a.holder.display_name, currency: a.currency, balance: bal.get(a.id) ?? 0 })).filter((a) => Math.abs(a.balance) > 0.005);
+    },
+  });
+  if (!q.data?.length) return null;
+  return (
+    <Paper withBorder p="md">
+      <Title order={4} mb="xs">מגיע למשרד ממנהלים (דמי ניהול STF)</Title>
+      <Text size="xs" c="dimmed" mb="xs">כל שורת דמי ניהול באודסה נרשמת גם כזכות של המשרד, והכסף נשאר אצל גרשון עד שהוא מעביר אותו. בחלוקה של סכום מגרשון, השורה "המשרד (עמלות)" מורידה מכאן.</Text>
+      <Table fz="sm"><Table.Tbody>{q.data.map((a) => (
+        <Table.Tr key={a.who + a.currency}><Table.Td>אצל {a.who}</Table.Td><Table.Td><Text fw={600} size="sm">{money(a.balance, a.currency as Currency)}</Text></Table.Td></Table.Tr>
+      ))}</Table.Tbody></Table>
     </Paper>
   );
 }
