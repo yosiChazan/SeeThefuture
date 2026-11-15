@@ -1,9 +1,9 @@
-import { Alert, Anchor, Badge, Button, FileInput, Group, List, Modal, Paper, Select, Stack, Switch, Table, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Chip, FileInput, Group, List, Modal, Paper, Select, Stack, Switch, Table, Text, Title } from '@mantine/core';
 import { IconBrandDropbox, IconFileSpreadsheet, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { CountryBadge, QueryState } from '../components/common';
 import { DropboxPull } from '../components/DropboxPull';
 import { DeletePending } from '../components/DeletePending';
@@ -93,6 +93,9 @@ function NewReport({ onClose }: { onClose: () => void }) {
   );
 }
 
+// The manager a source belongs to: the part of its name before " · ".
+const managerOf = (sourceName: string) => sourceName.split(' · ')[0].trim();
+
 export function Intake() {
   const access = useAccess();
   const batches = useBatches();
@@ -103,6 +106,10 @@ export function Intake() {
   // rejected and voided ones on another (decision 59).
   const [showPosted, setShowPosted] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
+  // Which manager's reports (decision 144): "ויטאלי · דוח שכירות PLC" belongs to ויטאלי. Kept in the address.
+  const [params, setParams] = useSearchParams();
+  const who = params.get('who') ?? '';
+  const setWho = (v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set('who', v); else n.delete('who'); return n; }, { replace: true });
   const sources = useSources();
   const canAdd = access.countries.some((c) => access.canEdit(c));
   // The Dropbox connection is readable by admins only (SPEC decision 53).
@@ -120,7 +127,9 @@ export function Intake() {
         </Group>
       </Group>
       <Text c="dimmed" size="sm">דוח שנקלט נבדק כאן לפני שהוא נרשם בכרטיסי החשבון. רק עובד עם הרשאת כספים מאשר רישום.</Text>
-      <QueryState q={batches}>{(all) => {
+      <QueryState q={batches}>{(everything) => {
+        const managers = [...new Set(everything.map((b) => managerOf(b.source.name)))].sort((a, b) => a.localeCompare(b, 'he'));
+        const all = who ? everything.filter((b) => managerOf(b.source.name) === who) : everything;
         const isPending = (b: (typeof all)[number]) => b.status === 'in_review' || b.status === 'parsed';
         const isClosed = (b: (typeof all)[number]) => b.status === 'rejected' || !!b.voided_at;
         const pending = all.filter(isPending).length;
@@ -129,6 +138,17 @@ export function Intake() {
         const bs = all.filter((b) => isPending(b) || (showPosted && b.status === 'committed' && !b.voided_at) || (showClosed && isClosed(b)));
         return (
         <Paper withBorder p="sm">
+          {managers.length > 1 && (
+            <Chip.Group value={who || 'all'} onChange={(v) => setWho(v === 'all' ? '' : String(v))}>
+              <Group gap={6} mb="sm">
+                <Chip value="all" size="sm">הכל</Chip>
+                {managers.map((m) => {
+                  const waiting = everything.filter((b) => managerOf(b.source.name) === m && isPending(b)).length;
+                  return <Chip key={m} value={m} size="sm">{m}{waiting ? ` (${waiting})` : ''}</Chip>;
+                })}
+              </Group>
+            </Chip.Group>
+          )}
           <Group justify="space-between" mb="xs">
             <Badge size="lg" variant="light" color={pending ? 'orange' : 'teal'}>{pending ? `ממתינים לאישור: ${pending}` : 'אין דוחות שממתינים לאישור'}</Badge>
             <Group gap="lg">
@@ -156,7 +176,7 @@ export function Intake() {
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
-          ) : <Text c="dimmed" size="sm">{all.length ? 'אין דוחות שממתינים לאישור. להצגת הדוחות שנרשמו: המתג למעלה.' : 'עוד לא נקלטו דוחות.'}</Text>}
+          ) : <Text c="dimmed" size="sm">{all.length ? 'אין דוחות שממתינים לאישור. להצגת הדוחות שנרשמו: המתג למעלה.' : who ? `אין דוחות של ${who}.` : 'עוד לא נקלטו דוחות.'}</Text>}
         </Paper>
         );
       }}</QueryState>
