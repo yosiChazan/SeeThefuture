@@ -21,9 +21,29 @@ import type { Account, Country, Currency } from '../lib/types';
 // report line does (app.post_import_entry). Drafts can be deleted; posted ones only voided.
 
 const INCOME = ['rent', 'hotel_share', 'deposit', 'other'];
-const EXPENSE = ['mgmt_fee', 'utilities', 'building_fees', 'repair', 'legal_fees', 'tax_withheld', 'vat', 'brokerage', 'commission', 'deposit', 'other'];
+const EXPENSE = ['transfer', 'mgmt_fee', 'utilities', 'building_fees', 'repair', 'legal_fees', 'tax_withheld', 'vat', 'brokerage', 'commission', 'deposit', 'other'];
 const CURRENCIES: Currency[] = ['USD', 'EUR', 'UAH', 'RON', 'GEL', 'ILS'];
 const CURRENCY_OF: Record<Country, Currency> = { UA: 'USD', RO: 'RON', GE: 'USD', GR: 'EUR' };
+
+// A transfer to the client out of a box's money (decision 152): once posted, it is also the box's
+// "to the client" line, as a payment made from the box is (decision 113), so the box counts it.
+export async function linkTransferToBox(txnId: string) {
+  const rows = must(await supabase.from('entries').select('amount, currency, account:accounts(kind, holder_party_id, beneficiary_party_id), transaction:transactions!inner(occurred_on, description, category, status)')
+    .eq('transaction_id', txnId)) as unknown as { amount: number; currency: string; account: { kind: string; holder_party_id: string; beneficiary_party_id: string } | null; transaction: { occurred_on: string; description: string | null; category: string; status: string } }[];
+  const out = rows.filter((x) => Number(x.amount) < 0 && x.account?.kind === 'manager_cash');
+  const to = rows.find((x) => Number(x.amount) > 0);
+  if (!out.length || !to || rows[0].transaction.category !== 'transfer' || rows[0].transaction.status !== 'posted') return;
+  const holder = out[0].account!.holder_party_id;
+  const boxes = must(await supabase.from('cash_boxes').select('id, holder_party_id, linked_manager_ids')) as { id: string; holder_party_id: string | null; linked_manager_ids: string[] }[];
+  const box = boxes.find((b) => b.holder_party_id === holder || b.linked_manager_ids.includes(holder));
+  if (!box) return;
+  const exists = must(await supabase.from('cash_movements').select('id').eq('transaction_id', txnId).limit(1)) as unknown[];
+  if (exists.length) return;
+  must(await supabase.from('cash_movements').insert({
+    box_id: box.id, occurred_on: rows[0].transaction.occurred_on, amount: out.reduce((a, x) => a + Number(x.amount), 0), currency: out[0].currency,
+    kind: 'to_client', party_id: to.account?.beneficiary_party_id ?? null, notes: rows[0].transaction.description, transaction_id: txnId,
+  }));
+}
 
 // A movement entered by hand on this property (no import batch), waiting or posted.
 interface Draft {
@@ -92,13 +112,14 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
   }, [accounts, managers.data, local.data, editing]);
 
   // A conversion being edited: what went out (the negative lines) and what came in.
-  const fxOut = editing?.category === 'fx' ? editing.lines.filter((l) => l.amount < 0) : [];
-  const fxIn = editing?.category === 'fx' ? editing.lines.filter((l) => l.amount > 0) : [];
+  const twoSided = (c?: string | null) => c === 'fx' || c === 'transfer';
+  const fxOut = twoSided(editing?.category) ? editing!.lines.filter((l) => l.amount < 0) : [];
+  const fxIn = twoSided(editing?.category) ? editing!.lines.filter((l) => l.amount > 0) : [];
   const sumOf = (ls: { amount: number }[]) => Math.round(Math.abs(ls.reduce((a, l) => a + l.amount, 0)) * 100) / 100;
-  const [v, setV] = useState(editing?.category === 'fx' ? {
-    on: editing.occurred_on as string | null, period: editing.period as string | null, dir: 'fx' as 'in' | 'out' | 'fx',
-    category: 'fx' as string | null, amount: sumOf(fxOut) as number | '', currency: (fxOut[0]?.currency ?? editing.currency) as Currency, where: (fxOut[0]?.where ?? editing.where) as string | null,
-    description: editing.description ?? '', post: false,
+  const [v, setV] = useState(twoSided(editing?.category) ? {
+    on: editing!.occurred_on as string | null, period: editing!.period as string | null, dir: (editing!.category === 'fx' ? 'fx' : 'out') as 'in' | 'out' | 'fx',
+    category: editing!.category as string | null, amount: sumOf(fxOut) as number | '', currency: (fxOut[0]?.currency ?? editing!.currency) as Currency, where: (fxOut[0]?.where ?? editing!.where) as string | null,
+    description: editing!.description ?? '', post: false,
   } : editing ? {
     on: editing.occurred_on as string | null, period: editing.period as string | null, dir: (editing.total < 0 ? 'out' : 'in') as 'in' | 'out' | 'fx',
     category: editing.category as string | null, amount: Math.abs(editing.total) as number | '', currency: editing.currency, where: editing.where as string | null,
@@ -114,11 +135,14 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
     toAmount: sumOf(fxIn) as number | '', toCurrency: fxIn[0].currency, toWhere: (fxIn[0].where !== fxOut[0]?.where ? fxIn[0].where : null) as string | null,
   } : { toAmount: '' as number | '', toCurrency: (CURRENCY_OF[country] === 'USD' ? 'UAH' : 'USD') as Currency, toWhere: null as string | null });
   const isFx = v.dir === 'fx';
+  // A transfer to the client (decision 152): out of where the money is, into the client's bank.
+  const isTransfer = v.dir === 'out' && v.category === 'transfer';
+  const [toWhere, setToWhere] = useState<string | null>(editing?.category === 'transfer' ? fxIn[0]?.where ?? 'client_bank|beneficiary' : 'client_bank|beneficiary');
   const rate = isFx && Number(v.amount) > 0 && Number(fx.toAmount) > 0 ? Number(v.amount) / Number(fx.toAmount) : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const cats = (v.dir === 'in' ? INCOME : EXPENSE).map((c) => ({ value: c, label: CATEGORY_HE[c] ?? c }));
-  const ready = v.on && v.period && v.amount && v.where && (isFx ? Number(fx.toAmount) > 0 && fx.toCurrency !== v.currency : v.category);
+  const cats = (v.dir === 'in' ? INCOME : EXPENSE).map((c) => ({ value: c, label: c === 'transfer' ? 'העברה ללקוח' : CATEGORY_HE[c] ?? c }));
+  const ready = v.on && v.period && v.amount && v.where && (isFx ? Number(fx.toAmount) > 0 && fx.toCurrency !== v.currency : v.category) && (!isTransfer || (!!toWhere && toWhere !== v.where));
 
   // Saves a new movement from the form (a conversion: two entries), waiting or posted.
   async function create(post: boolean): Promise<string> {
@@ -138,6 +162,16 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
         });
         must(await side(-Math.abs(Number(v.amount)), v.currency, kind, holder, null));
         must(await side(Math.abs(Number(fx.toAmount)), fx.toCurrency, toKind, toHolder, r4));
+      } else if (isTransfer) {
+        const [toKind, toHolder] = toWhere!.split('|');
+        txn = (must(await supabase.from('transactions').insert({ country_code: country, occurred_on: v.on, period: v.period, category: 'transfer', description: v.description.trim() || 'העברה ללקוח', status: 'draft' })
+          .select('id').single()) as { id: string }).id;
+        const side = (amt: number, k: string, h: string) => supabase.rpc('post_import_entry', {
+          p_txn: txn, p_property: propertyId, p_source_holder: h === 'beneficiary' ? null : h, p_country: country, p_on: v.on,
+          e: { amount: amt, currency: v.currency, memo: v.description.trim() || null, account: { kind: k, holder: h === 'beneficiary' ? 'beneficiary' : 'source' } },
+        });
+        must(await side(-Math.abs(Number(v.amount)), kind, holder));
+        must(await side(Math.abs(Number(v.amount)), toKind, toHolder));
       } else {
       txn = (must(await supabase.from('transactions').insert({ country_code: country, occurred_on: v.on, period: v.period, category: v.category, description: v.description.trim() || null, status: 'draft' })
         .select('id').single()) as { id: string }).id;
@@ -146,7 +180,10 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
         e: { amount, currency: v.currency, memo: v.description.trim() || null, account: { kind, holder: holder === 'beneficiary' ? 'beneficiary' : 'source' } },
       }));
       }
-      if (post) must(await supabase.from('transactions').update({ status: 'posted' }).eq('id', txn));
+      if (post) {
+        must(await supabase.from('transactions').update({ status: 'posted' }).eq('id', txn));
+        await linkTransferToBox(txn!);
+      }
       return txn!;
     } catch (e) {
       if (txn) await supabase.from('transactions').delete().eq('id', txn);
@@ -162,9 +199,10 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
       // A conversion, or an entry turned into one or out of one (decision 151): the new one is
       // saved as the old one was (waiting, or posted), then the old one goes (deleted while
       // waiting; voided once posted, so both stay in the history).
-      if (editing && (isFx || editing.category === 'fx')) {
+      if (editing && (isFx || isTransfer || twoSided(editing.category))) {
         const posted = editing.status === 'posted';
         const fresh = await create(posted);
+        if (posted) await supabase.from('cash_movements').delete().eq('transaction_id', editing.id);   // its box line, if any
         const gone = posted ? await supabase.from('transactions').update({ status: 'void' }).eq('id', editing.id).select('id')
           : await supabase.from('transactions').delete().eq('id', editing.id).select('id');
         if (gone.error || !gone.data?.length) {
@@ -210,6 +248,10 @@ function NewEntry({ propertyId, country, accounts, editing, onClose }: { propert
           <Select label="מטבע" data={CURRENCIES} value={v.currency} allowDeselect={false} onChange={(x) => x && setV({ ...v, currency: x as Currency })} />
           <Select label="אצל מי הכסף" required data={holders} value={v.where} onChange={(x) => setV({ ...v, where: x })} placeholder="בחירת חשבון" />
         </SimpleGrid>
+        {isTransfer && (
+          <Select label="לאן (קופת הלקוח)" required data={holders} value={toWhere} onChange={setToWhere}
+            description="ההעברה יוצאת מ'אצל מי הכסף' ונכנסת לכאן, באותו סכום ובאותו מטבע. כשהכסף יוצא מקופה (למשל מגרשון), היא נרשמת גם בקופה כ'ללקוח'" />
+        )}
         {isFx && (
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             <NumberInput label="התקבל (נכנס)" required min={0} thousandSeparator="," decimalScale={2} value={fx.toAmount} onChange={(x) => setFx({ ...fx, toAmount: x === '' ? '' : Number(x) })}
@@ -244,6 +286,7 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
   const refresh = async () => { await qc.invalidateQueries({ queryKey: ['property-drafts', propertyId] }); await qc.invalidateQueries({ queryKey: ['property-entries', propertyId] }); };
   const approve = async (d: Draft) => {
     const r = await supabase.from('transactions').update({ status: 'posted' }).eq('id', d.id);
+    if (!r.error && d.category === 'transfer') { try { await linkTransferToBox(d.id); } catch (e) { notifications.show({ color: 'orange', message: `נרשם, אבל לא נוסף לקופה: ${(e as Error).message}` }); } }
     notifications.show(r.error ? { color: 'red', message: r.error.message } : { color: 'teal', message: 'התנועה אושרה ונרשמה' });
     await refresh();
   };
