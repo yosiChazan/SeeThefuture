@@ -339,7 +339,8 @@ export function useCanEditEntry() {
   const access = useAccess();
   const me = useMe();
   return (e: EntryRow) => e.transaction.import_batch_id === null && e.transaction.status === 'posted'
-    && !(e.transaction.category === 'transfer' && (e.transaction.description ?? '').startsWith('העברה ללקוח'))
+    // A payment made from a box ("העברה ללקוח מקופת…") is edited in the box; one entered on a card here (decision 152).
+    && !(e.transaction.category === 'transfer' && (e.transaction.description ?? '').startsWith('העברה ללקוח מ'))
     && (access.isAdmin || (!!me && e.transaction.created_by === me && !!e.transaction.country_code && access.canApprove(e.transaction.country_code as Country)));
 }
 
