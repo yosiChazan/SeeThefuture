@@ -1,4 +1,8 @@
-import { Affix, Button, Checkbox, Group, Paper, SegmentedControl, Select, Stack, Table, Text } from '@mantine/core';
+import { Affix, Alert, Button, Checkbox, Group, Modal, Paper, SegmentedControl, Select, Stack, Switch, Table, Text, TextInput } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAccess } from '../lib/access';
+import { must, supabase } from '../lib/supabase';
 import { useState } from 'react';
 import { ACCOUNT_KIND_HE, categoryLabel, amountLabel, date, money } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
@@ -47,6 +51,84 @@ function MarkBox({ m, order, id }: { m: Marks; order: string[]; id: string }) {
     onClick={(ev) => { ev.stopPropagation(); m.toggle(order, id, ev.shiftKey); }} /></Table.Td>;
 }
 
+// Editing (an entry made by hand) and voiding (any posted transaction, by finance; decision 153).
+type Edit = { can: (e: EntryRow) => boolean; open: (transactionId: string) => void };
+function Actions({ e, edit, onVoid }: { e: EntryRow; edit?: Edit; onVoid: (e: EntryRow) => void }) {
+  const access = useAccess();
+  const canVoid = access.isAdmin || (!!e.transaction.country_code && access.canApprove(e.transaction.country_code as never));
+  return (
+    <Table.Td style={{ whiteSpace: 'nowrap' }}>
+      {edit?.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}
+      {canVoid && <Button size="compact-xs" variant="subtle" color="red" onClick={() => onVoid(e)}>ביטול</Button>}
+    </Table.Td>
+  );
+}
+
+const WORD = 'מחיקה';
+function VoidTxn({ e, onClose }: { e: EntryRow; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState('');
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function go() {
+    setBusy(true); setError(null);
+    const { error: err } = await supabase.rpc('void_transaction', { p_txn: e.transaction.id, p_reason: reason });
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    notifications.show({ color: 'teal', message: 'התנועה בוטלה. היא נשארת בהיסטוריה כמבוטלת' });
+    await qc.invalidateQueries();
+    onClose();
+  }
+  return (
+    <Modal opened onClose={onClose} title="ביטול תנועה">
+      <Stack>
+        <Text size="sm">{date(e.transaction.occurred_on)} · {typeOf(e)} · {descOf(e)}</Text>
+        <Text size="sm">כל השורות של התנועה (בכל החשבונות ואצל כל הבעלים) יבוטלו, וגם השורה שלה בקופה, אם יש. התנועה נשארת בהיסטוריה כמבוטלת, עם מי ביטל, מתי ולמה.</Text>
+        <TextInput label="סיבה" required placeholder="למשל: נרשם פעמיים" value={reason} onChange={(x) => setReason(x.currentTarget.value)} />
+        <TextInput label={`לאישור, כתבו "${WORD}"`} value={typed} onChange={(x) => setTyped(x.currentTarget.value)} />
+        {error && <Alert color="red">{error}</Alert>}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>חזרה</Button>
+          <Button color="red" onClick={go} loading={busy} disabled={typed.trim() !== WORD || !reason.trim()}>ביטול התנועה</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+// Voided transactions of these accounts, struck through, with who, when and why.
+function Voided({ accountIds }: { accountIds: string[] }) {
+  const q = useQuery({
+    queryKey: ['voided', accountIds],
+    queryFn: async () => must(await supabase.from('entries').select('id, amount, currency, memo, transaction:transactions!inner(id, occurred_on, category, description, status, voided_at, void_reason, voided_by)')
+      .in('account_id', accountIds).eq('transaction.status', 'void').order('id').limit(1000)) as unknown as
+      { id: string; amount: number; currency: string; memo: string | null; transaction: { id: string; occurred_on: string; category: string; description: string | null; voided_at: string | null; void_reason: string | null } }[],
+  });
+  const rows = [...(q.data ?? [])].sort((a, b) => b.transaction.occurred_on.localeCompare(a.transaction.occurred_on));
+  return (
+    <Paper withBorder p="sm">
+      <Text fw={600} size="sm" mb="xs">תנועות שבוטלו ({rows.length})</Text>
+      {!rows.length ? <Text size="sm" c="dimmed">{q.isLoading ? 'טוען…' : 'אין'}</Text> : (
+        <Table.ScrollContainer minWidth={600}>
+          <Table fz="sm" verticalSpacing={4}>
+            <Table.Thead><Table.Tr><Table.Th>תאריך</Table.Th><Table.Th>תיאור</Table.Th><Table.Th>סכום</Table.Th><Table.Th>בוטלה</Table.Th><Table.Th>סיבה</Table.Th></Table.Tr></Table.Thead>
+            <Table.Tbody>{rows.map((e) => (
+              <Table.Tr key={e.id} c="dimmed">
+                <Table.Td td="line-through">{date(e.transaction.occurred_on)}</Table.Td>
+                <Table.Td td="line-through"><Text size="sm" lineClamp={1}>{e.memo ?? e.transaction.description ?? ''}</Text></Table.Td>
+                <Table.Td td="line-through" style={{ whiteSpace: 'nowrap' }}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
+                <Table.Td>{e.transaction.voided_at ? date(e.transaction.voided_at.slice(0, 10)) : '—'}</Table.Td>
+                <Table.Td>{e.transaction.void_reason ?? ''}</Table.Td>
+              </Table.Tr>
+            ))}</Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
+    </Paper>
+  );
+}
+
 const typeOf = (e: EntryRow) => categoryLabel(e.transaction.category, e.property?.building?.city?.name_en);
 const descOf = (e: EntryRow) => e.memo ?? e.transaction.description ?? '';
 
@@ -66,6 +148,8 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
   const [view, setView] = useState<'date' | 'account'>('date');
   const [sortA, setSortA] = useState<LedgerSort>({ key: 'date', desc: false });
   const marks = useMarks();
+  const [voiding, setVoiding] = useState<EntryRow | null>(null);
+  const [showVoid, setShowVoid] = useState(false);
   const marked = entries.filter((e) => marks.selected.has(e.id));
   const sums = totalsByCurrency(marked.map((e) => ({ amount: Number(e.amount), currency: e.currency })));
   const shown = accounts.filter((a) => entries.some((e) => e.account_id === a.id));
@@ -79,9 +163,12 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
           data={[{ value: 'date', label: 'לפי תאריך' }, { value: 'account', label: 'לפי קופה' }]} />
         <SegmentedControl value={range} onChange={(v) => setRange(v as '2026' | 'all')} w="fit-content"
           data={[{ value: '2026', label: 'מתחילת 2026' }, { value: 'all', label: 'כל התנועות' }]} />
+        <Switch size="sm" label="הצגת מבוטלות" checked={showVoid} onChange={(x) => setShowVoid(x.currentTarget.checked)} />
       </Group>
+      {voiding && <VoidTxn e={voiding} onClose={() => setVoiding(null)} />}
       {!shown.length && <Text c="dimmed" size="sm">עוד אין תנועות. הן ייכנסו עם קליטת הדוחות מהמנהלים המקומיים.</Text>}
-      {view === 'date' && !!shown.length && <ByDate accounts={shown} entries={entries} from={range === '2026' ? FROM : null} property={property} edit={edit} sources={showSrc ? sources.data : undefined} marks={marks} />}
+      {view === 'date' && !!shown.length && <ByDate accounts={shown} entries={entries} from={range === '2026' ? FROM : null} property={property} edit={edit} sources={showSrc ? sources.data : undefined} marks={marks} onVoid={setVoiding} />}
+      {showVoid && <Voided accountIds={accounts.map((a) => a.id)} />}
       {marked.length > 0 && (
         <Affix position={{ bottom: 16, left: 16, right: 16 }}>
           <Paper withBorder shadow="md" p="xs" radius="md" maw={640} mx="auto">
@@ -112,7 +199,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing={4} striped>
                 <Table.Thead>
-                  <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sortA} set={setSortA} w={100}>תאריך</SortTh><SortTh k="type" sort={sortA} set={setSortA} w={110}>סוג</SortTh><SortTh k="desc" sort={sortA} set={setSortA}>תיאור</SortTh>{showSrc && <SortTh k="source" sort={sortA} set={setSortA} w={70}>מקור</SortTh>}<SortTh k="amount" sort={sortA} set={setSortA} w={120}>סכום</SortTh><Table.Th w={130}>{label} מצטבר</Table.Th>{edit && <Table.Th w={60} />}</Table.Tr>
+                  <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sortA} set={setSortA} w={100}>תאריך</SortTh><SortTh k="type" sort={sortA} set={setSortA} w={110}>סוג</SortTh><SortTh k="desc" sort={sortA} set={setSortA}>תיאור</SortTh>{showSrc && <SortTh k="source" sort={sortA} set={setSortA} w={70}>מקור</SortTh>}<SortTh k="amount" sort={sortA} set={setSortA} w={120}>סכום</SortTh><Table.Th w={130}>{label} מצטבר</Table.Th><Table.Th w={110} /></Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {range === '2026' && (
@@ -122,7 +209,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                       <Table.Td colSpan={showSrc ? 3 : 2}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
                       <Table.Td />
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
-                      {edit && <Table.Td />}
+                      <Table.Td />
                     </Table.Tr>
                   )}
                   {sorted.map((e) => {
@@ -135,7 +222,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                         {showSrc && <Table.Td>{sources.data?.get(e.transaction.id) && <SourceBadge src={sources.data.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                         <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(totals.get(e.id) ?? 0, a.currency)}</Table.Td>
-                        {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
+                        <Actions e={e} edit={edit} onVoid={setVoiding} />
                       </Table.Tr>
                     );
                   })}
@@ -152,9 +239,9 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
 const accountName = (a: Account, property: boolean) =>
   `${ACCOUNT_KIND_HE[a.kind] ?? a.kind} · ${a.holder.display_name}${property ? ` · של ${a.beneficiary.display_name}` : ''}`;
 
-function ByDate({ accounts, entries, from, property, edit, sources, marks }: {
+function ByDate({ accounts, entries, from, property, edit, sources, marks, onVoid }: {
   accounts: Account[]; entries: EntryRow[]; from: string | null; property: boolean; edit?: { can: (e: EntryRow) => boolean; open: (transactionId: string) => void };
-  sources?: Map<string, TxnSource>; marks: Marks;
+  sources?: Map<string, TxnSource>; marks: Marks; onVoid: (e: EntryRow) => void;
 }) {
   const showSrc = !!sources;
   const [account, setAccount] = useState<string | null>(null);
@@ -181,7 +268,7 @@ function ByDate({ accounts, entries, from, property, edit, sources, marks }: {
       <Table.ScrollContainer minWidth={700}>
         <Table verticalSpacing={4} striped>
           <Table.Thead>
-            <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sort} set={setSort} w={100}>תאריך</SortTh><SortTh k="type" sort={sort} set={setSort} w={110}>סוג</SortTh><SortTh k="desc" sort={sort} set={setSort}>תיאור</SortTh><SortTh k="account" sort={sort} set={setSort} w={200}>קופה</SortTh>{showSrc && <SortTh k="source" sort={sort} set={setSort} w={70}>מקור</SortTh>}<SortTh k="currency" sort={sort} set={setSort} w={70}>מטבע</SortTh><SortTh k="amount" sort={sort} set={setSort} w={120}>סכום</SortTh>{edit && <Table.Th w={60} />}</Table.Tr>
+            <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sort} set={setSort} w={100}>תאריך</SortTh><SortTh k="type" sort={sort} set={setSort} w={110}>סוג</SortTh><SortTh k="desc" sort={sort} set={setSort}>תיאור</SortTh><SortTh k="account" sort={sort} set={setSort} w={200}>קופה</SortTh>{showSrc && <SortTh k="source" sort={sort} set={setSort} w={70}>מקור</SortTh>}<SortTh k="currency" sort={sort} set={setSort} w={70}>מטבע</SortTh><SortTh k="amount" sort={sort} set={setSort} w={120}>סכום</SortTh><Table.Th w={110} /></Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {rows.map((e) => {
@@ -196,7 +283,7 @@ function ByDate({ accounts, entries, from, property, edit, sources, marks }: {
                   {showSrc && <Table.Td>{sources?.get(e.transaction.id) && <SourceBadge src={sources.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                   <Table.Td>{e.currency}</Table.Td>
                   <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
-                  {edit && <Table.Td>{edit.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}</Table.Td>}
+                  <Actions e={e} edit={edit} onVoid={onVoid} />
                 </Table.Tr>
               );
             })}
