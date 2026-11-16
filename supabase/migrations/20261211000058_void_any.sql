@@ -1,5 +1,5 @@
 -- Any posted transaction can be voided from a ledger (SPEC decision 153): finance (or an admin)
--- types "מחיקה" to confirm and may give a reason. The transaction stays, marked void, with who
+-- types "מחיקה" to confirm and must give a reason. The transaction stays, marked void, with who
 -- voided it, when and why, and the ledgers can show it struck through. A transaction a box line
 -- points to (a payment to a client, a conversion, the office's fees) loses that line too, as
 -- removing it from the box does.
@@ -16,6 +16,7 @@ begin
   select * into t from app.transactions where id = p_txn for update;
   if t.id is null then raise exception 'no such transaction'; end if;
   if t.status <> 'posted' then raise exception 'only a posted transaction is voided (this one is %)', t.status; end if;
+  if coalesce(trim(p_reason), '') = '' then raise exception 'a reason is required to void a transaction'; end if;
   if not (app.is_admin() or app.can_approve_country(t.country_code)) then
     raise exception 'only finance can void a transaction' using errcode = '42501';
   end if;

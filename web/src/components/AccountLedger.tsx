@@ -85,12 +85,12 @@ function VoidTxn({ e, onClose }: { e: EntryRow; onClose: () => void }) {
       <Stack>
         <Text size="sm">{date(e.transaction.occurred_on)} · {typeOf(e)} · {descOf(e)}</Text>
         <Text size="sm">כל השורות של התנועה (בכל החשבונות ואצל כל הבעלים) יבוטלו, וגם השורה שלה בקופה, אם יש. התנועה נשארת בהיסטוריה כמבוטלת, עם מי ביטל, מתי ולמה.</Text>
-        <TextInput label="סיבה" placeholder="למשל: נרשם פעמיים" value={reason} onChange={(x) => setReason(x.currentTarget.value)} />
+        <TextInput label="סיבה" required placeholder="למשל: נרשם פעמיים" value={reason} onChange={(x) => setReason(x.currentTarget.value)} />
         <TextInput label={`לאישור, כתבו "${WORD}"`} value={typed} onChange={(x) => setTyped(x.currentTarget.value)} />
         {error && <Alert color="red">{error}</Alert>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>חזרה</Button>
-          <Button color="red" onClick={go} loading={busy} disabled={typed.trim() !== WORD}>ביטול התנועה</Button>
+          <Button color="red" onClick={go} loading={busy} disabled={typed.trim() !== WORD || !reason.trim()}>ביטול התנועה</Button>
         </Group>
       </Stack>
     </Modal>
