@@ -290,11 +290,28 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
     notifications.show(r.error ? { color: 'red', message: r.error.message } : { color: 'teal', message: 'התנועה אושרה ונרשמה' });
     await refresh();
   };
-  const remove = (d: Draft) => modals.openConfirmModal({
-    title: 'מחיקת תנועה שלא אושרה', children: <Text size="sm">{date(d.occurred_on)} · {CATEGORY_HE[d.category] ?? d.category}</Text>,
-    labels: { confirm: 'מחיקה', cancel: 'ביטול' }, confirmProps: { color: 'red' },
-    onConfirm: async () => { const r = await supabase.from('transactions').delete().eq('id', d.id); if (r.error) notifications.show({ color: 'red', message: r.error.message }); await refresh(); },
-  });
+  // Deleting a waiting movement asks for the word "מחיקה" (decision 153).
+  const remove = (d: Draft) => {
+    let typed = '';
+    const id = modals.open({
+      title: 'מחיקת תנועה שלא אושרה',
+      children: (
+        <Stack>
+          <Text size="sm">{date(d.occurred_on)} · {CATEGORY_HE[d.category] ?? d.category}</Text>
+          <TextInput label='לאישור, כתבו "מחיקה"' onChange={(e) => { typed = e.currentTarget.value; }} />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => modals.close(id)}>חזרה</Button>
+            <Button color="red" onClick={async () => {
+              if (typed.trim() !== 'מחיקה') { notifications.show({ color: 'orange', message: 'כדי למחוק צריך לכתוב "מחיקה"' }); return; }
+              const r = await supabase.from('transactions').delete().eq('id', d.id);
+              if (r.error) notifications.show({ color: 'red', message: r.error.message });
+              modals.close(id); await refresh();
+            }}>מחיקה</Button>
+          </Group>
+        </Stack>
+      ),
+    });
+  };
   const all = drafts.data ?? [];
   const list = all.filter((d) => d.status === 'draft');
   // Who may edit (decision 119): its author or an admin; a posted one is voided and re-entered,
