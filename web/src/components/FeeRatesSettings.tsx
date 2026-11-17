@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Group, NumberInput, Paper, Table, Text, TextInput, Title } from '@mantine/core';
+import { ActionIcon, Alert, Button, Group, Modal, NumberInput, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { MonthPickerInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
 import { IconTrash } from '@tabler/icons-react';
@@ -18,17 +18,10 @@ export function FeeRatesSettings() {
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const refresh = () => qc.invalidateQueries({ queryKey: ['fee-rates'] });
-  async function save() {
-    setBusy(true);
-    const { error } = await supabase.from('fee_rates').upsert({ city_en: 'Odessa', month, pct: Number(pct), notes: notes.trim() || null }, { onConflict: 'city_en,month' });
-    setBusy(false);
-    if (error) { notifications.show({ color: 'red', message: error.message }); return; }
-    setPct(''); setNotes(''); await refresh();
-  }
-  async function remove(r: Rate) {
-    const { error } = await supabase.from('fee_rates').delete().eq('city_en', r.city_en).eq('month', r.month);
-    if (error) notifications.show({ color: 'red', message: error.message }); else await refresh();
-  }
+  // A change is shown with what it does before it is made (decision 162).
+  const [change, setChange] = useState<{ month: string; pct: number | null; notes: string } | null>(null);
+  const save = () => setChange({ month: month!, pct: Number(pct), notes });
+  const remove = (r: Rate) => setChange({ month: r.month, pct: null, notes: '' });
   const rows = q.data ?? [];
   return (
     <Paper withBorder p="md">
@@ -51,6 +44,66 @@ export function FeeRatesSettings() {
         <TextInput label="הערה" value={notes} onChange={(e) => setNotes(e.currentTarget.value)} style={{ flex: 1 }} />
         <Button onClick={save} loading={busy} disabled={!month || pct === ''}>שמירה</Button>
       </Group>
+      {change && <Confirm change={change} onClose={async (applied) => { setChange(null); if (applied) { setPct(''); setNotes(''); } await refresh(); setBusy(false); }} />}
     </Paper>
+  );
+}
+
+interface Effect { rent_id: string; period: string; property: string; owner: string | null; rent: number; currency: string; fee_now: number; fee_new: number; manual: boolean }
+const fmt = (n: number) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+// Every rent the change governs, with its fee now and after; approve or cancel.
+function Confirm({ change, onClose }: { change: { month: string; pct: number | null; notes: string }; onClose: (applied: boolean) => void }) {
+  const q = useQuery({
+    queryKey: ['fee-rate-preview', change],
+    queryFn: async () => must(await supabase.rpc('fee_rate_preview', { p_city: 'Odessa', p_month: change.month, p_pct: change.pct })) as Effect[],
+  });
+  const [busy, setBusy] = useState(false);
+  const rows = q.data ?? [];
+  const changed = rows.filter((r) => !r.manual && Number(r.fee_now) !== Number(r.fee_new));
+  const diff = changed.reduce((a, r) => a + Number(r.fee_new) - Number(r.fee_now), 0);
+  async function apply() {
+    setBusy(true);
+    const { data, error } = await supabase.rpc('fee_rate_apply', { p_city: 'Odessa', p_month: change.month, p_pct: change.pct, p_notes: change.notes });
+    setBusy(false);
+    if (error) { notifications.show({ color: 'red', message: error.message }); return; }
+    notifications.show({ color: 'teal', message: `האחוז נשמר. דמי הניהול חושבו מחדש ב-${data} שכירויות` });
+    onClose(true);
+  }
+  const title = change.pct === null ? `מחיקת האחוז מ-${dayjs(change.month).format('MM.YYYY')}` : `${change.pct}% מ-${dayjs(change.month).format('MM.YYYY')}`;
+  return (
+    <Modal opened onClose={() => onClose(false)} title={`ההשלכות: ${title}`} size="xl">
+      <Stack>
+        {q.isLoading ? <Text size="sm" c="dimmed">מחשב…</Text> : !rows.length ? (
+          <Alert color="teal">אין שכירות רשומה בחודשים האלה. השינוי יחול על שכירות שתירשם מעכשיו.</Alert>
+        ) : (
+          <>
+            <Alert color={changed.length ? 'orange' : 'teal'}>
+              {changed.length ? `${changed.length} שכירויות יקבלו דמי ניהול חדשים: הישנים יבוטלו והחדשים יירשמו. הפרש כולל: ${diff > 0 ? '+' : ''}${fmt(diff)} ₴` : 'אין שכירות שדמי הניהול שלה משתנים.'}
+              {rows.some((r) => r.manual) && ' שכירות עם דמי ניהול שהוזנו ידנית לא משתנה (מסומנת).'}
+            </Alert>
+            <Table.ScrollContainer minWidth={640}>
+              <Table fz="sm" striped verticalSpacing={4}>
+                <Table.Thead><Table.Tr><Table.Th>חודש</Table.Th><Table.Th>דירה</Table.Th><Table.Th>בעלים</Table.Th><Table.Th>שכירות</Table.Th><Table.Th>דמי ניהול עכשיו</Table.Th><Table.Th>אחרי</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>{rows.map((r) => (
+                  <Table.Tr key={r.rent_id + r.property} c={r.manual ? 'dimmed' : undefined}>
+                    <Table.Td>{dayjs(r.period).format('MM.YYYY')}</Table.Td>
+                    <Table.Td>{r.property}</Table.Td>
+                    <Table.Td><Text size="xs">{r.owner}</Text></Table.Td>
+                    <Table.Td>{fmt(r.rent)} {r.currency}</Table.Td>
+                    <Table.Td>{fmt(r.fee_now)}</Table.Td>
+                    <Table.Td fw={!r.manual && Number(r.fee_now) !== Number(r.fee_new) ? 700 : undefined}>{r.manual ? 'ידני, לא משתנה' : fmt(r.fee_new)}</Table.Td>
+                  </Table.Tr>
+                ))}</Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </>
+        )}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={() => onClose(false)}>ביטול</Button>
+          <Button onClick={apply} loading={busy} disabled={q.isLoading || q.isError}>אישור</Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }
