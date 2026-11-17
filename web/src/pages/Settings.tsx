@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { QueryState } from '../components/common';
 import { ResetItai } from '../components/ResetItai';
 import { FileCategoriesSettings } from '../components/FileCategoriesSettings';
+import { FeeRatesSettings } from '../components/FeeRatesSettings';
 import { TaskCategoriesSettings } from '../components/TaskCategoriesSettings';
 import { SplitNames } from '../components/SplitNames';
 import { useAccess } from '../lib/access';
@@ -65,6 +66,7 @@ export function Settings() {
           </Stack>
         </Paper>
       )}</QueryState>
+      <FeeRatesSettings />
       <FileCategoriesSettings />
       <TaskCategoriesSettings />
       <TaskCategoriesSettings table="task_triggers" />
