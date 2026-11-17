@@ -51,6 +51,9 @@ export function Layout() {
             <Image src="/logo-mark.png" w={32} h={32} alt="" />
             <Text fw={700}>See the Future</Text>
             <Text c="dimmed" size="sm" visibleFrom="xs">משרד</Text>
+            <Tooltip label={`נבנתה ${new Date(__APP_VERSION__.built).toLocaleString('he-IL')}${__APP_VERSION__.sha ? ` · ${__APP_VERSION__.sha}` : ''}`}>
+              <Badge size="sm" variant="light" color="gray">{__APP_VERSION__.pr ? `גרסה ${__APP_VERSION__.pr}` : 'גרסה מקומית'}</Badge>
+            </Tooltip>
           </Group>
           <Group gap="xs">
             {access.isManagement && !access.isAdmin && (statsOnly
