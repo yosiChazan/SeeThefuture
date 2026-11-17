@@ -19,6 +19,8 @@ test('tasks sort by date, priority, subject and by who handles them', () => {
   const rank = (id: string | null | undefined) => ({ c1: 1, c2: 2 }[id ?? ''] ?? 99);
   assert.deepEqual(sortTasks([{ ...a, category_id: 'c2' }, { ...b, category_id: null }, { ...c, category_id: 'c1' }], 'category', name, { category: rank }).map((x) => x.id), ['ג', 'ב', 'א']);
   assert.deepEqual(sortTasks([{ ...a, trigger_id: 'g0' }, { ...b, trigger_id: 'g1' }, c], 'trigger', name, { trigger: (id) => ({ g0: 0, g1: 1 }[id ?? ''] ?? 9) }).map((x) => x.id), ['ב', 'א', 'ג']);
+  // By category, then (as the sort before) by subject: equal categories keep the subject order.
+  assert.deepEqual(sortTasks([{ ...a, category_id: 'c1' }, { ...b, category_id: 'c1' }, { ...c, category_id: 'c1' }], 'category', name, { category: rank }, 'subject').map((x) => x.id), ['א', 'ב', 'ג']);
   assert.deepEqual([...openByAssignee([a, b, { ...c, status: 'done', office_task_assignees: [{ user_id: 'x', party_id: null }] }])], [['u:x', 1], ['u:y', 1]]);
 });
 

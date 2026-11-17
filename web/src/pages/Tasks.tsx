@@ -514,7 +514,9 @@ export function Tasks() {
   const branches = useOpenBranches((tasks.data ?? []).map((t) => t.id));
   const dir = useDirectory();
   const [params, setParams] = useSearchParams();
-  const [sort, setSort] = useState<SortKey>('updated');
+  const [sort, setSortKey] = useState<SortKey>('updated');
+  const [thenSort, setThen] = useState<SortKey | undefined>(undefined);   // the sort before, kept as second (decision 157)
+  const setSort = (k: SortKey) => { if (k !== sort) setThen(sort); setSortKey(k); };
   const [state, setState] = useState<'open' | 'done' | 'all'>('open');
   const [filters, setFilters] = useState<TaskFilter[]>([]);
   const canDelete = useCanDelete();
@@ -539,7 +541,7 @@ export function Tasks() {
     ...[...counts].map(([k, n]) => ({ value: k, label: `${dir.nameOf(toAssignee(k))} (${n})` })).sort((a, b) => a.label.localeCompare(b.label, 'he')),
   ];
   const shown = sortTasks(filterTasks(all.filter((t) => state === 'all' || (state === 'done') === (t.status === 'done')), filters, me),
-    sort, dir.nameOf, { trigger: dir.trigRank, category: dir.catRank });
+    sort, dir.nameOf, { trigger: dir.trigRank, category: dir.catRank }, thenSort);
   // Deleting the done tasks shown (after the filters), those the viewer may delete.
   const removeDone = () => {
     const ids = shown.filter(canDelete).map((t) => t.id);

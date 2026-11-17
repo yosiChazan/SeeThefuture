@@ -48,20 +48,25 @@ export const assigneeKey = (a: Assignee) => (a.user_id ? `u:${a.user_id}` : `p:$
 // Sorting the list. "By who handles it" orders by the first assignee's name; a task with
 // no one comes last.
 // "By trigger" and "by category" order by their place in Settings (`rank`); none comes last.
+// `then`: the sort chosen before, kept for tasks equal by this one (decision 157).
 export function sortTasks(tasks: OfficeTask[], key: SortKey, nameOf: (a: Assignee) => string,
-                          rank: { trigger?: (id: string | null | undefined) => number; category?: (id: string | null | undefined) => number } = {}): OfficeTask[] {
+                          rank: { trigger?: (id: string | null | undefined) => number; category?: (id: string | null | undefined) => number } = {}, then?: SortKey): OfficeTask[] {
   const tr = rank.trigger ?? (() => 0), cr = rank.category ?? (() => 0);
   const first = (t: OfficeTask) => t.office_task_assignees.map(nameOf).sort((a, b) => a.localeCompare(b, 'he'))[0] ?? '￿';
+  // The sort itself, then what breaks its ties when nothing was sorted before.
   const by: Record<SortKey, (a: OfficeTask, b: OfficeTask) => number> = {
     updated: (a, b) => b.updated_at.localeCompare(a.updated_at),
     created: (a, b) => b.created_at.localeCompare(a.created_at),
-    priority: (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || b.updated_at.localeCompare(a.updated_at),
+    priority: (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
     subject: (a, b) => a.subject.localeCompare(b.subject, 'he'),
-    assignee: (a, b) => first(a).localeCompare(first(b), 'he') || PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
-    trigger: (a, b) => tr(a.trigger_id) - tr(b.trigger_id) || PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
-    category: (a, b) => cr(a.category_id) - cr(b.category_id) || PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
+    assignee: (a, b) => first(a).localeCompare(first(b), 'he'),
+    trigger: (a, b) => tr(a.trigger_id) - tr(b.trigger_id),
+    category: (a, b) => cr(a.category_id) - cr(b.category_id),
   };
-  return [...tasks].sort(by[key]);
+  const tie: Partial<Record<SortKey, (a: OfficeTask, b: OfficeTask) => number>> = {
+    priority: by.updated, assignee: by.priority, trigger: by.priority, category: by.priority,
+  };
+  return [...tasks].sort((a, b) => by[key](a, b) || (then && then !== key ? by[then](a, b) : 0) || (tie[key]?.(a, b) ?? 0));
 }
 
 // How many open tasks each person has, for "by who handles it".

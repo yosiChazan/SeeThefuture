@@ -26,13 +26,15 @@ const SORT_VALUE: Record<SortKey, (c: ClientRow) => string | number | null> = {
   countries: (c) => countriesOf(c).map((x) => COUNTRY_HE[x]).sort(he).join(', ') || null,
   properties: (c) => propertyCount(c) || null,
 };
-function compare(key: SortKey, desc: boolean) {
-  return (a: ClientRow, b: ClientRow) => {
-    const x = SORT_VALUE[key](a), y = SORT_VALUE[key](b);
-    if (x === null || y === null) return x === y ? byName(a, b) : x === null ? 1 : -1;
-    const d = typeof x === 'number' && typeof y === 'number' ? x - y : he(String(x), String(y));
-    return (desc ? -d : d) || byName(a, b);
-  };
+function by(key: SortKey, desc: boolean, a: ClientRow, b: ClientRow) {
+  const x = SORT_VALUE[key](a), y = SORT_VALUE[key](b);
+  if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
+  const d = typeof x === 'number' && typeof y === 'number' ? x - y : he(String(x), String(y));
+  return desc ? -d : d;
+}
+// Rows equal by this sort keep the sort before it (decision 157), then the name.
+function compare(key: SortKey, desc: boolean, then: SortKey | null, thenDesc: boolean) {
+  return (a: ClientRow, b: ClientRow) => by(key, desc, a, b) || (then ? by(then, thenDesc, a, b) : 0) || byName(a, b);
 }
 
 export function Clients() {
@@ -47,7 +49,12 @@ export function Clients() {
   const update = (k: string, v: string) => setParams((p) => { p.set(k, v); return p; }, { replace: true });
   const sort = (['first', 'last', 'id', 'countries', 'properties'].includes(params.get('sort') ?? '') ? params.get('sort') : 'last') as SortKey;
   const desc = params.get('dir') === 'desc';
-  const onSort = (k: SortKey) => setParams((p) => { p.set('sort', k); p.set('dir', k === sort && !desc ? 'desc' : 'asc'); return p; }, { replace: true });
+  const then = (['first', 'last', 'id', 'countries', 'properties'].includes(params.get('then') ?? '') ? params.get('then') : null) as SortKey | null;
+  const thenDesc = params.get('thenDir') === 'desc';
+  const onSort = (k: SortKey) => setParams((p) => {
+    if (k !== sort) { p.set('then', sort); p.set('thenDir', desc ? 'desc' : 'asc'); }
+    p.set('sort', k); p.set('dir', k === sort && !desc ? 'desc' : 'asc'); return p;
+  }, { replace: true });
 
   // A partner is listed under the main client, not on its own row (SPEC decision 77).
   const membersOf = useMemo(() => {
@@ -64,8 +71,8 @@ export function Clients() {
       .filter((c) => !s || [c.display_name, c.first_name, c.last_name, c.email, c.phone, idNumberOf(c), ...(membersOf.get(c.id) ?? []).map((m) => m.name)].some((x) => x?.toLowerCase().includes(s))
         || (/^\d{3,}$/.test(s) && (idNumberOf(c) ?? '').replace(/^0+/, '').includes(s.replace(/^0+/, ''))))
       // Default: by family name; a name not split yet sorts by its full name (SPEC decision 72).
-      .sort(compare(sort, desc));
-  }, [q.data, country, search, sort, desc, isMember, membersOf]);
+      .sort(compare(sort, desc, then, thenDesc));
+  }, [q.data, country, search, sort, desc, then, thenDesc, isMember, membersOf]);
 
   return (
     <Stack>
