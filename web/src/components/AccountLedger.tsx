@@ -101,9 +101,9 @@ function VoidTxn({ e, onClose }: { e: EntryRow; onClose: () => void }) {
 function Voided({ accountIds }: { accountIds: string[] }) {
   const q = useQuery({
     queryKey: ['voided', accountIds],
-    queryFn: async () => must(await supabase.from('entries').select('id, amount, currency, memo, transaction:transactions!inner(id, occurred_on, category, description, status, voided_at, void_reason, voided_by)')
+    queryFn: async () => must(await supabase.from('entries').select('id, amount, currency, memo, property:properties(id, unit_no, building:buildings(name, project:projects(name), city:cities(name_en))), transaction:transactions!inner(id, occurred_on, category, description, status, voided_at, void_reason, voided_by)')
       .in('account_id', accountIds).eq('transaction.status', 'void').order('id').limit(1000)) as unknown as
-      { id: string; amount: number; currency: string; memo: string | null; transaction: { id: string; occurred_on: string; category: string; description: string | null; voided_at: string | null; void_reason: string | null } }[],
+      { id: string; amount: number; currency: string; memo: string | null; property: EntryRow['property']; transaction: { id: string; occurred_on: string; category: string; description: string | null; voided_at: string | null; void_reason: string | null } }[],
   });
   const rows = [...(q.data ?? [])].sort((a, b) => b.transaction.occurred_on.localeCompare(a.transaction.occurred_on));
   return (
@@ -112,10 +112,11 @@ function Voided({ accountIds }: { accountIds: string[] }) {
       {!rows.length ? <Text size="sm" c="dimmed">{q.isLoading ? 'טוען…' : 'אין'}</Text> : (
         <Table.ScrollContainer minWidth={600}>
           <Table fz="sm" verticalSpacing={4}>
-            <Table.Thead><Table.Tr><Table.Th>תאריך</Table.Th><Table.Th>תיאור</Table.Th><Table.Th>סכום</Table.Th><Table.Th>בוטלה</Table.Th><Table.Th>סיבה</Table.Th></Table.Tr></Table.Thead>
+            <Table.Thead><Table.Tr><Table.Th>תאריך</Table.Th><Table.Th>דירה</Table.Th><Table.Th>תיאור</Table.Th><Table.Th>סכום</Table.Th><Table.Th>בוטלה</Table.Th><Table.Th>סיבה</Table.Th></Table.Tr></Table.Thead>
             <Table.Tbody>{rows.map((e) => (
               <Table.Tr key={e.id} c="dimmed">
                 <Table.Td td="line-through">{date(e.transaction.occurred_on)}</Table.Td>
+                <Table.Td td="line-through"><Text size="xs">{unitOf(e as unknown as EntryRow)}</Text></Table.Td>
                 <Table.Td td="line-through"><Text size="sm" lineClamp={1}>{e.memo ?? e.transaction.description ?? ''}</Text></Table.Td>
                 <Table.Td td="line-through" style={{ whiteSpace: 'nowrap' }}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
                 <Table.Td>{e.transaction.voided_at ? date(e.transaction.voided_at.slice(0, 10)) : '—'}</Table.Td>
