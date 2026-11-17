@@ -1,7 +1,7 @@
-import { ActionIcon, Alert, Badge, Button, Checkbox, Collapse, FileButton, Group, Modal, NumberInput, Paper, Stack, Table, Text, Title } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Button, Checkbox, Collapse, FileButton, Group, Modal, NumberInput, Paper, Stack, Table, Text, Title, Tooltip } from '@mantine/core';
 import { DateInput, MonthPickerInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
-import { IconPaperclip, IconPlus, IconTrash } from '@tabler/icons-react';
+import { IconClipboard, IconPaperclip, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
@@ -35,6 +35,11 @@ function useMonthTransfers(yarach: string | null, month: string) {
   });
 }
 // A transfer counts as divided while its division is waiting or approved, not after it was rejected.
+// The first image in what was pasted, named for when it was pasted.
+const imageOf = (d: DataTransfer | null): File | null => {
+  const f = [...(d?.files ?? [])].find((x) => x.type.startsWith('image/'));
+  return f ? new File([f], `צילום מסך ${dayjs().format('DD.MM.YYYY HH-mm')}.${f.type.split('/')[1] || 'png'}`, { type: f.type }) : null;
+};
 const divided = (m: Moved) => !!m.allocated_batch && m.batch?.status !== 'rejected';
 
 export function YarachMonth({ source, onClose }: { source: Source; onClose: () => void }) {
@@ -55,6 +60,17 @@ export function YarachMonth({ source, onClose }: { source: Source; onClose: () =
   const bad = filled.some((t) => !t.on || !(t.amount > 0));
   const open = (done.data ?? []).filter((m) => !divided(m));
   const set = (i: number, p: Partial<NewTransfer>) => setRows((rs) => rs.map((t, j) => (j === i ? { ...t, ...p } : t)));
+  // A screenshot pasted as the proof (decision 160): Ctrl+V on the row, or the button (the browser
+  // asks once to let the page read the clipboard).
+  async function pasteInto(i: number) {
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((x) => x.startsWith('image/'));
+        if (type) { const blob = await item.getType(type); set(i, { file: new File([blob], `צילום מסך ${dayjs().format('DD.MM.YYYY HH-mm')}.${type.split('/')[1]}`, { type }) }); return; }
+      }
+      notifications.show({ color: 'orange', message: 'אין תמונה בהעתקה. מעתיקים צילום מסך ואז מדביקים' });
+    } catch { notifications.show({ color: 'orange', message: 'הדפדפן לא נתן לקרוא את ההעתקה. לוחצים על השורה ומקישים Ctrl+V' }); }
+  }
 
   async function save() {
     setBusy(true); setError(null);
@@ -107,12 +123,16 @@ export function YarachMonth({ source, onClose }: { source: Source; onClose: () =
         </Paper>
         <Title order={5}>העברות חדשות</Title>
         {rows.map((t, i) => (
-          <Group key={i} gap="xs" wrap="nowrap">
+          <Group key={i} gap="xs" wrap="nowrap" onPaste={(e) => { const f = imageOf(e.clipboardData); if (f) { e.preventDefault(); set(i, { file: f }); } }}>
             <DateInput placeholder="תאריך" value={t.on || null} onChange={(d) => set(i, { on: d ? dayjs(d).format('YYYY-MM-DD') : '' })} valueFormat="DD.MM.YYYY" w={140} />
             <NumberInput placeholder="סכום ₴" min={0} thousandSeparator="," value={t.amount || ''} onChange={(v) => set(i, { amount: Number(v) || 0 })} w={150} />
             <FileButton accept="image/*,application/pdf" onChange={(f) => set(i, { file: f })}>
               {(p) => <Button {...p} size="xs" variant={t.file ? 'light' : 'default'} leftSection={<IconPaperclip size={14} />}>{t.file ? 'הוכחה ✓' : 'הוכחת העברה'}</Button>}
             </FileButton>
+            <Tooltip label="מדביק תמונה שהועתקה (צילום מסך). אפשר גם ללחוץ על השורה ולהקיש Ctrl+V">
+              <Button size="xs" variant="default" leftSection={<IconClipboard size={14} />} onClick={() => pasteInto(i)}>הדבקה</Button>
+            </Tooltip>
+            {t.file && <Text size="xs" c="dimmed" maw={140} truncate>{t.file.name}</Text>}
             <ActionIcon variant="subtle" color="red" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} aria-label="הסרה"><IconTrash size={16} /></ActionIcon>
           </Group>
         ))}
