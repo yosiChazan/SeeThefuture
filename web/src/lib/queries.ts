@@ -117,7 +117,7 @@ export interface EntryRow {
   currency: string;
   memo: string | null;
   account_id: string | null;
-  property?: { building: { city: { name_en: string } | null } | null } | null;   // for labels by city (decision 145)
+  property?: { id: string; unit_no: string; building: { name: string; project: { name: string } | null; city: { name_en: string } | null } | null } | null;   // labels by city (145), the apartment column (155)
   transaction: { id: string; occurred_on: string; period?: string; category: string; description: string | null; status: string; import_batch_id?: string | null; created_by?: string | null; country_code?: string; source?: string | null };
 }
 
@@ -131,7 +131,7 @@ export function useAccountEntries(accountIds: string[]) {
       const out: EntryRow[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('entries')
-          .select('id, amount, currency, memo, account_id, property:properties(building:buildings(city:cities(name_en))), transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code)')
+          .select('id, amount, currency, memo, account_id, property:properties(id, unit_no, building:buildings(name, project:projects(name), city:cities(name_en))), transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code)')
           .in('account_id', accountIds).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as EntryRow[];
         out.push(...page);
         if (page.length < 1000) break;
@@ -149,7 +149,7 @@ export function usePropertyEntries(propertyId: string) {
       const out: (EntryRow & { account: Account })[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('entries')
-          .select(`id, amount, currency, memo, account_id, property:properties(building:buildings(city:cities(name_en))), transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code), account:accounts!inner(${ACCOUNT_COLS})`)
+          .select(`id, amount, currency, memo, account_id, property:properties(id, unit_no, building:buildings(name, project:projects(name), city:cities(name_en))), transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code), account:accounts!inner(${ACCOUNT_COLS})`)
           .eq('property_id', propertyId).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as (EntryRow & { account: Account })[];
         out.push(...page);
         if (page.length < 1000) break;

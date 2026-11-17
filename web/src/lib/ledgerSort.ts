@@ -1,7 +1,7 @@
 // Sorting a ledger by any column, up or down (SPEC decision 147). Ties keep date order.
-export type LedgerKey = 'date' | 'type' | 'desc' | 'account' | 'currency' | 'amount' | 'source';
+export type LedgerKey = 'date' | 'type' | 'desc' | 'account' | 'currency' | 'amount' | 'source' | 'unit';
 export interface LedgerSort { key: LedgerKey; desc: boolean }
-export type LedgerFields = { date: string; type: string; desc: string; account?: string; currency?: string; amount: number; source?: string };
+export type LedgerFields = { date: string; type: string; desc: string; account?: string; currency?: string; amount: number; source?: string; unit?: string };
 
 export function sortLedger<T>(rows: T[], s: LedgerSort, f: (r: T) => LedgerFields): T[] {
   const dir = s.desc ? -1 : 1;

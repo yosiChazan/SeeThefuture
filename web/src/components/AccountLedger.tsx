@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAccess } from '../lib/access';
 import { must, supabase } from '../lib/supabase';
 import { useState } from 'react';
-import { ACCOUNT_KIND_HE, categoryLabel, amountLabel, date, money } from '../lib/format';
+import { ACCOUNT_KIND_HE, categoryLabel, amountLabel, date, money, propertyTitle } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
 import { nextSort, sortLedger, type LedgerKey, type LedgerSort } from '../lib/ledgerSort';
 import { toggleRows, totalsByCurrency } from '../lib/selection';
@@ -130,6 +130,8 @@ function Voided({ accountIds }: { accountIds: string[] }) {
 }
 
 const typeOf = (e: EntryRow) => categoryLabel(e.transaction.category, e.property?.building?.city?.name_en);
+// The apartment a row belongs to (decision 155), on a client's card.
+const unitOf = (e: EntryRow) => (e.property?.building ? propertyTitle({ unit_no: e.property.unit_no, building: e.property.building }) : '');
 const descOf = (e: EntryRow) => e.memo ?? e.transaction.description ?? '';
 
 // One card per account: entries with a running total. From 2026 by default, with
@@ -187,7 +189,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
         // The running total follows the date; another order keeps each row's total as it was then.
         const totals = new Map(rows.map((e) => [e.id, (running += Number(e.amount))]));
         running = before.reduce((s, e) => s + Number(e.amount), 0);
-        const sorted = sortLedger(rows, sortA, (e) => ({ date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), amount: Number(e.amount), source: sources.data?.get(e.transaction.id)?.source ?? '' }));
+        const sorted = sortLedger(rows, sortA, (e) => ({ date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), unit: unitOf(e), amount: Number(e.amount), source: sources.data?.get(e.transaction.id)?.source ?? '' }));
         const label = property ? 'מהנכס' : amountLabel(a.kind);
         const order = sorted.map((x) => x.id);
         return (
@@ -199,14 +201,14 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing={4} striped>
                 <Table.Thead>
-                  <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sortA} set={setSortA} w={100}>תאריך</SortTh><SortTh k="type" sort={sortA} set={setSortA} w={110}>סוג</SortTh><SortTh k="desc" sort={sortA} set={setSortA}>תיאור</SortTh>{showSrc && <SortTh k="source" sort={sortA} set={setSortA} w={70}>מקור</SortTh>}<SortTh k="amount" sort={sortA} set={setSortA} w={120}>סכום</SortTh><Table.Th w={130}>{label} מצטבר</Table.Th><Table.Th w={110} /></Table.Tr>
+                  <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sortA} set={setSortA} w={100}>תאריך</SortTh><SortTh k="type" sort={sortA} set={setSortA} w={110}>סוג</SortTh>{!property && <SortTh k="unit" sort={sortA} set={setSortA} w={150}>דירה</SortTh>}<SortTh k="desc" sort={sortA} set={setSortA}>תיאור</SortTh>{showSrc && <SortTh k="source" sort={sortA} set={setSortA} w={70}>מקור</SortTh>}<SortTh k="amount" sort={sortA} set={setSortA} w={120}>סכום</SortTh><Table.Th w={130}>{label} מצטבר</Table.Th><Table.Th w={110} /></Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {range === '2026' && (
                     <Table.Tr fw={600}>
                       <Table.Td />
                       <Table.Td>01.01.2026</Table.Td>
-                      <Table.Td colSpan={showSrc ? 3 : 2}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
+                      <Table.Td colSpan={(showSrc ? 3 : 2) + (property ? 0 : 1)}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
                       <Table.Td />
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
                       <Table.Td />
@@ -218,6 +220,7 @@ export function AccountLedger({ accounts, entries, property = false, edit }: {
                         <MarkBox m={marks} order={order} id={e.id} />
                         <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
                         <Table.Td>{typeOf(e)}</Table.Td>
+                        {!property && <Table.Td><Text size="xs">{unitOf(e)}</Text></Table.Td>}
                         <Table.Td><Text size="sm" lineClamp={2}>{descOf(e)}</Text></Table.Td>
                         {showSrc && <Table.Td>{sources.data?.get(e.transaction.id) && <SourceBadge src={sources.data.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
@@ -252,7 +255,7 @@ function ByDate({ accounts, entries, from, property, edit, sources, marks, onVoi
     .filter((e) => byId.has(e.account_id ?? '') && (!from || e.transaction.occurred_on >= from))
     .filter((e) => (!account || e.account_id === account) && (!currency || e.currency === currency));
   const rows = sortLedger(picked, sort, (e) => ({
-    date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), account: byId.get(e.account_id ?? '') ? accountName(byId.get(e.account_id ?? '')!, property) : '',
+    date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), unit: unitOf(e), account: byId.get(e.account_id ?? '') ? accountName(byId.get(e.account_id ?? '')!, property) : '',
     currency: e.currency, amount: Number(e.amount), source: sources?.get(e.transaction.id)?.source ?? '',
   }));
   const currencies = [...new Set(accounts.map((a) => a.currency))].sort();
@@ -268,7 +271,7 @@ function ByDate({ accounts, entries, from, property, edit, sources, marks, onVoi
       <Table.ScrollContainer minWidth={700}>
         <Table verticalSpacing={4} striped>
           <Table.Thead>
-            <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sort} set={setSort} w={100}>תאריך</SortTh><SortTh k="type" sort={sort} set={setSort} w={110}>סוג</SortTh><SortTh k="desc" sort={sort} set={setSort}>תיאור</SortTh><SortTh k="account" sort={sort} set={setSort} w={200}>קופה</SortTh>{showSrc && <SortTh k="source" sort={sort} set={setSort} w={70}>מקור</SortTh>}<SortTh k="currency" sort={sort} set={setSort} w={70}>מטבע</SortTh><SortTh k="amount" sort={sort} set={setSort} w={120}>סכום</SortTh><Table.Th w={110} /></Table.Tr>
+            <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sort} set={setSort} w={100}>תאריך</SortTh><SortTh k="type" sort={sort} set={setSort} w={110}>סוג</SortTh>{!property && <SortTh k="unit" sort={sort} set={setSort} w={150}>דירה</SortTh>}<SortTh k="desc" sort={sort} set={setSort}>תיאור</SortTh><SortTh k="account" sort={sort} set={setSort} w={200}>קופה</SortTh>{showSrc && <SortTh k="source" sort={sort} set={setSort} w={70}>מקור</SortTh>}<SortTh k="currency" sort={sort} set={setSort} w={70}>מטבע</SortTh><SortTh k="amount" sort={sort} set={setSort} w={120}>סכום</SortTh><Table.Th w={110} /></Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {rows.map((e) => {
@@ -278,6 +281,7 @@ function ByDate({ accounts, entries, from, property, edit, sources, marks, onVoi
                   <MarkBox m={marks} order={order} id={e.id} />
                   <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
                   <Table.Td>{typeOf(e)}</Table.Td>
+                  {!property && <Table.Td><Text size="xs">{unitOf(e)}</Text></Table.Td>}
                   <Table.Td><Text size="sm" lineClamp={2}>{descOf(e)}</Text></Table.Td>
                   <Table.Td><Text size="xs">{accountName(a, property)}</Text></Table.Td>
                   {showSrc && <Table.Td>{sources?.get(e.transaction.id) && <SourceBadge src={sources.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
