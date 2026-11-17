@@ -17,6 +17,8 @@ test('a ledger sorts by any column, up and down, ties by date', () => {
   assert.equal(d({ key: 'currency', desc: false }), '02,03,01');
   assert.equal(sortLedger([{ ...rows[0], unit: 'דירה 12 · Arcadia' }, { ...rows[1], unit: 'דירה 3 · Arcadia' }], { key: 'unit', desc: false }, (r) => r).map((r) => r.unit).join('|'), 'דירה 3 · Arcadia|דירה 12 · Arcadia');
   assert.deepEqual(nextSort({ key: 'date', desc: true }, 'date'), { key: 'date', desc: false });
-  assert.deepEqual(nextSort({ key: 'date', desc: true }, 'type'), { key: 'type', desc: false });
-  assert.deepEqual(nextSort({ key: 'type', desc: false }, 'amount'), { key: 'amount', desc: true });
+  assert.deepEqual(nextSort({ key: 'date', desc: true }, 'type'), { key: 'type', desc: false, then: { key: 'date', desc: true } });
+  assert.deepEqual(nextSort({ key: 'type', desc: false }, 'amount'), { key: 'amount', desc: true, then: { key: 'type', desc: false } });
+  // Sorted by currency, then by description: equal currencies keep the description order (not the date).
+  assert.equal(d({ key: 'currency', desc: false, then: { key: 'desc', desc: false } }), '03,02,01');
 });

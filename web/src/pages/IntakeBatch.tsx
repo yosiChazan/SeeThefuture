@@ -35,7 +35,10 @@ const rowKind = (r: ImportRow) => `${r.raw.kind ?? ''} ${r.proposed ? CATEGORY_H
 // The money in the client's accounts (as shown in the amount column); minus is a debit.
 const rowAmount = (r: ImportRow) => (r.proposed?.entries ?? []).filter((e) => e.account).reduce((s, e) => s + e.amount, 0);
 
-function sortRows(rows: ImportRow[], key: SortKey, desc: boolean): ImportRow[] {
+// `then`: the sort before this one, kept for rows equal by this one (decision 157). Array.sort
+// keeps the order of equal rows, so sorting by the earlier one first does it.
+function sortRows(rows: ImportRow[], key: SortKey, desc: boolean, then?: { key: SortKey; desc: boolean }): ImportRow[] {
+  if (then && then.key !== key && then.key !== 'file') rows = sortRows(rows, then.key, then.desc);
   if (key === 'file') return rows;
   const by = (a: ImportRow, b: ImportRow): number => {
     if (key === 'date') {
@@ -54,7 +57,7 @@ function sortRows(rows: ImportRow[], key: SortKey, desc: boolean): ImportRow[] {
   });
 }
 
-function loadSort(): { key: SortKey; desc: boolean } {
+function loadSort(): { key: SortKey; desc: boolean; then?: { key: SortKey; desc: boolean } } {
   try { return { key: 'file', desc: false, ...JSON.parse(localStorage.getItem(SORT_KEY) ?? '{}') }; } catch { return { key: 'file', desc: false }; }
 }
 
@@ -84,7 +87,7 @@ export function IntakeBatch() {
   const [showPosted, setShowPosted] = useState(false);
   const [reason, setReason] = useState('');
   const [sort, setSortState] = useState(loadSort);
-  const setSort = (v: { key: SortKey; desc: boolean }) => {
+  const setSort = (v: { key: SortKey; desc: boolean; then?: { key: SortKey; desc: boolean } }) => {
     setSortState(v);
     try { localStorage.setItem(SORT_KEY, JSON.stringify(v)); } catch { /* not saved */ }
   };
@@ -266,7 +269,7 @@ export function IntakeBatch() {
 
           <Group gap="sm">
             <Text size="sm" c="dimmed">סדר השורות:</Text>
-            <SegmentedControl size="xs" value={sort.key} onChange={(v) => setSort({ key: v as SortKey, desc: false })}
+            <SegmentedControl size="xs" value={sort.key} onChange={(v) => setSort({ key: v as SortKey, desc: false, then: sort.key !== v ? { key: sort.key, desc: sort.desc } : sort.then })}
               data={[{ value: 'file', label: 'כמו בקובץ' }, { value: 'date', label: 'תאריך' }, { value: 'kind', label: 'סוג תנועה' }, { value: 'amount', label: 'סכום' }]} />
             {sort.key !== 'file' && (
               <SegmentedControl size="xs" value={sort.desc ? 'desc' : 'asc'} onChange={(v) => setSort({ ...sort, desc: v === 'desc' })}
@@ -276,7 +279,7 @@ export function IntakeBatch() {
 
           {groups.map(([ref, all]) => {
             // In an updated report most rows were posted before; they are hidden by default.
-            const rs = sortRows(showPosted ? all : all.filter((r) => r.match_status !== 'duplicate'), sort.key, sort.desc);
+            const rs = sortRows(showPosted ? all : all.filter((r) => r.match_status !== 'duplicate'), sort.key, sort.desc, sort.then);
             if (!rs.length) return null;
             const first = rs[0];
             const prop = first.property_id ? byProperty.get(first.property_id) : undefined;
