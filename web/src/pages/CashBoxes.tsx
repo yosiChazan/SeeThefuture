@@ -7,7 +7,7 @@ import { ActionIcon } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { division, KIND_HE, summarize, type AutoIn, type CashMovement } from '../lib/cash';
 import { date, money, propertyTitle } from '../lib/format';
 import { useClients, useContacts } from '../lib/queries';
@@ -422,7 +422,6 @@ export function CashBoxes() {
             )}
           </Paper>}
 
-          {box?.holder_party_id && box.country_code === 'UA' && <YarachDebt canDraft={canWrite} />}
           {box?.is_office && <OfficeAtManagers />}
 
           <Paper withBorder p="md">
@@ -517,46 +516,6 @@ export function CashOverview() {
     <Paper withBorder p="md">
       <Title order={3} mb="sm">קופות</Title>
       <SimpleGrid cols={{ base: 1, md: 2 }}>{boxes.data.map((b) => <BoxGlance key={b.id} box={b} names={names} />)}</SimpleGrid>
-    </Paper>
-  );
-}
-
-// What Yarach owes Gershon (SPEC decision 141): rent charged on the 1st of each approved month
-// since 1.11.2026, less what he transferred (received from him in the box). From here finance
-// can also draft a month's charge by hand, when the automatic draft of the 1st is missing.
-function YarachDebt({ canDraft }: { canDraft: boolean }) {
-  const navigate = useNavigate();
-  const q = useQuery({ queryKey: ['yarach-debt'], queryFn: async () => must(await supabase.rpc('yarach_debt')) as { month: string; charged: number; paid: number }[] });
-  const [busy, setBusy] = useState(false);
-  let owed = 0;
-  const rows = (q.data ?? []).map((r) => { owed += Number(r.charged) - Number(r.paid); return { ...r, owed }; });
-  async function draft() {
-    setBusy(true);
-    const { data, error } = await supabase.rpc('yarach_accrual', { p_period: dayjs().startOf('month').format('YYYY-MM-DD') });
-    setBusy(false);
-    if (error) { notifications.show({ color: 'red', message: error.message }); return; }
-    navigate(`/intake/${data as string}`);
-  }
-  return (
-    <Paper withBorder p="md">
-      <Group justify="space-between" mb="sm">
-        <Title order={4}>ירח: כמה הוא חייב לגרשון</Title>
-        {canDraft && <Button size="xs" variant="light" onClick={draft} loading={busy}>זקיפת החודש</Button>}
-      </Group>
-      <Text size="xs" c="dimmed" mb="xs">ב-1 לכל חודש השכירות של הדירות של ירח נזקפת ללקוחות כיתרה אצל גרשון (אחרי שהדוח מאושר בקליטה), וירח חייב אותה. כל העברה שלו נרשמת כאן כ"התקבל ממנהל" ומקטינה את החוב. מ-1.11.2026.</Text>
-      {q.isLoading ? <Text size="sm" c="dimmed">טוען…</Text> : !rows.length ? <Text size="sm" c="dimmed">עוד אין חודש מאושר</Text> : (
-        <Table fz="sm" verticalSpacing={4}>
-          <Table.Thead><Table.Tr><Table.Th>חודש</Table.Th><Table.Th>נזקף</Table.Th><Table.Th>ירח העביר</Table.Th><Table.Th>חייב (מצטבר)</Table.Th></Table.Tr></Table.Thead>
-          <Table.Tbody>{rows.map((r) => (
-            <Table.Tr key={r.month}>
-              <Table.Td>{dayjs(r.month).format('MM.YYYY')}</Table.Td>
-              <Table.Td>{money(Number(r.charged), 'UAH')}</Table.Td>
-              <Table.Td>{money(Number(r.paid), 'UAH')}</Table.Td>
-              <Table.Td><Text size="sm" fw={600} c={r.owed > 0.5 ? 'red' : 'teal'}>{money(r.owed, 'UAH')}</Text></Table.Td>
-            </Table.Tr>
-          ))}</Table.Tbody>
-        </Table>
-      )}
     </Paper>
   );
 }

@@ -18,14 +18,14 @@ interface Doc { id: string; country_code: Country; doc_type: string; storage_pat
 const PASSPORT_TYPES = ['passport', 'id_card'];
 const isPassport = (d: Doc) => PASSPORT_TYPES.includes(d.doc_type);
 const DOC_TYPE_HE: Record<string, string> = {
-  id_card: 'תעודת זהות וספח', passport: 'דרכון', poa: 'ייפוי כוח', attachment: 'מסמך אחר',
+  id_card: 'תעודת זהות וספח', passport: 'דרכון', poa: 'ייפוי כוח', attachment: 'מסמך אחר', yarach_transfer: 'העברות מירח',
 };
 
 // The type of each document can be changed in place (SPEC decision 69): a scan that is
 // really a passport or an ID card is marked as one, and moves to the passports group.
 const TYPE_OPTIONS = [
   { value: 'passport', label: 'דרכון' }, { value: 'id_card', label: 'תעודת זהות וספח' },
-  { value: 'poa', label: 'ייפוי כוח' }, { value: 'attachment', label: 'מסמך אחר' },
+  { value: 'poa', label: 'ייפוי כוח' }, { value: 'attachment', label: 'מסמך אחר' }, { value: 'yarach_transfer', label: 'העברות מירח' },
 ];
 
 const isImage = (d: Doc) => /\.(jpe?g|png|webp|gif)$/i.test(d.file_name ?? d.storage_path);
