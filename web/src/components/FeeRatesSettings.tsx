@@ -1,7 +1,7 @@
 import { ActionIcon, Alert, Button, Checkbox, Group, Modal, NumberInput, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { MonthPickerInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
-import { IconTrash } from '@tabler/icons-react';
+import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useState } from 'react';
@@ -28,13 +28,16 @@ export function FeeRatesSettings() {
       <Title order={4} mb={4}>דמי ניהול STF באודסה</Title>
       <Text size="sm" c="dimmed" mb="sm">אחוז מהשכירות לכל חודש בנפרד, גם לחודשים שעברו. כל שכירות שנרשמת לדירה באודסה מקבלת לבד דמי ניהול לפי האחוז של החודש שלה; חודש בלי אחוז מקבל, עם השכירות הראשונה שלו, את האחוז של החודש הקודם. כל הוספה, שינוי או מחיקה מציגים קודם את ההשלכות על כל דירה בחודש, לאישור.</Text>
       <Table fz="sm" mb="sm" verticalSpacing={4}>
-        <Table.Thead><Table.Tr><Table.Th>חודש</Table.Th><Table.Th>אחוז</Table.Th><Table.Th>הערה</Table.Th><Table.Th w={40} /></Table.Tr></Table.Thead>
+        <Table.Thead><Table.Tr><Table.Th>חודש</Table.Th><Table.Th>אחוז</Table.Th><Table.Th>הערה</Table.Th><Table.Th w={70} /></Table.Tr></Table.Thead>
         <Table.Tbody>{rows.map((r) => (
           <Table.Tr key={r.month}>
             <Table.Td>{dayjs(r.month).format('MM.YYYY')}</Table.Td>
             <Table.Td>{Number(r.pct)}%</Table.Td>
             <Table.Td>{r.notes}</Table.Td>
-            <Table.Td><ActionIcon size="sm" variant="subtle" color="red" onClick={() => remove(r)} aria-label="מחיקה"><IconTrash size={14} /></ActionIcon></Table.Td>
+            <Table.Td><Group gap={2} wrap="nowrap">
+              <ActionIcon size="sm" variant="subtle" onClick={() => { setMonth(r.month); setPct(Number(r.pct)); setNotes(r.notes ?? ''); }} aria-label="שינוי"><IconPencil size={14} /></ActionIcon>
+              <ActionIcon size="sm" variant="subtle" color="red" onClick={() => remove(r)} aria-label="מחיקה"><IconTrash size={14} /></ActionIcon>
+            </Group></Table.Td>
           </Table.Tr>
         ))}</Table.Tbody>
       </Table>
@@ -42,7 +45,7 @@ export function FeeRatesSettings() {
         <MonthPickerInput label="חודש" value={month} onChange={(d) => setMonth(d ? dayjs(d).startOf('month').format('YYYY-MM-DD') : null)} valueFormat="MM.YYYY" w={130} />
         <NumberInput label="אחוז" min={0} max={100} decimalScale={2} value={pct} onChange={(x) => setPct(x === '' ? '' : Number(x))} w={100} />
         <TextInput label="הערה" value={notes} onChange={(e) => setNotes(e.currentTarget.value)} style={{ flex: 1 }} />
-        <Button onClick={save} loading={busy} disabled={!month || pct === ''}>שמירה</Button>
+        <Button onClick={save} loading={busy} disabled={!month || pct === ''}>{rows.some((x) => x.month === month) ? 'שינוי האחוז' : 'הוספה'}</Button>
       </Group>
       {change && <Confirm change={change} onClose={async (applied) => { setChange(null); if (applied) { setPct(''); setNotes(''); } await refresh(); setBusy(false); }} />}
     </Paper>
