@@ -166,6 +166,14 @@ export function IntakeBatch() {
         labels: { confirm: 'אישור ורישום', cancel: 'ביטול' },
         onConfirm: async () => {
           setBusy(true);
+          // Yarach's division is posted on the day it is approved (decision 161).
+          if (batch.source.adapter === 'yarach_accrual') {
+            const today = dayjs().format('YYYY-MM-DD');
+            for (const r of rows.filter((x) => x.proposed && x.proposed.occurred_on !== today)) {
+              const up = await supabase.from('import_rows').update({ proposed: { ...r.proposed!, occurred_on: today } }).eq('id', r.id);
+              if (up.error) { setBusy(false); notifications.show({ color: 'red', message: up.error.message }); return; }
+            }
+          }
           const { data, error } = await supabase.rpc('commit_import_batch', { p_batch: batch.id });
           setBusy(false);
           if (error) { notifications.show({ color: 'red', title: 'הרישום נכשל, שום דבר לא נרשם', message: error.message }); return; }
