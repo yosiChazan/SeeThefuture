@@ -1,4 +1,4 @@
-import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { IconBrandWhatsapp } from '@tabler/icons-react';
 import { toE164 } from '../lib/phone';
 
@@ -26,4 +26,25 @@ export function Phone({ phone, size = 'sm' }: { phone: string | null | undefined
       )}
     </Group>
   );
+}
+
+// All of a party's numbers with what each one is (decision 154): the main one, then the others.
+// `compact`: the main one and "+N", the rest on hover (for lists).
+export function Phones({ phone, label, extra = [], compact = false }: { phone: string | null | undefined; label?: string | null; extra?: { phone: string; label: string | null }[]; compact?: boolean }) {
+  const all = [...(phone ? [{ phone, label: label ?? null }] : []), ...extra.filter((x) => x.phone)];
+  if (!all.length) return <Text size="sm">—</Text>;
+  const line = (x: { phone: string; label: string | null }, i: number) => (
+    <Group key={i} gap={6} wrap="nowrap" justify="flex-end">
+      {x.label && <Text size="xs" c="dimmed">{x.label}</Text>}
+      <Phone phone={x.phone} />
+    </Group>
+  );
+  if (compact && all.length > 1) {
+    return (
+      <Tooltip label={<Stack gap={2}>{all.map((x, i) => <Text key={i} size="xs" dir="ltr">{x.phone}{x.label ? ` · ${x.label}` : ''}</Text>)}</Stack>}>
+        <Group gap={4} wrap="nowrap" justify="flex-end"><Phone phone={all[0].phone} /><Text size="xs" c="dimmed">+{all.length - 1}</Text></Group>
+      </Tooltip>
+    );
+  }
+  return <Stack gap={2}>{all.map(line)}</Stack>;
 }
