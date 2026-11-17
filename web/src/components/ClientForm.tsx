@@ -1,5 +1,6 @@
-import { Button, Group, Modal, Select, SimpleGrid, Text, TextInput, Textarea } from '@mantine/core';
+import { ActionIcon, Button, Group, Modal, Select, SimpleGrid, Text, TextInput, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -30,8 +31,10 @@ export function ClientForm({ client, idNumber = null, opened, onClose, contact =
   const navigate = useNavigate();
   const [v, setV] = useState({
     display_name: client?.display_name ?? '', first_name: client?.first_name ?? split?.first ?? '', last_name: client?.last_name ?? split?.last ?? '', legal_name: client?.legal_name ?? '', kind: client?.kind ?? ('person' as ClientRow['kind']),
-    phone: client?.phone ?? '', email: client?.email ?? '', tax_id: client?.tax_id ?? '', address: client?.address ?? '', notes: client?.notes ?? '',
+    phone: client?.phone ?? '', phone_label: client?.phone_label ?? '', email: client?.email ?? '', tax_id: client?.tax_id ?? '', address: client?.address ?? '', notes: client?.notes ?? '',
   });
+  // More numbers, each with what it is (decision 154).
+  const [extra, setExtra] = useState<{ phone: string; label: string }[]>((client?.extra_phones ?? []).map((x) => ({ phone: x.phone, label: x.label ?? '' })));
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof typeof v>(k: K, x: (typeof v)[K]) => setV((p) => ({ ...p, [k]: x }));
   const person = v.kind === 'person';
@@ -44,7 +47,8 @@ export function ClientForm({ client, idNumber = null, opened, onClose, contact =
     setBusy(true);
     const fields = {
       display_name: name, first_name: person ? blank(v.first_name) : null, last_name: person ? blank(v.last_name) : null, legal_name: keepOld ? client!.display_name : blank(v.legal_name), kind: v.kind,
-      phone: blank(v.phone), email: blank(v.email), tax_id: blank(v.tax_id), address: blank(v.address), notes: blank(v.notes),
+      phone: blank(v.phone), phone_label: blank(v.phone_label),
+      extra_phones: extra.filter((x) => x.phone.trim()).map((x) => ({ phone: x.phone.trim(), label: x.label.trim() || null })), email: blank(v.email), tax_id: blank(v.tax_id), address: blank(v.address), notes: blank(v.notes),
     };
     const idClean = idNo.replace(/\s/g, '');
     const saveId = async (partyId: string) => {
@@ -91,7 +95,18 @@ export function ClientForm({ client, idNumber = null, opened, onClose, contact =
           value={v.legal_name} onChange={(e) => set('legal_name', e.currentTarget.value)} placeholder={keepOld ? client.display_name : undefined} />
         <Select label="סוג" value={v.kind} allowDeselect={false} onChange={(x) => x && set('kind', x as ClientRow['kind'])}
           data={[{ value: 'person', label: 'לקוח' }, { value: 'company', label: 'חברה' }]} />
-        <TextInput label="טלפון" dir="ltr" value={v.phone} onChange={(e) => set('phone', e.currentTarget.value)} />
+        <Group grow gap="xs" align="flex-end">
+          <TextInput label="טלפון" dir="ltr" value={v.phone} onChange={(e) => set('phone', e.currentTarget.value)} />
+          <TextInput label="תיאור" placeholder="למשל: נייד, וואטסאפ" value={v.phone_label} onChange={(e) => set('phone_label', e.currentTarget.value)} />
+        </Group>
+        {extra.map((x, i) => (
+          <Group key={i} grow gap="xs" align="flex-end" wrap="nowrap">
+            <TextInput label={`טלפון נוסף ${i + 1}`} dir="ltr" value={x.phone} onChange={(e) => { const val = e.currentTarget.value; setExtra((l) => l.map((y, j) => (j === i ? { ...y, phone: val } : y))); }} />
+            <TextInput label="תיאור" placeholder="למשל: אשתו, משרד" value={x.label} onChange={(e) => { const val = e.currentTarget.value; setExtra((l) => l.map((y, j) => (j === i ? { ...y, label: val } : y))); }} />
+            <ActionIcon variant="subtle" color="red" mb={4} style={{ flexGrow: 0 }} onClick={() => setExtra((l) => l.filter((_, j) => j !== i))} aria-label="הסרה"><IconTrash size={16} /></ActionIcon>
+          </Group>
+        ))}
+        <Button size="compact-xs" variant="subtle" leftSection={<IconPlus size={14} />} onClick={() => setExtra((l) => [...l, { phone: '', label: '' }])} w="fit-content">טלפון נוסף</Button>
         <TextInput label="מייל" dir="ltr" type="email" value={v.email} onChange={(e) => set('email', e.currentTarget.value)} />
         {canId && (
           <TextInput label="תעודת זהות" dir="ltr" value={idNo} onChange={(e) => setIdNo(e.currentTarget.value)}

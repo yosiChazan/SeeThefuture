@@ -51,6 +51,8 @@ export interface ClientRow {
   kind: 'person' | 'company';
   email: string | null;
   phone: string | null;
+  phone_label?: string | null;
+  extra_phones?: ExtraPhone[];
   tax_id: string | null;
   address: string | null;
   notes: string | null;
@@ -59,7 +61,9 @@ export interface ClientRow {
   ownerships: { valid_to: string | null; property: { id: string; country_code: Country } | null }[];
 }
 
-const CLIENT_COLS = `id, display_name, first_name, last_name, legal_name, kind, email, phone, tax_id, address, notes,
+export interface ExtraPhone { phone: string; label: string | null }   // decision 154
+
+const CLIENT_COLS = `id, display_name, first_name, last_name, legal_name, kind, email, phone, phone_label, extra_phones, tax_id, address, notes,
   identity:party_identity(id_number),
   referred_by:parties!referred_by_party_id(id, display_name),
   ownerships(valid_to, property:properties(id, country_code)), party_roles!inner(role)`;
@@ -281,14 +285,14 @@ export function useClientPropertyActivity(partyIds: string | string[]) {
 // Everyone who is not a client: tenants, suppliers, lawyers, managers, marketers and
 // parties set aside as contacts (SPEC decision 76).
 export interface ContactRow {
-  id: string; display_name: string; kind: 'person' | 'company'; phone: string | null; email: string | null; notes: string | null;
+  id: string; display_name: string; kind: 'person' | 'company'; phone: string | null; phone_label?: string | null; extra_phones?: ExtraPhone[]; email: string | null; notes: string | null;
   party_roles: { role: string }[];
 }
 export function useContacts() {
   return useQuery({
     queryKey: ['contacts'],
     queryFn: async () => {
-      const rows = must(await supabase.from('parties').select('id, display_name, kind, phone, email, notes, party_roles(role)').order('display_name')) as ContactRow[];
+      const rows = must(await supabase.from('parties').select('id, display_name, kind, phone, phone_label, extra_phones, email, notes, party_roles(role)').order('display_name')) as ContactRow[];
       return rows.filter((p) => !p.party_roles.some((r) => r.role === 'client'));
     },
   });

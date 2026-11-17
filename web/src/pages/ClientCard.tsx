@@ -18,7 +18,7 @@ import { EditableLedger } from '../components/PropertyEntries';
 import { ACCOUNT_KIND_HE, COUNTRY_HE, amountLabel, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
 import { setClientRole, useAccountEntries, useClient, useClientAccounts, useClientProperties, useIdentity, usePartyLinks } from '../lib/queries';
 import { validIsraeliId } from '../lib/idnumber';
-import { Phone } from '../components/Phone';
+import { Phones } from '../components/Phone';
 
 export function ClientCard() {
   const { id } = useParams();
@@ -82,7 +82,7 @@ export function ClientCard() {
         <Paper withBorder p="md">
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             <div><Text size="xs" c="dimmed">שם בדוחות</Text><Text size="sm" dir="ltr" ta="right">{c.legal_name ?? '—'}</Text></div>
-            <div><Text size="xs" c="dimmed">טלפון</Text><Phone phone={c.phone} /></div>
+            <div><Text size="xs" c="dimmed">טלפון</Text><Phones phone={c.phone} label={c.phone_label} extra={c.extra_phones} /></div>
             <div><Text size="xs" c="dimmed">מייל</Text><Text size="sm" dir="ltr" ta="right">{c.email ?? '—'}</Text></div>
             {(c.first_name || c.last_name) && (
               <>
