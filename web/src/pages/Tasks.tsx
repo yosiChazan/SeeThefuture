@@ -3,11 +3,12 @@ import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import dayjs from 'dayjs';
 import { notifications } from '@mantine/notifications';
-import { IconCheck, IconMail, IconPencil, IconPhoto, IconPlus, IconRepeat, IconTrash, IconX } from '@tabler/icons-react';
+import { IconCheck, IconFileTypeDoc, IconMail, IconPencil, IconPhoto, IconPlus, IconRepeat, IconTrash, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AddLink, append, LinkedText, useMe } from '../components/ManualTopics';
+import { taskWord, type WordReply } from '../lib/taskWord';
 import { useAccess } from '../lib/access';
 import { COUNTRIES, COUNTRY_HE, propertyTitle } from '../lib/format';
 import {
@@ -246,6 +247,28 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
     } catch (e) { notifications.show({ color: 'red', message: (e as Error).message }); } finally { setBusy(false); }
   }
   const author = dir.users.get(task.created_by)?.display_name ?? 'לא ידוע';
+  // The card as a Word document (decision 171).
+  function exportWord() {
+    const evs = events.data ?? [];
+    const who = (id: string | null) => (id ? dir.users.get(id)?.display_name ?? 'לא ידוע' : 'המערכת');
+    const when = (s: string) => new Date(s).toLocaleString('he-IL');
+    const conv = (n: ThreadNode): WordReply => ({
+      who: who(n.event.created_by), at: when(n.event.created_at), body: n.event.body, edited: !!n.event.edited_at, files: n.event.files?.length ?? 0, open: n.open,
+      resolved: n.resolved ? { who: who(n.resolved.created_by), at: when(n.resolved.created_at), body: n.resolved.body } : null, children: n.children.map(conv),
+    });
+    const threads = buildThreads(evs);
+    const html = taskWord({
+      subject: task.subject, status: STATUS_HE[task.status], priority: PRIORITY_HE[task.priority], trigger: dir.trigLabel(task.trigger_id) ?? null,
+      category: dir.catLabel(task.category_id) ?? null, series: task.series_id ? `חוזרת · ${task.occurrence_on ? dayjs(task.occurrence_on).format('DD.MM.YYYY') : ''}` : null,
+      author, created: when(task.created_at), body: task.body, links: task.office_task_links.map(dir.linkName), assignees: task.office_task_assignees.map(dir.nameOf),
+      replies: threads.map(conv), openBranches: openBranches(threads),
+      history: evs.filter((e) => e.kind !== 'reply' && e.kind !== 'resolve').map((e) => ({ who: who(e.created_by), what: describeEvent(e, dir.nameOf, dir.linkName), at: when(e.created_at), body: e.body })),
+    }, window.location.origin);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff', html], { type: 'application/msword' }));
+    a.download = `${task.subject.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'משימה'}.doc`;
+    a.click();
+  }
   return (
     <Modal opened onClose={onClose} size="xl" title={task.subject}>
       <Stack>
@@ -295,6 +318,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
                 <Select size="xs" w={150} label="מצב" data={STATUSES} value={status} allowDeselect={false} onChange={(x) => x && setStatus(x as TaskStatus)} />
               </Group>
               <Group gap="xs">
+                <Button size="xs" variant="default" leftSection={<IconFileTypeDoc size={14} />} onClick={exportWord}>ייצוא לוורד</Button>
                 {canDelete(task) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={remove}>מחיקה</Button>}
                 {!access.isClient && <Button size="xs" variant="default" onClick={() => setEditing(true)}>העברה ושינוי פרטים</Button>}
                 <Button size="xs" onClick={send} loading={busy} disabled={!reply.trim() && !images.length && status === task.status}>שליחה</Button>
