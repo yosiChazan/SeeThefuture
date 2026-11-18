@@ -20,9 +20,9 @@ import type { Account, Country, Currency } from '../lib/types';
 // whoever holds it (a manager's cash, or the client's own bank), exactly as an approved
 // report line does (app.post_import_entry). Drafts can be deleted; posted ones only voided.
 
-const INCOME = ['rent', 'hotel_share', 'deposit', 'other'];
-const EXPENSE = ['transfer', 'mgmt_fee', 'office_fee', 'utilities', 'building_fees', 'repair', 'legal_fees', 'tax_withheld', 'vat', 'brokerage', 'commission', 'deposit', 'other'];
-const CURRENCIES: Currency[] = ['USD', 'EUR', 'UAH', 'RON', 'GEL', 'ILS'];
+export const INCOME = ['rent', 'hotel_share', 'deposit', 'other'];
+export const EXPENSE = ['transfer', 'mgmt_fee', 'office_fee', 'utilities', 'building_fees', 'repair', 'legal_fees', 'tax_withheld', 'vat', 'brokerage', 'commission', 'deposit', 'other'];
+export const CURRENCIES: Currency[] = ['USD', 'EUR', 'UAH', 'RON', 'GEL', 'ILS'];
 const CURRENCY_OF: Record<Country, Currency> = { UA: 'USD', RO: 'RON', GE: 'USD', GR: 'EUR' };
 
 // A transfer to the client out of a box's money (decision 152): once posted, it is also the box's
@@ -356,6 +356,8 @@ export function useCanEditEntry() {
   const access = useAccess();
   const me = useMe();
   return (e: EntryRow) => e.transaction.import_batch_id === null && e.transaction.status === 'posted'
+    // A movement on the client with no apartment (decision 176) is corrected by voiding it and entering it again.
+    && !!e.property
     // A payment made from a box ("העברה ללקוח מקופת…") is edited in the box; one entered on a card here (decision 152).
     && !(e.transaction.category === 'transfer' && (e.transaction.description ?? '').startsWith('העברה ללקוח מ'))
     && (access.isAdmin || (!!me && e.transaction.created_by === me && !!e.transaction.country_code && access.canApprove(e.transaction.country_code as Country)));

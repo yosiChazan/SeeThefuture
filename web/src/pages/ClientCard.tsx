@@ -15,6 +15,7 @@ import { LeaseTable } from '../components/LeaseTable';
 import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { EditableLedger } from '../components/PropertyEntries';
+import { ClientEntries } from '../components/ClientEntries';
 import { ACCOUNT_KIND_HE, COUNTRY_HE, amountLabel, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
 import { setClientRole, useAccountEntries, useClient, useClientAccounts, useClientProperties, useIdentity, usePartyLinks } from '../lib/queries';
 import { validIsraeliId } from '../lib/idnumber';
@@ -193,7 +194,7 @@ export function ClientCard() {
         <ClientDocuments partyId={c.id} countries={[...new Set((properties.data ?? []).map((p) => p.country_code))]} />
 
         <Paper withBorder p="md">
-          <Title order={4} mb="sm">תנועות</Title>
+          <ClientEntries clientId={c.id} clientName={c.display_name} accounts={accounts.data ?? []} properties={properties.data ?? []} />
           <QueryState q={accounts}>{(as) => (
             entries.isLoading ? <Text c="dimmed" size="sm">טוען תנועות…</Text>
               : <EditableLedger accounts={as} entries={entries.data ?? []} />
