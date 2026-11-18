@@ -152,6 +152,15 @@ const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '
 // duplicates and changes, stores the original file (or a manual form's screenshots)
 // and writes the batch for review.
 export async function createBatch(source: Source, input: File | File[], result: ParseResult, form?: unknown): Promise<string> {
+  // From 18.11.2026 Vitaly holds no money of the clients: what his report says he collected is
+  // held by Gershon (decision 168). His fee still goes to him (external: 'source').
+  if (source.adapter === 'vitaly_rent_xlsx') {
+    const g = must(await supabase.from('import_sources').select('holder_party_id').eq('adapter', 'gershon_utilities_xlsx').limit(1)) as { holder_party_id: string | null }[];
+    const gershon = g[0]?.holder_party_id;
+    if (!gershon) throw new Error('לא נמצא גרשון כמחזיק הכספים');
+    result = { ...result, rows: result.rows.map((r) => (r.proposed ? { ...r, proposed: { ...r.proposed, entries: r.proposed.entries.map((e) =>
+      e.account?.kind === 'manager_cash' && e.account.holder === 'source' ? { ...e, account: { ...e.account, holder: gershon } } : e) } } : r)) };
+  }
   const files = Array.isArray(input) ? input : [input];
   const [properties, refs, posted] = await Promise.all([
     propertiesForMatch(source.country_code),
