@@ -423,6 +423,7 @@ export function CashBoxes() {
             )}
           </Paper>}
 
+          {linked && box && !box.is_office && <FinalBalance box={box} names={names} />}
           {box?.is_office && <OfficeAtManagers />}
           {box?.is_office && <OfficeByCity />}
 
@@ -754,6 +755,110 @@ function OfficeByCity() {
           </Table>
         </Stack>
       ))}
+    </Paper>
+  );
+}
+
+// The final balance of every client with the box's holder (decision 170): the rates of the day
+// for each currency in hryvnia are typed in, and each client's hryvnia, dollars, euros and
+// shekels are added up into one sum, shown in the currency chosen. As of a date (default today).
+const FB_CURRENCIES = ['USD', 'EUR', 'ILS'] as const;
+function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) {
+  const [open, setOpen] = useState(false);
+  const [asOf, setAsOf] = useState<string | null>(null);
+  const [rates, setRates] = useState<Record<string, number | ''>>({ USD: '', EUR: '', ILS: '' });
+  const [show, setShow] = useState<string>('USD');
+  const [sort, setSort] = useState<{ key: string; desc: boolean }>({ key: 'name', desc: false });
+  const holders = [...(box.holder_party_id ? [box.holder_party_id] : []), ...box.linked_manager_ids];
+  const q = useQuery({
+    queryKey: ['final-balance', box.id, asOf], enabled: open && holders.length > 0,
+    queryFn: async () => {
+      const out: { amount: number; accounts: { beneficiary_party_id: string; currency: string } }[] = [];
+      for (let at = 0; ; at += 1000) {
+        let qq = supabase.from('entries').select('amount, accounts!inner(kind, currency, holder_party_id, beneficiary_party_id), transactions!inner(status, occurred_on)')
+          .eq('accounts.kind', 'manager_cash').in('accounts.holder_party_id', holders).eq('transactions.status', 'posted');
+        if (asOf) qq = qq.lte('transactions.occurred_on', asOf);
+        const page = must(await qq.order('id').range(at, at + 999)) as unknown as typeof out;
+        out.push(...page);
+        if (page.length < 1000) break;
+      }
+      const m = new Map<string, Record<string, number>>();
+      for (const e of out) {
+        const r = m.get(e.accounts.beneficiary_party_id) ?? m.set(e.accounts.beneficiary_party_id, {}).get(e.accounts.beneficiary_party_id)!;
+        r[e.accounts.currency] = (r[e.accounts.currency] ?? 0) + Number(e.amount);
+      }
+      return [...m].map(([id, b]) => ({ id, b }));
+    },
+  });
+  const rateOf = (c: string) => (c === 'UAH' ? 1 : Number(rates[c]) || 0);
+  const missing = FB_CURRENCIES.filter((c) => (q.data ?? []).some((r) => Math.abs(r.b[c] ?? 0) > 0.005) && !(Number(rates[c]) > 0));
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const rows = (q.data ?? []).map((r) => {
+    const uah = ['UAH', ...FB_CURRENCIES].reduce((a, c) => a + (r.b[c] ?? 0) * rateOf(c), 0);
+    return { id: r.id, name: names.get(r.id) ?? '—', UAH: r2(r.b.UAH ?? 0), USD: r2(r.b.USD ?? 0), EUR: r2(r.b.EUR ?? 0), ILS: r2(r.b.ILS ?? 0), total: r2(uah), shown: show === 'UAH' ? r2(uah) : rateOf(show) ? r2(uah / rateOf(show)) : 0 };
+  }).filter((r) => r.UAH || r.USD || r.EUR || r.ILS);
+  type Row = (typeof rows)[number];
+  const sorted = [...rows].sort((a, b) => {
+    const x = a[sort.key as keyof Row], y = b[sort.key as keyof Row];
+    const d = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'he');
+    return sort.desc ? -d : d;
+  });
+  const sum = (k: keyof Row) => r2(rows.reduce((a, r) => a + Number(r[k]), 0));
+  const th = (k: string, label: string) => (
+    <Table.Th style={{ cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => setSort(sort.key === k ? { ...sort, desc: !sort.desc } : { key: k, desc: k !== 'name' })}>
+      {label} <Text span size="xs" c={sort.key === k ? undefined : 'dimmed'}>{sort.key === k ? (sort.desc ? '▼' : '▲') : '↕'}</Text>
+    </Table.Th>
+  );
+  // The table as a file for Excel (UTF-8 with a BOM, so Hebrew opens right).
+  function download() {
+    const head = ['לקוח', 'גריבנה', 'דולר', 'יורו', 'שקל', 'סה"כ בגריבנה', `סה"כ ב-${show}`];
+    const lines = [head, ...sorted.map((r) => [r.name, r.UAH, r.USD, r.EUR, r.ILS, r.total, r.shown]), ['סה"כ', sum('UAH'), sum('USD'), sum('EUR'), sum('ILS'), sum('total'), sum('shown')],
+      [], [`שערים: USD ${rates.USD} · EUR ${rates.EUR} · ILS ${rates.ILS} גריבנה`, `נכון ל-${asOf ? dayjs(asOf).format('DD.MM.YYYY') : dayjs().format('DD.MM.YYYY')}`]];
+    const csv = '\ufeff' + lines.map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `יתרה סופית ${dayjs(asOf ?? undefined).format('DD.MM.YYYY')}.csv`;
+    a.click();
+  }
+  return (
+    <Paper withBorder p="md">
+      <Group justify="space-between">
+        <Title order={4}>חישוב יתרה סופית לכל הלקוחות</Title>
+        <Button size="xs" variant="light" onClick={() => setOpen((o) => !o)}>{open ? 'סגירה' : 'פתיחה'}</Button>
+      </Group>
+      {open && <Stack gap="sm" mt="sm">
+        <Text size="xs" c="dimmed">מקלידים כמה גריבנה שווה כל מטבע, והיתרה של כל לקוח בכל המטבעות נסכמת לסכום אחד, במטבע שבוחרים. רק חישוב: שום דבר לא נרשם.</Text>
+        <Group gap="xs" align="flex-end">
+          {FB_CURRENCIES.map((c) => (
+            <NumberInput key={c} size="xs" label={`1 ${c} = ₴`} min={0} decimalScale={4} w={120} value={rates[c]} onChange={(x) => setRates((r) => ({ ...r, [c]: x === '' ? '' : Number(x) }))}
+              error={missing.includes(c) ? 'חסר שער' : undefined} />
+          ))}
+          <Select size="xs" label="סה״כ במטבע" w={110} data={['USD', 'EUR', 'ILS', 'UAH']} value={show} allowDeselect={false} onChange={(x) => x && setShow(x)} />
+          <DateInput size="xs" label="נכון לתאריך" placeholder="היום" clearable value={asOf} onChange={(d) => setAsOf(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={140} />
+          <Button size="xs" variant="default" onClick={download} disabled={!rows.length}>הורדה לאקסל</Button>
+        </Group>
+        {q.isLoading ? <Text size="sm" c="dimmed">טוען…</Text> : (
+          <Table.ScrollContainer minWidth={760}>
+            <Table fz="sm" striped highlightOnHover verticalSpacing={4}>
+              <Table.Thead><Table.Tr>{th('name', 'לקוח')}{th('UAH', 'גריבנה')}{th('USD', 'דולר')}{th('EUR', 'יורו')}{th('ILS', 'שקל')}{th('total', 'סה"כ בגריבנה')}{th('shown', `סה"כ ב-${show}`)}</Table.Tr></Table.Thead>
+              <Table.Tbody>
+                {sorted.map((r) => (
+                  <Table.Tr key={r.id}>
+                    <Table.Td><Anchor component={Link} to={`/clients/${r.id}`} size="sm">{r.name}</Anchor></Table.Td>
+                    {(['UAH', 'USD', 'EUR', 'ILS'] as const).map((c) => <Table.Td key={c} c={r[c] < 0 ? 'red.7' : r[c] ? undefined : 'dimmed'}>{r[c] ? money(r[c], c as Currency) : '—'}</Table.Td>)}
+                    <Table.Td>{money(r.total, 'UAH')}</Table.Td>
+                    <Table.Td fw={700} c={r.shown < 0 ? 'red.7' : undefined}>{missing.length ? '—' : money(r.shown, show as Currency)}</Table.Td>
+                  </Table.Tr>
+                ))}
+                <Table.Tr fw={700}><Table.Td>סה"כ ({rows.length})</Table.Td>
+                  {(['UAH', 'USD', 'EUR', 'ILS'] as const).map((c) => <Table.Td key={c}>{money(sum(c), c as Currency)}</Table.Td>)}
+                  <Table.Td>{money(sum('total'), 'UAH')}</Table.Td><Table.Td>{missing.length ? '—' : money(sum('shown'), show as Currency)}</Table.Td></Table.Tr>
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+        {missing.length > 0 && <Text size="xs" c="orange">כדי לחשב את הסה"כ צריך שער ל: {missing.join(', ')}</Text>}
+      </Stack>}
     </Paper>
   );
 }
