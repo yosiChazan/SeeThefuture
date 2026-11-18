@@ -763,10 +763,18 @@ function OfficeByCity() {
 // for each currency in hryvnia are typed in, and each client's hryvnia, dollars, euros and
 // shekels are added up into one sum, shown in the currency chosen. As of a date (default today).
 const FB_CURRENCIES = ['USD', 'EUR', 'ILS'] as const;
+const RATES_KEY = 'final-balance-rates';
 function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) {
   const [open, setOpen] = useState(false);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [rates, setRates] = useState<Record<string, number | ''>>({ USD: '', EUR: '', ILS: '' });
+  // The rates typed last time stay, in gray, as the default (decision 172): an empty field uses
+  // them; a typed one replaces them and is kept for next time. Kept in this browser only.
+  const [saved, setSaved] = useState<Record<string, number>>(() => { try { return JSON.parse(localStorage.getItem(RATES_KEY) ?? '{}'); } catch { return {}; } });
+  const typeRate = (c: string, v: number | '') => {
+    setRates((r) => ({ ...r, [c]: v }));
+    if (v !== '' && v > 0) setSaved((s) => { const n = { ...s, [c]: v }; try { localStorage.setItem(RATES_KEY, JSON.stringify(n)); } catch { /* not kept */ } return n; });
+  };
   const [show, setShow] = useState<string>('USD');
   const [sort, setSort] = useState<{ key: string; desc: boolean }>({ key: 'name', desc: false });
   const holders = [...(box.holder_party_id ? [box.holder_party_id] : []), ...box.linked_manager_ids];
@@ -790,8 +798,8 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
       return [...m].map(([id, b]) => ({ id, b }));
     },
   });
-  const rateOf = (c: string) => (c === 'UAH' ? 1 : Number(rates[c]) || 0);
-  const missing = FB_CURRENCIES.filter((c) => (q.data ?? []).some((r) => Math.abs(r.b[c] ?? 0) > 0.005) && !(Number(rates[c]) > 0));
+  const rateOf = (c: string) => (c === 'UAH' ? 1 : Number(rates[c]) || saved[c] || 0);
+  const missing = FB_CURRENCIES.filter((c) => (q.data ?? []).some((r) => Math.abs(r.b[c] ?? 0) > 0.005) && !(rateOf(c) > 0));
   const r2 = (n: number) => Math.round(n * 100) / 100;
   const rows = (q.data ?? []).map((r) => {
     const uah = ['UAH', ...FB_CURRENCIES].reduce((a, c) => a + (r.b[c] ?? 0) * rateOf(c), 0);
@@ -813,7 +821,7 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
   function download() {
     const head = ['לקוח', 'גריבנה', 'דולר', 'יורו', 'שקל', 'סה"כ בגריבנה', `סה"כ ב-${show}`];
     const lines = [head, ...sorted.map((r) => [r.name, r.UAH, r.USD, r.EUR, r.ILS, r.total, r.shown]), ['סה"כ', sum('UAH'), sum('USD'), sum('EUR'), sum('ILS'), sum('total'), sum('shown')],
-      [], [`שערים: USD ${rates.USD} · EUR ${rates.EUR} · ILS ${rates.ILS} גריבנה`, `נכון ל-${asOf ? dayjs(asOf).format('DD.MM.YYYY') : dayjs().format('DD.MM.YYYY')}`]];
+      [], [`שערים: USD ${rateOf('USD')} · EUR ${rateOf('EUR')} · ILS ${rateOf('ILS')} גריבנה`, `נכון ל-${asOf ? dayjs(asOf).format('DD.MM.YYYY') : dayjs().format('DD.MM.YYYY')}`]];
     const csv = '\ufeff' + lines.map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -830,7 +838,8 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
         <Text size="xs" c="dimmed">מקלידים כמה גריבנה שווה כל מטבע, והיתרה של כל לקוח בכל המטבעות נסכמת לסכום אחד, במטבע שבוחרים. רק חישוב: שום דבר לא נרשם.</Text>
         <Group gap="xs" align="flex-end">
           {FB_CURRENCIES.map((c) => (
-            <NumberInput key={c} size="xs" label={`1 ${c} = ₴`} min={0} decimalScale={4} w={120} value={rates[c]} onChange={(x) => setRates((r) => ({ ...r, [c]: x === '' ? '' : Number(x) }))}
+            <NumberInput key={c} size="xs" label={`1 ${c} = ₴`} min={0} decimalScale={4} w={120} value={rates[c]} placeholder={saved[c] ? String(saved[c]) : undefined}
+              onChange={(x) => typeRate(c, x === '' ? '' : Number(x))}
               error={missing.includes(c) ? 'חסר שער' : undefined} />
           ))}
           <Select size="xs" label="סה״כ במטבע" w={110} data={['USD', 'EUR', 'ILS', 'UAH']} value={show} allowDeselect={false} onChange={(x) => x && setShow(x)} />
