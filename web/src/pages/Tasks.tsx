@@ -8,7 +8,19 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AddLink, append, LinkedText, useMe } from '../components/ManualTopics';
-import { mhtml, taskWord, type WordReply } from '../lib/taskWord';
+import { taskDocx, type WordImage, type WordReply } from '../lib/taskWord';
+
+// A picture as Word takes it: its size, and PNG instead of a kind older Word does not show.
+async function wordImage(name: string, blob: Blob): Promise<WordImage> {
+  const bmp = await createImageBitmap(blob);
+  const { width, height } = bmp;
+  const kind = blob.type.split('/')[1];
+  if (kind === 'png' || kind === 'jpeg' || kind === 'gif') { bmp.close(); return { name, ext: kind, bytes: new Uint8Array(await blob.arrayBuffer()), width, height }; }
+  const c = document.createElement('canvas'); c.width = width; c.height = height;
+  c.getContext('2d')!.drawImage(bmp, 0, 0); bmp.close();
+  const png = await new Promise<Blob>((ok, fail) => c.toBlob((b) => (b ? ok(b) : fail(new Error('no picture'))), 'image/png'));
+  return { name, ext: 'png', bytes: new Uint8Array(await png.arrayBuffer()), width, height };
+}
 import { useAccess } from '../lib/access';
 import { COUNTRIES, COUNTRY_HE, propertyTitle } from '../lib/format';
 import {
@@ -251,33 +263,31 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
   // The card as a Word document (decision 171).
   async function exportWord() {
     const evs = events.data ?? [];
-    // The replies' pictures, fetched and put inside the file (decision 173).
-    const pics = new Map<string, { name: string; type: string; base64: string }>();
+    // The replies' pictures, fetched and put inside the file (decisions 173, 174).
+    const pics = new Map<string, WordImage>();
     for (const path of evs.flatMap((e) => e.files ?? [])) {
       const { data } = await supabase.storage.from('tasks').download(path);
       if (!data) continue;
-      const bytes = new Uint8Array(await data.arrayBuffer()); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-      const ext = (data.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
-      pics.set(path, { name: `img${pics.size + 1}.${ext}`, type: data.type || 'image/png', base64: btoa(bin) });
+      try { pics.set(path, await wordImage(path, data)); } catch { /* not a picture Word can show */ }
     }
     const who = (id: string | null) => (id ? dir.users.get(id)?.display_name ?? 'לא ידוע' : 'המערכת');
     const when = (s: string) => new Date(s).toLocaleString('he-IL');
     const conv = (n: ThreadNode): WordReply => ({
       who: who(n.event.created_by), at: when(n.event.created_at), body: n.event.body, edited: !!n.event.edited_at, files: n.event.files?.length ?? 0, open: n.open,
-      images: (n.event.files ?? []).filter((f) => pics.has(f)).map((f) => `file:///C:/${pics.get(f)!.name}`),
+      images: (n.event.files ?? []).filter((f) => pics.has(f)),
       resolved: n.resolved ? { who: who(n.resolved.created_by), at: when(n.resolved.created_at), body: n.resolved.body } : null, children: n.children.map(conv),
     });
     const threads = buildThreads(evs);
-    const html = taskWord({
+    const doc = taskDocx({
       subject: task.subject, status: STATUS_HE[task.status], priority: PRIORITY_HE[task.priority], trigger: dir.trigLabel(task.trigger_id) ?? null,
       category: dir.catLabel(task.category_id) ?? null, series: task.series_id ? `חוזרת · ${task.occurrence_on ? dayjs(task.occurrence_on).format('DD.MM.YYYY') : ''}` : null,
       author, created: when(task.created_at), body: task.body, links: task.office_task_links.map(dir.linkName), assignees: task.office_task_assignees.map(dir.nameOf),
       replies: threads.map(conv), openBranches: openBranches(threads),
       history: evs.filter((e) => e.kind !== 'reply' && e.kind !== 'resolve').map((e) => ({ who: who(e.created_by), what: describeEvent(e, dir.nameOf, dir.linkName), at: when(e.created_at), body: e.body })),
-    }, window.location.origin);
+    }, window.location.origin, [...pics.values()]);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([mhtml(html, [...pics.values()])], { type: 'application/msword' }));
-    a.download = `${task.subject.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'משימה'}.doc`;
+    a.href = URL.createObjectURL(new Blob([doc as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+    a.download = `${task.subject.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'משימה'}.docx`;
     a.click();
   }
   return (
