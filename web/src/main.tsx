@@ -9,6 +9,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import 'dayjs/locale/he';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+
+// After a new version is deployed, a tab opened earlier still runs the old code, and the
+// parts it loads on demand (the Excel reader, the PDF and OCR readers) are gone from the
+// server: "Failed to fetch dynamically imported module". Vite reports it as
+// vite:preloadError; reload once to get the new version, at most once a minute.
+window.addEventListener('vite:preloadError', (event) => {
+  let last = 0;
+  try { last = Number(sessionStorage.getItem('stale-reload') ?? 0); } catch { /* storage blocked */ }
+  if (Date.now() - last < 60_000) return;
+  try { sessionStorage.setItem('stale-reload', String(Date.now())); } catch { /* storage blocked */ }
+  event.preventDefault();
+  window.location.reload();
+});
 import { App } from './App';
 
 const theme = createTheme({
