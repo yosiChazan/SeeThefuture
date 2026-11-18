@@ -2,7 +2,8 @@
 //
 // One block per apartment. The first row of a block has the number in column A and
 // "PLC 17(2), APT. 12\n<owner>" in B; the rows below carry the lease dates in B and
-// one expense per row. Rent arrives in cash or to a card account; Vitaly keeps 10%
+// one expense per row. Rent arrives in cash or to a card account; Vitaly keeps his fee (10% until
+// September 2026, 15% from October: the percentage is read from the column's title)
 // of each. Debts are shown for information and posted by nobody (SPEC §4.3).
 
 import { round2, dayMonth, expectHeader, findCol, findPeriod, lastDay, num, prevMonth, text } from './util.ts';
@@ -36,12 +37,14 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
     card: findCol(g, 1, /^CARD ACCOUNT/i, 'CARD ACCOUNT'),
     // "EXPENSES FOR JANUARY" in January, "EXPENSES JUNE" in June.
     expenses: findCol(g, 1, /^EXPENSES\b/i, 'EXPENSES <MONTH>'),
-    feeCash: findCol(g, 1, /10\s*% FOR MANAGEMENT FROM CASH/i, '10% FOR MANAGEMENT FROM CASH'),
-    feeCard: findCol(g, 1, /10\s*% FOR MANAGEMENT FROM CARD/i, '10% FOR MANAGEMENT FROM CARD ACCOUNT'),
+    feeCash: findCol(g, 1, /\d+(\.\d+)?\s*% FOR MANAGEMENT FROM CASH/i, '<N>% FOR MANAGEMENT FROM CASH'),
+    feeCard: findCol(g, 1, /\d+(\.\d+)?\s*% FOR MANAGEMENT FROM CARD/i, '<N>% FOR MANAGEMENT FROM CARD ACCOUNT'),
     other: findCol(g, 1, /OTHER EXP[AE]NSES/i, 'OTHER EXPENSES'),  // spelled "EXPANSES" in January
     debtFee: findCol(g, 1, /DEBT FOR MANAGEMENT/i, 'DEBT FOR MANAGEMENT'),
     debtOther: findCol(g, 1, /DEBT FOR OTHER/i, 'DEBT FOR OTHER EXPENSES'),
   };
+  // Vitaly's fee as the report states it ("15% FOR MANAGEMENT FROM CASH").
+  const feePct = Number(/(\d+(?:\.\d+)?)\s*%/.exec(text(g, 1, col.feeCash))?.[1] ?? 10);
   // Each amount column has its date in the column to its left.
   for (const c of [col.cash, col.card, col.expenses, col.feeCash, col.feeCard]) expectHeader(g, 1, c - 1, /^DATE$/i, 'DATE');
 
@@ -94,15 +97,15 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
       const feeCash = num(g.value(r, col.feeCash));
       if (feeCash) {
         sums.fees += feeCash;
-        add(r, 'דמי ניהול 10%', 'mgmt_fee', feeCash, date(r, col.feeCash), 'דמי ניהול לויטאלי (מזומן)', [
+        add(r, `דמי ניהול ${feePct}%`, 'mgmt_fee', feeCash, date(r, col.feeCash), 'דמי ניהול לויטאלי (מזומן)', [
           { amount: -feeCash, currency: 'UAH', account: { kind: 'manager_cash', holder: 'source' } },
           { amount: feeCash, currency: 'UAH', external: 'source' },
-        ], [], cash && Math.abs(feeCash - round2(cash * 0.1)) > 1 ? [`דמי הניהול (${feeCash}) אינם 10% מהשכירות (${cash})`] : []);
+        ], [], cash && Math.abs(feeCash - round2(cash * feePct / 100)) > 1 ? [`דמי הניהול (${feeCash}) אינם ${feePct}% מהשכירות (${cash})`] : []);
       }
       const feeCard = num(g.value(r, col.feeCard));
       if (feeCard) {
         sums.fees += feeCard;
-        add(r, 'דמי ניהול 10% (כרטיס)', 'mgmt_fee', feeCard, date(r, col.feeCard), 'דמי ניהול לויטאלי (כרטיס)', [
+        add(r, `דמי ניהול ${feePct}% (כרטיס)`, 'mgmt_fee', feeCard, date(r, col.feeCard), 'דמי ניהול לויטאלי (כרטיס)', [
           { amount: -feeCard, currency: 'UAH', account: { kind: 'legacy_card', holder: 'beneficiary' } },
           { amount: feeCard, currency: 'UAH', external: 'source' },
         ]);
