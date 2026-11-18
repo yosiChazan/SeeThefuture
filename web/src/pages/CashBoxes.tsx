@@ -1,4 +1,4 @@
-import { Alert, Anchor, Badge, Button, Collapse, Group, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Collapse, Group, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Title, Tooltip } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
@@ -424,6 +424,7 @@ export function CashBoxes() {
           </Paper>}
 
           {box?.is_office && <OfficeAtManagers />}
+          {box?.is_office && <OfficeByCity />}
 
           <Paper withBorder p="md">
             <Group justify="space-between" mb="sm">
@@ -682,5 +683,77 @@ function ByClient({ box, currency, names }: { box: Box; currency: string; names:
         )}
       </>}
     </Stack>
+  );
+}
+
+// The office's fees by city (decision 165): what was credited to the office from each city's
+// apartments in a period, per currency, with each city's share. A part-to-whole of a few parts: a
+// segmented bar (every segment labelled by the legend and the table), not a pie.
+const CITY_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+function OfficeByCity() {
+  const [from, setFrom] = useState<string | null>(null);
+  const [to, setTo] = useState<string | null>(null);
+  const q = useQuery({
+    queryKey: ['office-by-city', from, to],
+    queryFn: async () => {
+      const office = must(await supabase.rpc('office_party')) as string | null;
+      if (!office) return [];
+      const out: { amount: number; currency: string; property: { building: { city: { name_he: string } } | null } | null }[] = [];
+      for (let at = 0; ; at += 1000) {
+        let qq = supabase.from('entries').select('amount, currency, accounts!inner(beneficiary_party_id), transactions!inner(status, category, occurred_on), property:properties(building:buildings(city:cities(name_he)))')
+          .eq('accounts.beneficiary_party_id', office).eq('transactions.status', 'posted').eq('transactions.category', 'mgmt_fee');
+        if (from) qq = qq.gte('transactions.occurred_on', from);
+        if (to) qq = qq.lte('transactions.occurred_on', to);
+        const page = must(await qq.order('id').range(at, at + 999)) as unknown as typeof out;
+        out.push(...page);
+        if (page.length < 1000) break;
+      }
+      const m = new Map<string, Map<string, number>>();
+      for (const e of out) {
+        const city = e.property?.building?.city?.name_he ?? 'בלי נכס';
+        const byCity = m.get(e.currency) ?? m.set(e.currency, new Map()).get(e.currency)!;
+        byCity.set(city, (byCity.get(city) ?? 0) + Number(e.amount));
+      }
+      return [...m].map(([currency, byCity]) => {
+        const cities = [...byCity].map(([city, amount]) => ({ city, amount: Math.round(amount * 100) / 100 })).filter((c) => c.amount !== 0).sort((a, b) => b.amount - a.amount);
+        return { currency, cities, total: cities.reduce((a, c) => a + c.amount, 0) };
+      });
+    },
+  });
+  // A city keeps its color whatever the period (color follows the entity, not its rank).
+  const allCities = [...new Set((q.data ?? []).flatMap((x) => x.cities.map((c) => c.city)))].sort((a, b) => a.localeCompare(b, 'he'));
+  const colorOf = (city: string) => CITY_COLORS[allCities.indexOf(city) % CITY_COLORS.length];
+  return (
+    <Paper withBorder p="md">
+      <Title order={4} mb={4}>דמי ניהול שהמשרד קיבל, לפי עיר</Title>
+      <Group gap="xs" align="flex-end" mb="sm">
+        <DateInput size="xs" label="מתאריך" placeholder="מתחילת הספירה" clearable value={from} onChange={(d) => setFrom(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={150} />
+        <DateInput size="xs" label="עד תאריך" placeholder="היום" clearable value={to} onChange={(d) => setTo(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={150} />
+        <Text size="xs" c="dimmed" mb={6}>הזכות של המשרד מכל שורת דמי ניהול, לפי העיר של הדירה.</Text>
+      </Group>
+      {q.isLoading ? <Text size="sm" c="dimmed">טוען…</Text> : !(q.data ?? []).length ? <Text size="sm" c="dimmed">אין דמי ניהול בתקופה</Text> : (q.data ?? []).map((x) => (
+        <Stack key={x.currency} gap={6} mb="md">
+          <Text size="sm" fw={600}>{x.currency} · סה"כ {money(x.total, x.currency as Currency)}</Text>
+          <div role="img" aria-label={x.cities.map((c) => `${c.city} ${Math.round((c.amount / x.total) * 100)}%`).join(', ')}
+            style={{ display: 'flex', gap: 2, height: 22, borderRadius: 4, overflow: 'hidden', direction: 'rtl' }}>
+            {x.cities.map((c) => (
+              <Tooltip key={c.city} label={`${c.city}: ${money(c.amount, x.currency as Currency)} (${((c.amount / x.total) * 100).toFixed(1)}%)`}>
+                <div style={{ flex: `${Math.max(c.amount, 0)} 0 0`, background: colorOf(c.city), minWidth: 4 }} />
+              </Tooltip>
+            ))}
+          </div>
+          <Table fz="sm" verticalSpacing={2}>
+            <Table.Tbody>{x.cities.map((c) => (
+              <Table.Tr key={c.city}>
+                <Table.Td w={20}><div style={{ width: 10, height: 10, borderRadius: 2, background: colorOf(c.city) }} /></Table.Td>
+                <Table.Td>{c.city}</Table.Td>
+                <Table.Td>{money(c.amount, x.currency as Currency)}</Table.Td>
+                <Table.Td c="dimmed">{((c.amount / x.total) * 100).toFixed(1)}%</Table.Td>
+              </Table.Tr>
+            ))}</Table.Tbody>
+          </Table>
+        </Stack>
+      ))}
+    </Paper>
   );
 }
