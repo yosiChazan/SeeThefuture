@@ -7,7 +7,7 @@
 // of each. Debts are shown for information and posted by nobody (SPEC §4.3).
 
 import { round2, dayMonth, expectHeader, findCol, findPeriod, lastDay, num, prevMonth, text } from './util.ts';
-import { FormatError, type Book, type ParseResult, type ParsedRow, type PropertyHint, type ProposedEntry } from './types.ts';
+import { FormatError, type Book, type Grid, type ParseResult, type ParsedRow, type PropertyHint, type ProposedEntry } from './types.ts';
 
 const ADAPTER = 'vitaly';
 
@@ -20,7 +20,11 @@ function expenseCategory(s: string): string {
 
 // "PLC 17(2), APT. 12" → building 2, apartment 12 in Lake City.
 export function vitalyHint(cell: string): PropertyHint | null {
-  const [first, ...rest] = cell.split('\n').map((s) => s.trim()).filter(Boolean);
+  // Bilingual cells (until December 2025): "ПЛС 17 (2) КВ.12\n<name>/\n\nPLC 17(2), APT. 12\n<name>". The
+  // English part starts at the line with "PLC".
+  const lines = cell.split('\n').map((s) => s.trim()).filter(Boolean);
+  const at = Math.max(0, lines.findIndex((l) => /^PLC\s*\d/i.test(l)));
+  const [first, ...rest] = lines.slice(at);
   const m = first?.match(/PLC\s*(\d+)\s*\((\d+)\)\s*,?\s*APT\.?\s*(\d+)/i);
   if (!m) return null;
   // One spelling for every month ("APT.36" in June, "APT. 36" in January), so the
@@ -28,8 +32,18 @@ export function vitalyHint(cell: string): PropertyHint | null {
   return { ref: `PLC ${m[1]}(${m[2]}), APT. ${m[3]}`, building: m[2], unit: m[3], project: 'Lake city', owner: rest.join(' ') || undefined };
 }
 
+// Until December 2025 the titles were in Ukrainian and English ("ГОТІВКА/\nCASH"): the English
+// part, after the last slash, is what the checks below read (decision 166).
+const CYRILLIC = /[\u0400-\u04FF№]/;
+export function englishTitle(v: unknown): unknown {
+  if (typeof v !== 'string' || !CYRILLIC.test(v)) return v;
+  const m = /\/\s*([^\u0400-\u04FF№]*)$/s.exec(v);
+  return m ? m[1].trim() : v;
+}
+
 export function parseVitaly(book: Book, fileName = ''): ParseResult {
-  const g = book.sheets[0];
+  const raw = book.sheets[0];
+  const g: Grid = { ...raw, value: (r, c) => (r === 1 ? englishTitle(raw.value(r, c)) as ReturnType<Grid['value']> : raw.value(r, c)), formula: (r, c) => raw.formula(r, c), hidden: (r) => raw.hidden(r) };
   expectHeader(g, 1, 1, /^No\.?$/i, 'No.');
   expectHeader(g, 1, 2, /REPORT FOR/i, 'REPORT FOR <MONTH>');
   const col = {
