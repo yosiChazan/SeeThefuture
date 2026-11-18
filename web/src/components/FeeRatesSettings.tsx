@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Button, Checkbox, Group, Modal, NumberInput, Paper, SegmentedControl, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { ActionIcon, Alert, Button, Checkbox, Group, Modal, NumberInput, Paper, SegmentedControl, Select, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { MonthPickerInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { must, supabase } from '../lib/supabase';
+import { useClients } from '../lib/queries';
 
 // Odessa's STF management fee per month (SPEC decision 158): a rate holds from its month on,
 // until the next one. Every rent posted for an Odessa apartment gets its fee at its month's rate.
@@ -52,6 +53,7 @@ export function FeeRatesSettings() {
         <Button onClick={save} loading={busy} disabled={!month || pct === ''}>{rows.some((x) => x.month === month) ? 'שינוי האחוז' : 'הוספה'}</Button>
       </Group>
       {change && <Confirm city={city} change={change} onClose={async (applied) => { setChange(null); if (applied) { setPct(''); setNotes(''); } await refresh(); setBusy(false); }} />}
+      <Exempt />
     </Paper>
   );
 }
@@ -121,5 +123,39 @@ function Confirm({ city, change, onClose }: { city: string; change: { month: str
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+// Clients with no office fee (decision 177): a rent of theirs gets no automatic fee, and a rate
+// set or changed here gives their lines 0.
+function Exempt() {
+  const qc = useQueryClient();
+  const clients = useClients();
+  const q = useQuery({ queryKey: ['office-fee-exempt'], queryFn: async () => must(await supabase.from('office_fee_exempt').select('party_id, notes, party:parties(display_name)')) as unknown as { party_id: string; notes: string | null; party: { display_name: string } }[] });
+  const [pick, setPick] = useState<string | null>(null);
+  const run = async (p: PromiseLike<{ error: { message: string } | null }>) => {
+    const r = await p;
+    if (r.error) notifications.show({ color: 'red', message: r.error.message });
+    await qc.invalidateQueries({ queryKey: ['office-fee-exempt'] });
+  };
+  const rows = q.data ?? [];
+  const options = (clients.data ?? []).filter((c) => !rows.some((r) => r.party_id === c.id)).map((c) => ({ value: c.id, label: c.display_name }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'he'));
+  return (
+    <Stack gap={4} mt="lg">
+      <Title order={5}>פטורים מדמי ניהול משרד</Title>
+      <Text size="xs" c="dimmed">לשכירות של לקוח ברשימה לא נרשמים דמי ניהול משרד, ובשינוי אחוז בהגדרות השורות שלו מקבלות 0.</Text>
+      {rows.map((r) => (
+        <Group key={r.party_id} gap="xs">
+          <Text size="sm" fw={500}>{r.party.display_name}</Text>
+          {r.notes && <Text size="xs" c="dimmed">{r.notes}</Text>}
+          <ActionIcon size="sm" variant="subtle" color="red" aria-label="הסרה" onClick={() => run(supabase.from('office_fee_exempt').delete().eq('party_id', r.party_id))}><IconTrash size={14} /></ActionIcon>
+        </Group>
+      ))}
+      <Group gap="xs" align="flex-end">
+        <Select size="xs" searchable placeholder="הוספת לקוח" data={options} value={pick} onChange={setPick} w={260} />
+        <Button size="xs" disabled={!pick} onClick={async () => { await run(supabase.from('office_fee_exempt').insert({ party_id: pick })); setPick(null); }}>הוספה</Button>
+      </Group>
+    </Stack>
   );
 }
