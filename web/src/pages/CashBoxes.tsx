@@ -761,12 +761,14 @@ function OfficeByCity() {
 
 // The final balance of every client with the box's holder (decision 170): the rates of the day
 // for each currency in hryvnia are typed in, and each client's hryvnia, dollars, euros and
-// shekels are added up into one sum, shown in the currency chosen. As of a date (default today).
+// shekels are added up into one sum, shown in the currency chosen. As of a date (default today),
+// or only what moved between two dates (decision 176).
 const FB_CURRENCIES = ['USD', 'EUR', 'ILS'] as const;
 const RATES_KEY = 'final-balance-rates';
 function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) {
   const [open, setOpen] = useState(false);
-  const [asOf, setAsOf] = useState<string | null>(null);
+  const [from, setFrom] = useState<string | null>(null);   // null: from the start (a balance)
+  const [asOf, setAsOf] = useState<string | null>(null);   // null: today
   const [rates, setRates] = useState<Record<string, number | ''>>({ USD: '', EUR: '', ILS: '' });
   // The rates typed last time stay, in gray, as the default (decision 172): an empty field uses
   // them; a typed one replaces them and is kept for next time. Kept in this browser only.
@@ -779,12 +781,13 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
   const [sort, setSort] = useState<{ key: string; desc: boolean }>({ key: 'name', desc: false });
   const holders = [...(box.holder_party_id ? [box.holder_party_id] : []), ...box.linked_manager_ids];
   const q = useQuery({
-    queryKey: ['final-balance', box.id, asOf], enabled: open && holders.length > 0,
+    queryKey: ['final-balance', box.id, from, asOf], enabled: open && holders.length > 0,
     queryFn: async () => {
       const out: { amount: number; accounts: { beneficiary_party_id: string; currency: string } }[] = [];
       for (let at = 0; ; at += 1000) {
         let qq = supabase.from('entries').select('amount, accounts!inner(kind, currency, holder_party_id, beneficiary_party_id), transactions!inner(status, occurred_on)')
           .eq('accounts.kind', 'manager_cash').in('accounts.holder_party_id', holders).eq('transactions.status', 'posted');
+        if (from) qq = qq.gte('transactions.occurred_on', from);
         if (asOf) qq = qq.lte('transactions.occurred_on', asOf);
         const page = must(await qq.order('id').range(at, at + 999)) as unknown as typeof out;
         out.push(...page);
@@ -821,11 +824,11 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
   function download() {
     const head = ['לקוח', 'גריבנה', 'דולר', 'יורו', 'שקל', 'סה"כ בגריבנה', `סה"כ ב-${show}`];
     const lines = [head, ...sorted.map((r) => [r.name, r.UAH, r.USD, r.EUR, r.ILS, r.total, r.shown]), ['סה"כ', sum('UAH'), sum('USD'), sum('EUR'), sum('ILS'), sum('total'), sum('shown')],
-      [], [`שערים: USD ${rateOf('USD')} · EUR ${rateOf('EUR')} · ILS ${rateOf('ILS')} גריבנה`, `נכון ל-${asOf ? dayjs(asOf).format('DD.MM.YYYY') : dayjs().format('DD.MM.YYYY')}`]];
+      [], [`שערים: USD ${rateOf('USD')} · EUR ${rateOf('EUR')} · ILS ${rateOf('ILS')} גריבנה`, from ? `תנועות מ-${dayjs(from).format('DD.MM.YYYY')} עד ${dayjs(asOf ?? undefined).format('DD.MM.YYYY')}` : `נכון ל-${dayjs(asOf ?? undefined).format('DD.MM.YYYY')}`]];
     const csv = '\ufeff' + lines.map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `יתרה סופית ${dayjs(asOf ?? undefined).format('DD.MM.YYYY')}.csv`;
+    a.download = from ? `תנועות ${dayjs(from).format('DD.MM.YYYY')}-${dayjs(asOf ?? undefined).format('DD.MM.YYYY')}.csv` : `יתרה סופית ${dayjs(asOf ?? undefined).format('DD.MM.YYYY')}.csv`;
     a.click();
   }
   return (
@@ -843,7 +846,8 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
               error={missing.includes(c) ? 'חסר שער' : undefined} />
           ))}
           <Select size="xs" label="סה״כ במטבע" w={110} data={['USD', 'EUR', 'ILS', 'UAH']} value={show} allowDeselect={false} onChange={(x) => x && setShow(x)} />
-          <DateInput size="xs" label="נכון לתאריך" placeholder="היום" clearable value={asOf} onChange={(d) => setAsOf(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={140} />
+          <DateInput size="xs" label="מתאריך" placeholder="מתחילת הספירה" clearable value={from} onChange={(d) => setFrom(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={140} />
+          <DateInput size="xs" label="עד תאריך" placeholder="היום" clearable value={asOf} onChange={(d) => setAsOf(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={140} />
           <Button size="xs" variant="default" onClick={download} disabled={!rows.length}>הורדה לאקסל</Button>
         </Group>
         {q.isLoading ? <Text size="sm" c="dimmed">טוען…</Text> : (
@@ -866,6 +870,7 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
             </Table>
           </Table.ScrollContainer>
         )}
+        {from && <Text size="xs" c="blue">מוצג רק מה שנכנס ויצא בין התאריכים, בלי היתרות שמלפני {dayjs(from).format('DD.MM.YYYY')}. בלי "מתאריך" מוצגת היתרה המלאה.</Text>}
         {missing.length > 0 && <Text size="xs" c="orange">כדי לחשב את הסה"כ צריך שער ל: {missing.join(', ')}</Text>}
       </Stack>}
     </Paper>
