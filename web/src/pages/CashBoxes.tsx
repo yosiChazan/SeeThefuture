@@ -368,6 +368,7 @@ export function CashBoxes() {
                   <Text size="xs" c="dimmed">{s.others ? `כולל ${money(s.others, cur(s.currency))}` : 'אין הוצאות שנרשמו'}</Text></Paper>
               </SimpleGrid>
               {(auto.data ?? []).some((x) => x.currency === s.currency) && <Text size="xs" c="dimmed" mt="sm">"מהדוחות": מתעדכן לבד עם כל דוח שמאושר בקליטה (קופת ויטאלי: גבייה במזומן פחות דמי ניהול והוצאות).</Text>}
+              {linked && <ByClient box={box} currency={s.currency} names={names} />}
             </Paper>
           ))}
 
@@ -603,5 +604,83 @@ function OfficeAtManagers() {
         </Stack>
       </Collapse>
     </Paper>
+  );
+}
+
+// What each client's money with the box's holder (and its linked managers) did in a period, in
+// one currency (decision 163): only what happened inside the period, nothing carried from before.
+// The small fund for building costs (expense_pool) is a box of its own and is not here.
+function ByClient({ box, currency, names }: { box: Box; currency: string; names: Map<string, string> }) {
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState<string | null>(null);   // null: from the start
+  const [to, setTo] = useState<string | null>(null);       // null: today
+  const [sort, setSort] = useState<{ key: 'name' | 'in' | 'out' | 'net'; desc: boolean; then?: { key: 'name' | 'in' | 'out' | 'net'; desc: boolean } }>({ key: 'name', desc: false });
+  const holders = [...(box.holder_party_id ? [box.holder_party_id] : []), ...box.linked_manager_ids];
+  const q = useQuery({
+    queryKey: ['box-by-client', box.id, currency, from, to], enabled: open && holders.length > 0,
+    queryFn: async () => {
+      const out: { amount: number; accounts: { beneficiary_party_id: string } }[] = [];
+      for (let at = 0; ; at += 1000) {
+        let qq = supabase.from('entries').select('amount, accounts!inner(kind, currency, holder_party_id, beneficiary_party_id), transactions!inner(status, occurred_on)')
+          .eq('accounts.kind', 'manager_cash').eq('accounts.currency', currency).in('accounts.holder_party_id', holders).eq('transactions.status', 'posted');
+        if (from) qq = qq.gte('transactions.occurred_on', from);
+        if (to) qq = qq.lte('transactions.occurred_on', to);
+        const page = must(await qq.order('id').range(at, at + 999)) as unknown as { amount: number; accounts: { beneficiary_party_id: string } }[];
+        out.push(...page);
+        if (page.length < 1000) break;
+      }
+      const m = new Map<string, { in: number; out: number }>();
+      for (const e of out) {
+        const k = e.accounts.beneficiary_party_id, v = m.get(k) ?? { in: 0, out: 0 }, a = Number(e.amount);
+        if (a > 0) v.in += a; else v.out += a;
+        m.set(k, v);
+      }
+      return [...m].map(([id, v]) => ({ id, in: Math.round(v.in * 100) / 100, out: Math.round(v.out * 100) / 100, net: Math.round((v.in + v.out) * 100) / 100 }));
+    },
+  });
+  const nameOf = (id: string) => names.get(id) ?? (id === box.holder_party_id ? 'גרשון' : '—');
+  const val = (r: { id: string; in: number; out: number; net: number }, k: typeof sort.key) => (k === 'name' ? nameOf(r.id) : r[k]);
+  const cmp = (a: { id: string; in: number; out: number; net: number }, b: typeof a, k: typeof sort.key, desc: boolean) => {
+    const x = val(a, k), y = val(b, k);
+    const d = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'he');
+    return desc ? -d : d;
+  };
+  const rows = [...(q.data ?? [])].sort((a, b) => cmp(a, b, sort.key, sort.desc) || (sort.then ? cmp(a, b, sort.then.key, sort.then.desc) : 0));
+  const total = rows.reduce((t, r) => ({ in: t.in + r.in, out: t.out + r.out, net: t.net + r.net }), { in: 0, out: 0, net: 0 });
+  const th = (k: typeof sort.key, label: string) => (
+    <Table.Th style={{ cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => setSort(sort.key === k ? { ...sort, desc: !sort.desc } : { key: k, desc: k !== 'name', then: { key: sort.key, desc: sort.desc } })}>
+      {label} <Text span size="xs" c={sort.key === k ? undefined : 'dimmed'}>{sort.key === k ? (sort.desc ? '▼' : '▲') : '↕'}</Text>
+    </Table.Th>
+  );
+  const c = currency as Currency;
+  return (
+    <Stack gap="xs" mt="sm">
+      <Button size="xs" variant="subtle" w="fit-content" onClick={() => setOpen((o) => !o)}>{open ? 'הסתרת הפירוט לפי לקוח' : 'פירוט לפי לקוח'}</Button>
+      {open && <>
+        <Group gap="xs" align="flex-end">
+          <DateInput size="xs" label="מתאריך" placeholder="מתחילת הספירה" clearable value={from} onChange={(d) => setFrom(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={150} />
+          <DateInput size="xs" label="עד תאריך" placeholder="היום" clearable value={to} onChange={(d) => setTo(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={150} />
+          <Text size="xs" c="dimmed" mb={6}>רק מה שקרה בתקופה, בלי יתרות מלפניה. בלי הקופה הקטנה.</Text>
+        </Group>
+        {q.isLoading ? <Text size="sm" c="dimmed">טוען…</Text> : !rows.length ? <Text size="sm" c="dimmed">אין תנועות בתקופה</Text> : (
+          <Table.ScrollContainer minWidth={520}>
+            <Table fz="sm" striped highlightOnHover verticalSpacing={4}>
+              <Table.Thead><Table.Tr>{th('name', 'לקוח')}{th('in', 'נכנס')}{th('out', 'יצא')}{th('net', 'סה"כ בתקופה')}</Table.Tr></Table.Thead>
+              <Table.Tbody>
+                {rows.map((r) => (
+                  <Table.Tr key={r.id}>
+                    <Table.Td><Anchor component={Link} to={`/clients/${r.id}`} size="sm">{nameOf(r.id)}</Anchor></Table.Td>
+                    <Table.Td>{money(r.in, c)}</Table.Td>
+                    <Table.Td c={r.out < 0 ? 'red.7' : undefined}>{money(r.out, c)}</Table.Td>
+                    <Table.Td fw={600}>{money(r.net, c)}</Table.Td>
+                  </Table.Tr>
+                ))}
+                <Table.Tr fw={700}><Table.Td>סה"כ ({rows.length})</Table.Td><Table.Td>{money(Math.round(total.in * 100) / 100, c)}</Table.Td><Table.Td>{money(Math.round(total.out * 100) / 100, c)}</Table.Td><Table.Td>{money(Math.round(total.net * 100) / 100, c)}</Table.Td></Table.Tr>
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+      </>}
+    </Stack>
   );
 }
