@@ -23,7 +23,7 @@ export interface BoxSummary {
   fromManagers: { who: string; amount: number }[];
   received: number;      // from the managers: reports on their own, plus what was entered
   converted: number;     // conversions: hryvnia out (negative), dollars/euros/shekels in (positive)
-  residual: number;      // of which left to clients as debt/credit with the holder, not cash
+  residual: number;      // of which left to clients by the conversions; counted in the box (decision 169)
   sentToOffice: number;  // sums sent to us (positive)
   toClients: number;     // paid to clients straight from the box, not through a sum to us
   expected: number;      // received ± converted − sent to us − paid straight to clients
@@ -55,7 +55,9 @@ export function summarize(ms: CashMovement[], nameOf: (m: CashMovement) => strin
       else others += n;
     }
     const received = [...managers.values()].reduce((a, b) => a + b, 0);
-    const expected = received + converted - residual - sentToOffice - toClients;
+    // What conversions left to clients is counted too (decision 169): the box equals the sum of the
+    // clients' balances with the holder.
+    const expected = received + converted - sentToOffice - toClients;
     return {
       currency, fromManagers: [...managers].map(([who, amount]) => ({ who, amount: r2(amount) })).sort((a, b) => b.amount - a.amount),
       received: r2(received), converted: r2(converted), residual: r2(residual), sentToOffice: r2(sentToOffice), toClients: r2(toClients), expected: r2(expected), others: r2(others), balance: r2(expected + others),

@@ -359,7 +359,7 @@ export function CashBoxes() {
                   {s.fromManagers.map((f) => <Text key={f.who} size="xs" c="dimmed">{f.who}: {money(f.amount, cur(s.currency))}</Text>)}</Paper>
                 {s.converted !== 0 && <Paper withBorder p="sm"><Text size="sm" c="dimmed">{convLabel(s)}</Text><Text fw={700} fz={22}>{money(s.converted, cur(s.currency))}</Text>
                   <Text size="xs" c="dimmed">{s.converted < 0 ? 'גריבנה של לקוחות שהומרה לפני העברה אליהם' : 'מהגריבנה של הלקוחות, לפני ההעברה אליהם'}</Text>
-                  {s.residual !== 0 && <Text size="xs" c="dimmed">מזה נשאר ללקוחות כיתרה מול גרשון (לא בקופה): {money(s.residual, cur(s.currency))}</Text>}</Paper>}
+                  {s.residual !== 0 && <Text size="xs" c="dimmed">מזה נשאר ללקוחות כיתרה מול גרשון (נספר בקופה): {money(s.residual, cur(s.currency))}</Text>}</Paper>}
                 <Paper withBorder p="sm"><Text size="sm" c="dimmed">{linked ? 'גרשון העביר אלינו' : 'הועבר למשרד'}</Text><Text fw={700} fz={22}>{money(s.sentToOffice, cur(s.currency))}</Text>
                   {s.toClients > 0 && <Text size="xs" c="dimmed">ועוד ישירות ללקוחות: {money(s.toClients, cur(s.currency))}</Text>}</Paper>
                 <Paper withBorder p="sm" bg="blue.0"><Text size="sm" c="dimmed">{linked ? 'אמור להיות אצל גרשון' : 'אמור להיות בקופה'}</Text><Text fw={700} fz={22}>{money(s.expected, cur(s.currency))}</Text>
@@ -491,7 +491,7 @@ function BoxGlance({ box, names }: { box: Box; names: Map<string, string> }) {
                 <Table.Tr><Table.Td>התקבל מהמנהלים</Table.Td><Table.Td ta="left">{money(s.received, c)}</Table.Td></Table.Tr>
                 {s.converted !== 0 && <Table.Tr><Table.Td>{convLabel(s)}</Table.Td><Table.Td ta="left">{money(s.converted, c)}</Table.Td></Table.Tr>}
                 {s.toClients !== 0 && <Table.Tr><Table.Td>הועבר ישירות ללקוחות</Table.Td><Table.Td ta="left">{money(-s.toClients, c)}</Table.Td></Table.Tr>}
-                {s.residual !== 0 && <Table.Tr><Table.Td c="dimmed">· יתרות לקוחות מול גרשון מההמרות (לא בקופה)</Table.Td><Table.Td ta="left" c="dimmed">{money(s.residual, c)}</Table.Td></Table.Tr>}
+                {s.residual !== 0 && <Table.Tr><Table.Td c="dimmed">· מזה יתרות לקוחות מול גרשון מההמרות (נספרות)</Table.Td><Table.Td ta="left" c="dimmed">{money(s.residual, c)}</Table.Td></Table.Tr>}
                 <Table.Tr><Table.Td>הועבר אלינו</Table.Td><Table.Td ta="left">{money(s.sentToOffice, c)}</Table.Td></Table.Tr>
                 <Table.Tr><Table.Td c="dimmed">· מזה ללקוחות</Table.Td><Table.Td ta="left" c="dimmed">{money(toClients, c)}</Table.Td></Table.Tr>
                 <Table.Tr><Table.Td c="dimmed">· מזה עמלות למשרד</Table.Td><Table.Td ta="left" c="dimmed">{money(fees, c)}</Table.Td></Table.Tr>
