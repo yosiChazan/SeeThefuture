@@ -551,8 +551,8 @@ function OfficeAtManagers() {
   const totals = accs.map((a) => ({ who: a.holder.display_name, currency: a.currency, balance: Math.round(rows.filter((r) => r.account_id === a.id).reduce((x, r) => x + Number(r.amount), 0) * 100) / 100 }))
     .filter((a) => Math.abs(a.balance) > 0.005);
   if (!totals.length) return null;
-  const fees = rows.filter((r) => r.transaction.category === 'mgmt_fee');
-  const paid = rows.filter((r) => r.transaction.category !== 'mgmt_fee');   // sent to the office, conversions
+  const fees = rows.filter((r) => r.transaction.category === 'office_fee');
+  const paid = rows.filter((r) => r.transaction.category !== 'office_fee');   // sent to the office, conversions
   const r2 = (n: number) => Math.round(n * 100) / 100;
   const ownerOf = (p: NonNullable<CreditRow['property']>) => p.ownerships.filter((o) => !o.valid_to).map((o) => o.party.display_name).join(', ') || '—';
   const groups = [...fees.reduce((m, r) => {
@@ -568,10 +568,10 @@ function OfficeAtManagers() {
   return (
     <Paper withBorder p="md">
       <Group justify="space-between" mb="xs">
-        <Title order={4}>מגיע למשרד ממנהלים (דמי ניהול STF)</Title>
+        <Title order={4}>מגיע למשרד ממנהלים (דמי ניהול משרד)</Title>
         <Button size="xs" variant="subtle" onClick={() => setOpen((o) => !o)}>{open ? 'הסתרת הפירוט' : 'פירוט'}</Button>
       </Group>
-      <Text size="xs" c="dimmed" mb="xs">כל שורת דמי ניהול באודסה נרשמת גם כזכות של המשרד, והכסף נשאר אצל גרשון עד שהוא מעביר אותו. בחלוקה של סכום מגרשון, השורה "המשרד (עמלות)" מורידה מכאן.</Text>
+      <Text size="xs" c="dimmed" mb="xs">כל שורת דמי ניהול משרד נרשמת גם כזכות של המשרד, והכסף נשאר אצל המנהל (גרשון, ויטאלי) עד שהוא מעביר אותו. בחלוקה של סכום מגרשון, השורה "המשרד (עמלות)" מורידה מכאן.</Text>
       <Table fz="sm"><Table.Tbody>{totals.map((a) => (
         <Table.Tr key={a.who + a.currency}><Table.Td>אצל {a.who}</Table.Td><Table.Td><Text fw={600} size="sm">{money(a.balance, a.currency as Currency)}</Text></Table.Td></Table.Tr>
       ))}</Table.Tbody></Table>
@@ -701,7 +701,7 @@ function OfficeByCity() {
       const out: { amount: number; currency: string; property: { building: { city: { name_he: string } } | null } | null }[] = [];
       for (let at = 0; ; at += 1000) {
         let qq = supabase.from('entries').select('amount, currency, accounts!inner(beneficiary_party_id), transactions!inner(status, category, occurred_on), property:properties(building:buildings(city:cities(name_he)))')
-          .eq('accounts.beneficiary_party_id', office).eq('transactions.status', 'posted').eq('transactions.category', 'mgmt_fee');
+          .eq('accounts.beneficiary_party_id', office).eq('transactions.status', 'posted').eq('transactions.category', 'office_fee');
         if (from) qq = qq.gte('transactions.occurred_on', from);
         if (to) qq = qq.lte('transactions.occurred_on', to);
         const page = must(await qq.order('id').range(at, at + 999)) as unknown as typeof out;
@@ -725,7 +725,7 @@ function OfficeByCity() {
   const colorOf = (city: string) => CITY_COLORS[allCities.indexOf(city) % CITY_COLORS.length];
   return (
     <Paper withBorder p="md">
-      <Title order={4} mb={4}>דמי ניהול שהמשרד קיבל, לפי עיר</Title>
+      <Title order={4} mb={4}>דמי ניהול משרד, לפי עיר</Title>
       <Group gap="xs" align="flex-end" mb="sm">
         <DateInput size="xs" label="מתאריך" placeholder="מתחילת הספירה" clearable value={from} onChange={(d) => setFrom(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={150} />
         <DateInput size="xs" label="עד תאריך" placeholder="היום" clearable value={to} onChange={(d) => setTo(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={150} />

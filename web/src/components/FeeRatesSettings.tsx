@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Button, Checkbox, Group, Modal, NumberInput, Paper, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { ActionIcon, Alert, Button, Checkbox, Group, Modal, NumberInput, Paper, SegmentedControl, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { MonthPickerInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
@@ -11,13 +11,14 @@ import { must, supabase } from '../lib/supabase';
 // until the next one. Every rent posted for an Odessa apartment gets its fee at its month's rate.
 interface Rate { city_en: string; month: string; pct: number; notes: string | null }
 export function FeeRatesSettings() {
+  const [city, setCity] = useState('Odessa');   // a city's office fee per month (decision 167)
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['fee-rates'], queryFn: async () => must(await supabase.from('fee_rates').select('city_en, month, pct, notes').eq('city_en', 'Odessa').order('month', { ascending: false })) as Rate[] });
+  const q = useQuery({ queryKey: ['fee-rates', city], queryFn: async () => must(await supabase.from('fee_rates').select('city_en, month, pct, notes').eq('city_en', city).order('month', { ascending: false })) as Rate[] });
   const [month, setMonth] = useState<string | null>(dayjs().startOf('month').format('YYYY-MM-DD'));
   const [pct, setPct] = useState<number | ''>('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
-  const refresh = () => qc.invalidateQueries({ queryKey: ['fee-rates'] });
+  const refresh = () => qc.invalidateQueries({ queryKey: ['fee-rates', city] });
   // A change is shown with what it does before it is made (decision 162).
   const [change, setChange] = useState<{ month: string; pct: number | null; notes: string } | null>(null);
   const save = () => setChange({ month: month!, pct: Number(pct), notes });
@@ -25,8 +26,11 @@ export function FeeRatesSettings() {
   const rows = q.data ?? [];
   return (
     <Paper withBorder p="md">
-      <Title order={4} mb={4}>דמי ניהול STF באודסה</Title>
-      <Text size="sm" c="dimmed" mb="sm">אחוז מהשכירות לכל חודש בנפרד, גם לחודשים שעברו. כל שכירות שנרשמת לדירה באודסה מקבלת לבד דמי ניהול לפי האחוז של החודש שלה; חודש בלי אחוז מקבל, עם השכירות הראשונה שלו, את האחוז של החודש הקודם. כל הוספה, שינוי או מחיקה מציגים קודם את ההשלכות על כל דירה בחודש, לאישור.</Text>
+      <Group justify="space-between" mb={4}>
+        <Title order={4}>דמי ניהול משרד</Title>
+        <SegmentedControl size="xs" value={city} onChange={setCity} data={[{ value: 'Odessa', label: 'אודסה' }, { value: 'Kyiv', label: 'קייב' }]} />
+      </Group>
+      <Text size="sm" c="dimmed" mb="sm">אחוז מהשכירות לכל חודש בנפרד, גם לחודשים שעברו. כל שכירות שנרשמת לדירה בעיר מקבלת לבד דמי ניהול לפי האחוז של החודש שלה; חודש בלי אחוז מקבל, עם השכירות הראשונה שלו, את האחוז של החודש הקודם. כל הוספה, שינוי או מחיקה מציגים קודם את ההשלכות על כל דירה בחודש, לאישור.</Text>
       <Table fz="sm" mb="sm" verticalSpacing={4}>
         <Table.Thead><Table.Tr><Table.Th>חודש</Table.Th><Table.Th>אחוז</Table.Th><Table.Th>הערה</Table.Th><Table.Th w={70} /></Table.Tr></Table.Thead>
         <Table.Tbody>{rows.map((r) => (
@@ -47,7 +51,7 @@ export function FeeRatesSettings() {
         <TextInput label="הערה" value={notes} onChange={(e) => setNotes(e.currentTarget.value)} style={{ flex: 1 }} />
         <Button onClick={save} loading={busy} disabled={!month || pct === ''}>{rows.some((x) => x.month === month) ? 'שינוי האחוז' : 'הוספה'}</Button>
       </Group>
-      {change && <Confirm change={change} onClose={async (applied) => { setChange(null); if (applied) { setPct(''); setNotes(''); } await refresh(); setBusy(false); }} />}
+      {change && <Confirm city={city} change={change} onClose={async (applied) => { setChange(null); if (applied) { setPct(''); setNotes(''); } await refresh(); setBusy(false); }} />}
     </Paper>
   );
 }
@@ -57,10 +61,10 @@ const fmt = (n: number) => Number(n).toLocaleString('en-US', { maximumFractionDi
 
 // Every apartment of the month (decision 162): its rent, its fee now and the rate it is, the fee
 // the new rate gives; a line can be locked ("קבוע"). Approve or cancel.
-function Confirm({ change, onClose }: { change: { month: string; pct: number | null; notes: string }; onClose: (applied: boolean) => void }) {
+function Confirm({ city, change, onClose }: { city: string; change: { month: string; pct: number | null; notes: string }; onClose: (applied: boolean) => void }) {
   const q = useQuery({
-    queryKey: ['fee-rate-preview', change],
-    queryFn: async () => must(await supabase.rpc('fee_rate_preview', { p_city: 'Odessa', p_month: change.month, p_pct: change.pct })) as Effect[],
+    queryKey: ['fee-rate-preview', city, change],
+    queryFn: async () => must(await supabase.rpc('fee_rate_preview', { p_city: city, p_month: change.month, p_pct: change.pct })) as Effect[],
   });
   const [lock, setLock] = useState<Map<string, boolean>>(new Map());
   const [busy, setBusy] = useState(false);
@@ -73,7 +77,7 @@ function Confirm({ change, onClose }: { change: { month: string; pct: number | n
     setBusy(true);
     const p_lock = rows.filter((r) => isLocked(r) && !r.locked).map((r) => r.property_id);
     const p_unlock = rows.filter((r) => !isLocked(r) && r.locked).map((r) => r.property_id);
-    const { data, error } = await supabase.rpc('fee_rate_apply', { p_city: 'Odessa', p_month: change.month, p_pct: change.pct, p_notes: change.notes, p_lock, p_unlock });
+    const { data, error } = await supabase.rpc('fee_rate_apply', { p_city: city, p_month: change.month, p_pct: change.pct, p_notes: change.notes, p_lock, p_unlock });
     setBusy(false);
     if (error) { notifications.show({ color: 'red', message: error.message }); return; }
     notifications.show({ color: 'teal', message: `נשמר. דמי הניהול חושבו מחדש ב-${data} דירות` });

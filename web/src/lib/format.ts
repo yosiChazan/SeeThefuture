@@ -27,16 +27,15 @@ export const ACCOUNT_KIND_HE: Record<string, string> = {
 };
 
 export const CATEGORY_HE: Record<string, string> = {
-  rent: 'שכירות', mgmt_fee: 'דמי ניהול', utilities: 'חשבונות', building_fees: 'הוצאות בניין', legal_fees: 'שכ"ט עו"ד',
+  rent: 'שכירות', mgmt_fee: 'דמי ניהול מנהל', office_fee: 'דמי ניהול משרד', utilities: 'חשבונות', building_fees: 'הוצאות בניין', legal_fees: 'שכ"ט עו"ד',
   repair: 'תיקונים', brokerage: 'תיווך', fx: 'המרת מטבע', deposit: 'פיקדון', opening_balance: 'יתרת פתיחה', vat: 'מע"מ',
   transfer: 'העברה', other: 'אחר', tax_withheld: 'מס במקור', hotel_share: 'חלק המלון', loan: 'הלוואה',
   purchase_installment: 'תשלום רכישה', deal_fee: 'דמי עסקה', commission: 'עמלה',
 };
 
-// The category as a client reads it. In Odessa the management fee is the office's own,
-// "דמי ניהול STF" (See the Future), not the local manager's (SPEC decision 145).
-export function categoryLabel(category: string, city?: string | null): string {
-  if (category === 'mgmt_fee' && city === 'Odessa') return 'דמי ניהול STF';
+// The category as a client reads it. The manager's fee and the office's are two categories
+// (decision 167, which replaced the Odessa-only "דמי ניהול STF" of decision 145).
+export function categoryLabel(category: string, _city?: string | null): string {
   return CATEGORY_HE[category] ?? category;
 }
 
