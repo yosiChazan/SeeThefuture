@@ -3,24 +3,15 @@ import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import dayjs from 'dayjs';
 import { notifications } from '@mantine/notifications';
-import { IconCheck, IconFileTypeDoc, IconMail, IconPencil, IconPhoto, IconPlus, IconRepeat, IconTrash, IconX } from '@tabler/icons-react';
+import { IconCheck, IconFileTypePdf, IconMail, IconPencil, IconPhoto, IconPlus, IconRepeat, IconTrash, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AddLink, append, LinkedText, useMe } from '../components/ManualTopics';
-import { taskDocx, type WordImage, type WordReply } from '../lib/taskWord';
+import { taskPrint, type PrintReply } from '../lib/taskPrint';
 
-// A picture as Word takes it: its size, and PNG instead of a kind older Word does not show.
-async function wordImage(name: string, blob: Blob): Promise<WordImage> {
-  const bmp = await createImageBitmap(blob);
-  const { width, height } = bmp;
-  const kind = blob.type.split('/')[1];
-  if (kind === 'png' || kind === 'jpeg' || kind === 'gif') { bmp.close(); return { name, ext: kind, bytes: new Uint8Array(await blob.arrayBuffer()), width, height }; }
-  const c = document.createElement('canvas'); c.width = width; c.height = height;
-  c.getContext('2d')!.drawImage(bmp, 0, 0); bmp.close();
-  const png = await new Promise<Blob>((ok, fail) => c.toBlob((b) => (b ? ok(b) : fail(new Error('no picture'))), 'image/png'));
-  return { name, ext: 'png', bytes: new Uint8Array(await png.arrayBuffer()), width, height };
-}
+// A picture inside the page, so it is there when the page is printed.
+const dataUrl = (blob: Blob) => new Promise<string>((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result as string); r.onerror = () => fail(r.error); r.readAsDataURL(blob); });
 import { useAccess } from '../lib/access';
 import { COUNTRIES, COUNTRY_HE, propertyTitle } from '../lib/format';
 import {
@@ -261,34 +252,33 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
   const author = dir.users.get(task.created_by)?.display_name ?? 'לא ידוע';
   const [exporting, setExporting] = useState(false);
   // The card as a Word document (decision 171).
-  async function exportWord() {
+  // The card as a PDF (decision 175): a page for printing in a new window; the print window saves it as PDF.
+  async function exportPdf(w: Window) {
     const evs = events.data ?? [];
-    // The replies' pictures, fetched and put inside the file (decisions 173, 174).
-    const pics = new Map<string, WordImage>();
+    const pics = new Map<string, string>();
     for (const path of evs.flatMap((e) => e.files ?? [])) {
       const { data } = await supabase.storage.from('tasks').download(path);
-      if (!data) continue;
-      try { pics.set(path, await wordImage(path, data)); } catch { /* not a picture Word can show */ }
+      if (data?.type.startsWith('image/')) pics.set(path, await dataUrl(data));
     }
     const who = (id: string | null) => (id ? dir.users.get(id)?.display_name ?? 'לא ידוע' : 'המערכת');
     const when = (s: string) => new Date(s).toLocaleString('he-IL');
-    const conv = (n: ThreadNode): WordReply => ({
+    const conv = (n: ThreadNode): PrintReply => ({
       who: who(n.event.created_by), at: when(n.event.created_at), body: n.event.body, edited: !!n.event.edited_at, files: n.event.files?.length ?? 0, open: n.open,
-      images: (n.event.files ?? []).filter((f) => pics.has(f)),
+      images: (n.event.files ?? []).filter((f) => pics.has(f)).map((f) => pics.get(f)!),
       resolved: n.resolved ? { who: who(n.resolved.created_by), at: when(n.resolved.created_at), body: n.resolved.body } : null, children: n.children.map(conv),
     });
     const threads = buildThreads(evs);
-    const doc = taskDocx({
+    const html = taskPrint({
       subject: task.subject, status: STATUS_HE[task.status], priority: PRIORITY_HE[task.priority], trigger: dir.trigLabel(task.trigger_id) ?? null,
       category: dir.catLabel(task.category_id) ?? null, series: task.series_id ? `חוזרת · ${task.occurrence_on ? dayjs(task.occurrence_on).format('DD.MM.YYYY') : ''}` : null,
       author, created: when(task.created_at), body: task.body, links: task.office_task_links.map(dir.linkName), assignees: task.office_task_assignees.map(dir.nameOf),
       replies: threads.map(conv), openBranches: openBranches(threads),
       history: evs.filter((e) => e.kind !== 'reply' && e.kind !== 'resolve').map((e) => ({ who: who(e.created_by), what: describeEvent(e, dir.nameOf, dir.linkName), at: when(e.created_at), body: e.body })),
-    }, window.location.origin, [...pics.values()]);
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([doc as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
-    a.download = `${task.subject.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'משימה'}.docx`;
-    a.click();
+    }, window.location.origin);
+    w.document.open(); w.document.write(html); w.document.close();
+    // Print once every picture is drawn.
+    await Promise.all([...w.document.images].map((im) => im.decode().catch(() => undefined)));
+    w.focus(); w.print();
   }
   return (
     <Modal opened onClose={onClose} size="xl" title={task.subject}>
@@ -339,7 +329,13 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
                 <Select size="xs" w={150} label="מצב" data={STATUSES} value={status} allowDeselect={false} onChange={(x) => x && setStatus(x as TaskStatus)} />
               </Group>
               <Group gap="xs">
-                <Button size="xs" variant="default" leftSection={<IconFileTypeDoc size={14} />} loading={exporting} onClick={async () => { setExporting(true); try { await exportWord(); } finally { setExporting(false); } }}>ייצוא לוורד</Button>
+                <Button size="xs" variant="default" leftSection={<IconFileTypePdf size={14} />} loading={exporting} onClick={async () => {
+                  // The window opens on the click itself, or the browser blocks it.
+                  const w = window.open('', '_blank');
+                  if (!w) { notifications.show({ color: 'red', message: 'הדפדפן חסם את החלון. יש לאפשר חלונות קופצים לאתר' }); return; }
+                  setExporting(true);
+                  try { await exportPdf(w); } catch (e) { w.close(); notifications.show({ color: 'red', message: (e as Error).message }); } finally { setExporting(false); }
+                }}>ייצוא ל-PDF</Button>
                 {canDelete(task) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={remove}>מחיקה</Button>}
                 {!access.isClient && <Button size="xs" variant="default" onClick={() => setEditing(true)}>העברה ושינוי פרטים</Button>}
                 <Button size="xs" onClick={send} loading={busy} disabled={!reply.trim() && !images.length && status === task.status}>שליחה</Button>
