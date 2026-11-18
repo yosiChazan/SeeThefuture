@@ -21,7 +21,7 @@ import type { Account, Country, Currency } from '../lib/types';
 // report line does (app.post_import_entry). Drafts can be deleted; posted ones only voided.
 
 const INCOME = ['rent', 'hotel_share', 'deposit', 'other'];
-const EXPENSE = ['transfer', 'mgmt_fee', 'utilities', 'building_fees', 'repair', 'legal_fees', 'tax_withheld', 'vat', 'brokerage', 'commission', 'deposit', 'other'];
+const EXPENSE = ['transfer', 'mgmt_fee', 'office_fee', 'utilities', 'building_fees', 'repair', 'legal_fees', 'tax_withheld', 'vat', 'brokerage', 'commission', 'deposit', 'other'];
 const CURRENCIES: Currency[] = ['USD', 'EUR', 'UAH', 'RON', 'GEL', 'ILS'];
 const CURRENCY_OF: Record<Country, Currency> = { UA: 'USD', RO: 'RON', GE: 'USD', GR: 'EUR' };
 
