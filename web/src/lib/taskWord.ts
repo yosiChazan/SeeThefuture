@@ -1,9 +1,10 @@
 // A task as a Word document (SPEC decision 171): the card as it is on the screen - its details,
 // what it is linked to, who handles it, the replies as a tree with "טופל", and the history -
-// right to left. An HTML document saved as .doc, which Word opens as a document. Pure, tested.
+// right to left. A web page in one file (MHTML, decision 173) saved as .doc: Word opens it as a
+// document, with the replies' pictures inside it. Pure, tested.
 import { splitLinks } from './links.ts';
 
-export interface WordReply { who: string; at: string; body: string | null; edited: boolean; files: number; open: boolean; resolved: { who: string; at: string; body: string | null } | null; children: WordReply[] }
+export interface WordReply { who: string; at: string; body: string | null; edited: boolean; files: number; images?: string[]; open: boolean; resolved: { who: string; at: string; body: string | null } | null; children: WordReply[] }
 export interface WordTask {
   subject: string; status: string; priority: string; trigger: string | null; category: string | null; series: string | null;
   author: string; created: string; body: string | null; links: string[]; assignees: string[];
@@ -22,7 +23,7 @@ function reply(r: WordReply, depth: number, origin: string): string {
   const pad = depth * 18;
   return `<div style="margin-right:${pad}pt;border-right:2pt solid ${depth ? '#ccc' : '#999'};padding-right:6pt;margin-bottom:6pt">
 <p style="margin:0"><b>${esc(r.who)}</b> <span style="color:#777">${esc(r.at)}${r.edited ? ' · נערך' : ''}</span>${r.open ? ' <span style="color:#d9480f">· בטיפול</span>' : ''}</p>
-${r.body ? `<p style="margin:2pt 0">${linked(r.body, origin)}</p>` : ''}${r.files ? `<p style="margin:0;color:#777">${r.files} תמונות מצורפות (במערכת)</p>` : ''}
+${r.body ? `<p style="margin:2pt 0">${linked(r.body, origin)}</p>` : ''}${(r.images ?? []).map((src) => `<p style="margin:2pt 0"><img src="${esc(src)}" width="360"></p>`).join('')}${r.files > (r.images?.length ?? 0) ? `<p style="margin:0;color:#777">${r.files - (r.images?.length ?? 0)} תמונות לא נטענו (במערכת)</p>` : ''}
 </div>
 ${r.children.map((c) => reply(c, depth + 1, origin)).join('')}
 ${r.resolved ? `<div style="margin-right:${pad + 18}pt;border-right:2pt solid #2b8a3e;padding-right:6pt;margin-bottom:6pt"><p style="margin:0;color:#2b8a3e"><b>✓ טופל</b> · ${esc(r.resolved.who)} · ${esc(r.resolved.at)}</p>${r.resolved.body ? `<p style="margin:2pt 0">${linked(r.resolved.body, origin)}</p>` : ''}</div>` : ''}`;
@@ -43,4 +44,18 @@ ${t.body ? `<p style="border:1pt solid #ccc;padding:6pt">${linked(t.body, origin
 ${t.replies.length ? `<h2>תגובות${t.openBranches ? ` (${t.openBranches} ${t.openBranches === 1 ? 'ענף' : 'ענפים'} בטיפול)` : ' (כל הענפים טופלו)'}</h2>${t.replies.map((r) => reply(r, 0, origin)).join('')}` : ''}
 ${t.history.length ? `<h2>היסטוריה</h2>${t.history.map((h) => `<p><b>${esc(h.who)}</b> ${esc(h.what)} <span class="muted">· ${esc(h.at)}</span>${h.body ? `<br>${linked(h.body, origin)}` : ''}</p>`).join('')}` : ''}
 </body></html>`;
+}
+
+// The document with its pictures, as one MHTML file. `images`: each picture's name in the
+// document (as in <img src>), its type and its bytes in base64.
+export function mhtml(html: string, images: { name: string; type: string; base64: string }[]): string {
+  const b = '----=_task_word_boundary';
+  const wrap = (x: string) => x.replace(/.{1,76}/g, '$&\r\n');
+  const utf8 = (x: string) => { const bytes = new TextEncoder().encode(x); let bin = ''; for (const c of bytes) bin += String.fromCharCode(c); return btoa(bin); };
+  return [
+    'MIME-Version: 1.0', `Content-Type: multipart/related; boundary="${b}"; type="text/html"`, '',
+    `--${b}`, 'Content-Type: text/html; charset="utf-8"', 'Content-Transfer-Encoding: base64', 'Content-Location: file:///C:/task.htm', '', wrap(utf8(html)),
+    ...images.flatMap((i) => [`--${b}`, `Content-Type: ${i.type}`, 'Content-Transfer-Encoding: base64', `Content-Location: file:///C:/${i.name}`, '', wrap(i.base64)]),
+    `--${b}--`, '',
+  ].join('\r\n');
 }

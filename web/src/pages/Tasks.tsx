@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AddLink, append, LinkedText, useMe } from '../components/ManualTopics';
-import { taskWord, type WordReply } from '../lib/taskWord';
+import { mhtml, taskWord, type WordReply } from '../lib/taskWord';
 import { useAccess } from '../lib/access';
 import { COUNTRIES, COUNTRY_HE, propertyTitle } from '../lib/format';
 import {
@@ -247,13 +247,24 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
     } catch (e) { notifications.show({ color: 'red', message: (e as Error).message }); } finally { setBusy(false); }
   }
   const author = dir.users.get(task.created_by)?.display_name ?? 'לא ידוע';
+  const [exporting, setExporting] = useState(false);
   // The card as a Word document (decision 171).
-  function exportWord() {
+  async function exportWord() {
     const evs = events.data ?? [];
+    // The replies' pictures, fetched and put inside the file (decision 173).
+    const pics = new Map<string, { name: string; type: string; base64: string }>();
+    for (const path of evs.flatMap((e) => e.files ?? [])) {
+      const { data } = await supabase.storage.from('tasks').download(path);
+      if (!data) continue;
+      const bytes = new Uint8Array(await data.arrayBuffer()); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const ext = (data.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      pics.set(path, { name: `img${pics.size + 1}.${ext}`, type: data.type || 'image/png', base64: btoa(bin) });
+    }
     const who = (id: string | null) => (id ? dir.users.get(id)?.display_name ?? 'לא ידוע' : 'המערכת');
     const when = (s: string) => new Date(s).toLocaleString('he-IL');
     const conv = (n: ThreadNode): WordReply => ({
       who: who(n.event.created_by), at: when(n.event.created_at), body: n.event.body, edited: !!n.event.edited_at, files: n.event.files?.length ?? 0, open: n.open,
+      images: (n.event.files ?? []).filter((f) => pics.has(f)).map((f) => `file:///C:/${pics.get(f)!.name}`),
       resolved: n.resolved ? { who: who(n.resolved.created_by), at: when(n.resolved.created_at), body: n.resolved.body } : null, children: n.children.map(conv),
     });
     const threads = buildThreads(evs);
@@ -265,7 +276,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
       history: evs.filter((e) => e.kind !== 'reply' && e.kind !== 'resolve').map((e) => ({ who: who(e.created_by), what: describeEvent(e, dir.nameOf, dir.linkName), at: when(e.created_at), body: e.body })),
     }, window.location.origin);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob(['\ufeff', html], { type: 'application/msword' }));
+    a.href = URL.createObjectURL(new Blob([mhtml(html, [...pics.values()])], { type: 'application/msword' }));
     a.download = `${task.subject.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'משימה'}.doc`;
     a.click();
   }
@@ -318,7 +329,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
                 <Select size="xs" w={150} label="מצב" data={STATUSES} value={status} allowDeselect={false} onChange={(x) => x && setStatus(x as TaskStatus)} />
               </Group>
               <Group gap="xs">
-                <Button size="xs" variant="default" leftSection={<IconFileTypeDoc size={14} />} onClick={exportWord}>ייצוא לוורד</Button>
+                <Button size="xs" variant="default" leftSection={<IconFileTypeDoc size={14} />} loading={exporting} onClick={async () => { setExporting(true); try { await exportWord(); } finally { setExporting(false); } }}>ייצוא לוורד</Button>
                 {canDelete(task) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={remove}>מחיקה</Button>}
                 {!access.isClient && <Button size="xs" variant="default" onClick={() => setEditing(true)}>העברה ושינוי פרטים</Button>}
                 <Button size="xs" onClick={send} loading={busy} disabled={!reply.trim() && !images.length && status === task.status}>שליחה</Button>
