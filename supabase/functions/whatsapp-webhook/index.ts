@@ -103,6 +103,9 @@ async function keepMedia(conversation: string, wamid: string, media: Json): Prom
   } catch { return null; }
 }
 
+// Chats with a new client message (for the AI, decision 183).
+const fresh = new Set<string>();
+
 // One message into its chat (once: the WhatsApp id is unique).
 async function save(m: Json, o: { direction: 'in' | 'out'; peer: string; name?: string | null; origin: 'api' | 'app' | 'history'; status?: string | null }) {
   if (!m.id || !o.peer) return;
@@ -115,6 +118,12 @@ async function save(m: Json, o: { direction: 'in' | 'out'; peer: string; name?: 
   }, { onConflict: 'wa_message_id', ignoreDuplicates: true }).select('id');
   if (addError) throw addError;
   if (!added?.length) return;   // already here
+  if (o.direction === 'in' && o.origin === 'api') fresh.add(conversation);
+  // A person answered from the phone: the chat is theirs again, not the AI's.
+  if (o.origin === 'app') {
+    await admin.from('conversations').update({ ai_guide_id: null, ai_until: null, ai_handback_reason: 'עובד ענה מהטלפון', ai_handback_at: new Date().toISOString() })
+      .eq('id', conversation).not('ai_guide_id', 'is', null);
+  }
   if (media) {
     const path = await keepMedia(conversation, m.id, media);
     if (path) await admin.from('messages').update({ media_path: path }).eq('id', added[0].id);
@@ -201,9 +210,22 @@ Deno.serve(async (req) => {
   let payload: Json;
   try { payload = JSON.parse(raw); } catch { return new Response('bad json', { status: 400 }); }
   // Saved before answering: if something could not be saved, Meta gets an error and sends again.
+  fresh.clear();
   try { await handle(payload); } catch (e) {
     console.error('whatsapp-webhook', (e as Error).message);
     return new Response('not saved', { status: 500 });
+  }
+  // Chats the AI holds get its answer, after Meta has its reply (decision 183).
+  if (fresh.size) {
+    const { data: held } = await admin.from('conversations').select('id').in('id', [...fresh]).not('ai_guide_id', 'is', null);
+    for (const c of held ?? []) {
+      const call = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/whatsapp-ai`, {
+        method: 'POST', headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reply', conversation_id: c.id }),
+      }).catch(() => undefined);
+      // @ts-ignore EdgeRuntime is Supabase's
+      EdgeRuntime.waitUntil(call);
+    }
   }
   return new Response('ok', { status: 200 });
 });
