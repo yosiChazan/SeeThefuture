@@ -16,7 +16,7 @@ const propertyCount = (c: ClientRow) => new Set(c.ownerships.filter((o) => !o.va
 
 // Sorting by a column (SPEC decision 73): a click sorts by it, a second click reverses.
 // Empty values stay at the bottom either way. Kept in the address, like the filters.
-type SortKey = 'first' | 'last' | 'id' | 'countries' | 'properties';
+type SortKey = 'first' | 'last' | 'id' | 'countries' | 'properties' | 'address';
 const he = (a: string, b: string) => a.localeCompare(b, 'he', { numeric: true });
 const byName = (a: ClientRow, b: ClientRow) => he(a.last_name ?? a.display_name, b.last_name ?? b.display_name) || he(a.first_name ?? '', b.first_name ?? '');
 const SORT_VALUE: Record<SortKey, (c: ClientRow) => string | number | null> = {
@@ -25,6 +25,7 @@ const SORT_VALUE: Record<SortKey, (c: ClientRow) => string | number | null> = {
   id: (c) => idNumberOf(c),
   countries: (c) => countriesOf(c).map((x) => COUNTRY_HE[x]).sort(he).join(', ') || null,
   properties: (c) => propertyCount(c) || null,
+  address: (c) => c.address?.trim() || null,
 };
 function by(key: SortKey, desc: boolean, a: ClientRow, b: ClientRow) {
   const x = SORT_VALUE[key](a), y = SORT_VALUE[key](b);
@@ -47,9 +48,9 @@ export function Clients() {
   const canAdd = access.isAdmin || access.countries.some((x) => access.canEdit(x));
   const [adding, setAdding] = useState(false);
   const update = (k: string, v: string) => setParams((p) => { p.set(k, v); return p; }, { replace: true });
-  const sort = (['first', 'last', 'id', 'countries', 'properties'].includes(params.get('sort') ?? '') ? params.get('sort') : 'last') as SortKey;
+  const sort = (['first', 'last', 'id', 'countries', 'properties', 'address'].includes(params.get('sort') ?? '') ? params.get('sort') : 'last') as SortKey;
   const desc = params.get('dir') === 'desc';
-  const then = (['first', 'last', 'id', 'countries', 'properties'].includes(params.get('then') ?? '') ? params.get('then') : null) as SortKey | null;
+  const then = (['first', 'last', 'id', 'countries', 'properties', 'address'].includes(params.get('then') ?? '') ? params.get('then') : null) as SortKey | null;
   const thenDesc = params.get('thenDir') === 'desc';
   const onSort = (k: SortKey) => setParams((p) => {
     if (k !== sort) { p.set('then', sort); p.set('thenDir', desc ? 'desc' : 'asc'); }
@@ -68,7 +69,7 @@ export function Clients() {
     return (q.data ?? [])
       .filter((c) => !isMember.has(c.id))
       .filter((c) => country === 'all' || countriesOf(c).includes(country as Country))
-      .filter((c) => !s || [c.display_name, c.first_name, c.last_name, c.email, c.phone, idNumberOf(c), ...(membersOf.get(c.id) ?? []).map((m) => m.name)].some((x) => x?.toLowerCase().includes(s))
+      .filter((c) => !s || [c.display_name, c.first_name, c.last_name, c.email, c.phone, c.address, idNumberOf(c), ...(membersOf.get(c.id) ?? []).map((m) => m.name)].some((x) => x?.toLowerCase().includes(s))
         || (/^\d{3,}$/.test(s) && (idNumberOf(c) ?? '').replace(/^0+/, '').includes(s.replace(/^0+/, ''))))
       // Default: by family name; a name not split yet sorts by its full name (SPEC decision 72).
       .sort(compare(sort, desc, then, thenDesc));
@@ -88,7 +89,7 @@ export function Clients() {
       <QueryState q={q}>{() => (
         <Paper withBorder p="sm">
           <Text size="sm" c="dimmed" mb="xs">{rows.length} לקוחות</Text>
-          <Table.ScrollContainer minWidth={900}>
+          <Table.ScrollContainer minWidth={1100}>
             <Table striped highlightOnHover verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr>
@@ -96,6 +97,7 @@ export function Clients() {
                     <SortHeader key={k} label={label} k={k} sort={sort} desc={desc} onSort={onSort} />
                   ))}
                   <Table.Th>טלפון</Table.Th><Table.Th>מייל</Table.Th>
+                  <SortHeader label="כתובת" k="address" sort={sort} desc={desc} onSort={onSort} />
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -114,10 +116,11 @@ export function Clients() {
                     <Table.Td>{propertyCount(c) || '—'}</Table.Td>
                     <Table.Td><Phones phone={c.phone} label={c.phone_label} extra={c.extra_phones} compact /></Table.Td>
                     <Table.Td dir="ltr" style={{ textAlign: 'right' }}>{c.email ?? '—'}</Table.Td>
+                    <Table.Td style={{ minWidth: 180 }}><Text size="sm" dir="auto">{c.address ?? '—'}</Text></Table.Td>
                   </Table.Tr>,
                   ...(membersOf.get(c.id) ?? []).map((m) => (
                     <Table.Tr key={`${c.id}-${m.name}`}>
-                      <Table.Td colSpan={7} pt={0}><Text size="xs" c="dimmed">↳ {m.relation}: {m.name}</Text></Table.Td>
+                      <Table.Td colSpan={8} pt={0}><Text size="xs" c="dimmed">↳ {m.relation}: {m.name}</Text></Table.Td>
                     </Table.Tr>
                   ))])}
               </Table.Tbody>
