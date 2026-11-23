@@ -10,7 +10,14 @@
 //   smb_app_state_sync  the phone's contacts: their names go on the chats
 //   account_update      the connection's life (kept as the last event)
 // Pictures and files go to the private bucket "whatsapp" (<chat id>/<message id>.<ext>).
-// Secrets (Edge Functions → Secrets): META_APP_SECRET, WA_VERIFY_TOKEN; optional WA_GRAPH_VERSION.
+// Through Dualhook (decision 182): Meta still sends the webhooks straight here (Webhook Override),
+// but signs them with Dualhook's app secret, which we do not have. So the URL carries a key,
+// ?k=<WA_VERIFY_TOKEN>, and a call is taken when the key is right or Meta's signature is ours; a
+// change for another number than ours is ignored. The first change also records which number is
+// connected (whatsapp_account), since the connection itself is made on Dualhook's site. Media is
+// fetched through WA_API_BASE (https://api.dualhook.com/v25.0) with WA_API_KEY.
+// Secrets (Edge Functions → Secrets): WA_VERIFY_TOKEN; directly: META_APP_SECRET; through
+// Dualhook: WA_API_BASE, WA_API_KEY; optional WA_GRAPH_VERSION.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -52,6 +59,7 @@ function bodyOf(m: Json): { kind: string; body: string | null; media: Json | nul
 }
 
 async function token(): Promise<string | null> {
+  if (env('WA_API_KEY')) return env('WA_API_KEY');
   const { data } = await admin.from('whatsapp_secret').select('token').eq('id', 1).maybeSingle();
   return data?.token ?? null;
 }
@@ -75,11 +83,18 @@ async function keepMedia(conversation: string, wamid: string, media: Json): Prom
   const tk = await token();
   if (!tk || !media?.id) return null;
   try {
-    const meta = await (await fetch(`${GRAPH()}/${media.id}`, { headers: { Authorization: `Bearer ${tk}` } })).json();
-    if (!meta.url) return null;
-    const file = await fetch(meta.url, { headers: { Authorization: `Bearer ${tk}` } });
+    let file: Response, meta: Json = {};
+    if (env('WA_API_BASE')) {
+      // Through Dualhook: the bytes from its content route.
+      file = await fetch(`${env('WA_API_BASE')}/${media.id}/content`, { headers: { Authorization: `Bearer ${tk}` } });
+      meta = { mime_type: file.headers.get('content-type') };
+    } else {
+      meta = await (await fetch(`${GRAPH()}/${media.id}`, { headers: { Authorization: `Bearer ${tk}` } })).json();
+      if (!meta.url) return null;
+      file = await fetch(meta.url, { headers: { Authorization: `Bearer ${tk}` } });
+    }
     if (!file.ok) return null;
-    const type = String(meta.mime_type ?? media.mime_type ?? 'application/octet-stream').split(';')[0];
+    const type = String(media.mime_type ?? meta.mime_type ?? 'application/octet-stream').split(';')[0];
     const ext = (media.filename?.split('.').pop() ?? type.split('/')[1] ?? 'bin').replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'bin';
     const path = `${conversation}/${wamid.replace(/[^A-Za-z0-9_-]/g, '_')}.${ext}`;
     const { error } = await admin.storage.from('whatsapp').upload(path, await file.arrayBuffer(), { contentType: type, upsert: true });
@@ -111,12 +126,19 @@ async function save(m: Json, o: { direction: 'in' | 'out'; peer: string; name?: 
 }
 
 async function handle(payload: Json) {
-  const { data: acct } = await admin.from('whatsapp_account').select('display_phone').eq('id', 1).maybeSingle();
-  const own = digits(acct?.display_phone);
+  let { data: acct } = await admin.from('whatsapp_account').select('display_phone, phone_number_id').eq('id', 1).maybeSingle();
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const v: Json = change.value ?? {};
-      const own2 = own || digits(v.metadata?.display_phone_number);
+      const pid = String(v.metadata?.phone_number_id ?? '');
+      // The number connected on Dualhook's site: recorded with its first change.
+      if (!acct?.phone_number_id && pid) {
+        acct = { phone_number_id: pid, display_phone: v.metadata?.display_phone_number ?? null };
+        await admin.from('whatsapp_account').upsert({ id: 1, phone_number_id: pid, display_phone: acct.display_phone, waba_id: String(entry.id ?? '') || null, connected_at: new Date().toISOString() });
+      }
+      // A change for another number is not ours.
+      if (pid && acct?.phone_number_id && pid !== acct.phone_number_id) continue;
+      const own2 = digits(acct?.display_phone) || digits(v.metadata?.display_phone_number);
       try {
         if (change.field === 'messages') {
           const names = new Map<string, string>((v.contacts ?? []).map((c: Json) => [digits(c.wa_id), c.profile?.name]));
@@ -164,7 +186,9 @@ Deno.serve(async (req) => {
   }
   if (req.method !== 'POST') return new Response('POST only', { status: 405 });
   const raw = await req.text();
-  if (!(await signed(raw, req.headers.get('X-Hub-Signature-256')))) return new Response('bad signature', { status: 401 });
+  const keyed = !!env('WA_VERIFY_TOKEN') && url.searchParams.get('k') === env('WA_VERIFY_TOKEN');
+  if (!keyed && !(await signed(raw, req.headers.get('X-Hub-Signature-256')))) return new Response('bad signature', { status: 401 });
+  if (req.headers.get('X-Dualhook-Synthetic') === 'true') return new Response('ok', { status: 200 });   // Dualhook's "Test endpoint"
   let payload: Json;
   try { payload = JSON.parse(raw); } catch { return new Response('bad json', { status: 400 }); }
   // Meta wants an answer within seconds; the work goes on after it.

@@ -6,14 +6,15 @@
 //   { action: 'templates' }                            → the approved templates, for the picker
 // Staff who completed their second step only. The message is written to app.messages with who
 // sent it; its delivery (sent, delivered, read, failed) arrives later at whatsapp-webhook.
-// Secrets: none of its own (the token is in app.whatsapp_secret); optional WA_GRAPH_VERSION.
+// Secrets: directly, none of its own (the token is in app.whatsapp_secret); through Dualhook
+// (decision 182), WA_API_BASE (https://api.dualhook.com/v25.0) and WA_API_KEY; optional WA_GRAPH_VERSION.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const admin = createClient(URL_, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false }, db: { schema: 'app' } });
 const env = (k: string) => Deno.env.get(k) ?? '';
-const GRAPH = () => `https://graph.facebook.com/${env('WA_GRAPH_VERSION') || 'v27.0'}`;
+const GRAPH = () => env('WA_API_BASE') || `https://graph.facebook.com/${env('WA_GRAPH_VERSION') || 'v27.0'}`;
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -44,8 +45,9 @@ Deno.serve(async (req) => {
     admin.from('whatsapp_account').select('waba_id, phone_number_id').eq('id', 1).maybeSingle(),
     admin.from('whatsapp_secret').select('token').eq('id', 1).maybeSingle(),
   ]);
-  if (!acct?.phone_number_id || !sec?.token) return reply(503, { error: 'הוואטסאפ עוד לא מחובר למערכת' });
-  const auth = { Authorization: `Bearer ${sec.token}`, 'Content-Type': 'application/json' };
+  const key = env('WA_API_KEY') || sec?.token;
+  if (!acct?.phone_number_id || !key) return reply(503, { error: 'הוואטסאפ עוד לא מחובר למערכת' });
+  const auth = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
 
   // deno-lint-ignore no-explicit-any
   let b: any;
