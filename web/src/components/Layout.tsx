@@ -1,7 +1,7 @@
 import { AppShell, Badge, Burger, Button, Group, Image, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconAddressBook, IconBuildingCommunity, IconChecklist, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUserShield, IconUsers, IconChartBar, IconCash, IconListCheck } from '@tabler/icons-react';
+  IconAddressBook, IconBuildingCommunity, IconChecklist, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUserShield, IconUsers, IconChartBar, IconCash, IconListCheck, IconSpeakerphone } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Navigate, NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { useAccess } from '../lib/access';
@@ -20,6 +20,7 @@ const NAV = [
   { to: '/cash', label: 'קופות', icon: IconCash },
   { to: '/tasks', label: 'משימות', icon: IconListCheck },
   { to: '/messages', label: 'הודעות', icon: IconMessages },
+  { to: '/broadcast', label: 'הודעה לעיר', icon: IconSpeakerphone },
 ];
 
 // Screens from SPEC §6.1 that wait for later stages (§9).
