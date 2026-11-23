@@ -67,7 +67,8 @@ async function token(): Promise<string | null> {
 // The chat of this number: found, or opened (and given its client by the number).
 async function chat(phoneDigits: string, name?: string | null): Promise<string> {
   const wa_phone = `+${phoneDigits}`;
-  const { data: found } = await admin.from('conversations').select('id, contact_name, client_party_id').eq('wa_phone', wa_phone).maybeSingle();
+  const { data: found, error: findError } = await admin.from('conversations').select('id, contact_name, client_party_id').eq('wa_phone', wa_phone).maybeSingle();
+  if (findError) throw findError;
   if (found) {
     if (name && !found.contact_name) await admin.from('conversations').update({ contact_name: name }).eq('id', found.id);
     return found.id;
@@ -108,10 +109,11 @@ async function save(m: Json, o: { direction: 'in' | 'out'; peer: string; name?: 
   const conversation = await chat(o.peer, o.name);
   const { kind, body, media, file } = bodyOf(m);
   const at = m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : new Date().toISOString();
-  const { data: added } = await admin.from('messages').upsert({
+  const { data: added, error: addError } = await admin.from('messages').upsert({
     conversation_id: conversation, direction: o.direction, body, kind, origin: o.origin, file_name: file,
     status: o.direction === 'out' ? (o.status ?? 'sent') : null, wa_message_id: m.id, wa_timestamp: at, created_at: at,
   }, { onConflict: 'wa_message_id', ignoreDuplicates: true }).select('id');
+  if (addError) throw addError;
   if (!added?.length) return;   // already here
   if (media) {
     const path = await keepMedia(conversation, m.id, media);
@@ -125,8 +127,13 @@ async function save(m: Json, o: { direction: 'in' | 'out'; peer: string; name?: 
   if (Object.keys(fields).length) await admin.from('conversations').update(fields).eq('id', conversation);
 }
 
+// Saves every change of a call; throws if one could not be saved, so that the call is answered
+// with an error and Meta sends it again (a message already saved is not saved twice).
 async function handle(payload: Json) {
-  let { data: acct } = await admin.from('whatsapp_account').select('display_phone, phone_number_id').eq('id', 1).maybeSingle();
+  const failed: string[] = [];
+  let { data: acct, error: acctError } = await admin.from('whatsapp_account').select('display_phone, phone_number_id').eq('id', 1).maybeSingle();
+  if (acctError) throw new Error(`whatsapp_account: ${acctError.message}`);
+
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const v: Json = change.value ?? {};
@@ -171,11 +178,13 @@ async function handle(payload: Json) {
           await admin.from('whatsapp_account').update({ contacts_sync_at: new Date().toISOString() }).eq('id', 1);
         }
       } catch (e) {
-        await admin.from('whatsapp_account').update({ last_error: `${change.field}: ${(e as Error).message}`.slice(0, 500) }).eq('id', 1);
+        failed.push(`${change.field}: ${(e as Error).message}`);
+        await admin.from('whatsapp_account').update({ last_error: failed.at(-1)!.slice(0, 500) }).eq('id', 1);
       }
     }
   }
   await admin.from('whatsapp_account').update({ last_webhook_at: new Date().toISOString() }).eq('id', 1);
+  if (failed.length) throw new Error(failed.join('; '));
 }
 
 Deno.serve(async (req) => {
@@ -191,8 +200,10 @@ Deno.serve(async (req) => {
   if (req.headers.get('X-Dualhook-Synthetic') === 'true') return new Response('ok', { status: 200 });   // Dualhook's "Test endpoint"
   let payload: Json;
   try { payload = JSON.parse(raw); } catch { return new Response('bad json', { status: 400 }); }
-  // Meta wants an answer within seconds; the work goes on after it.
-  // @ts-ignore EdgeRuntime is Supabase's
-  EdgeRuntime.waitUntil(handle(payload).catch(() => undefined));
+  // Saved before answering: if something could not be saved, Meta gets an error and sends again.
+  try { await handle(payload); } catch (e) {
+    console.error('whatsapp-webhook', (e as Error).message);
+    return new Response('not saved', { status: 500 });
+  }
   return new Response('ok', { status: 200 });
 });
