@@ -1,7 +1,7 @@
 import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
 import { IconAddressBook, IconPencil, IconPlus, IconTrash, IconUserCheck } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MemberOf, Partners } from '../components/Partners';
 import { Activities, CompanyPartners, ContactAssignments, PartnerIn } from '../components/CardExtras';
 import { useState } from 'react';
@@ -16,6 +16,8 @@ import { useAccess } from '../lib/access';
 import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { EditableLedger } from '../components/PropertyEntries';
 import { ClientEntries } from '../components/ClientEntries';
+import { ChatSummary, type SummaryChat } from '../components/ChatSummary';
+import { supabase } from '../lib/supabase';
 import { ACCOUNT_KIND_HE, COUNTRY_HE, amountLabel, currentLease, date, isCurrentOwnership, money, propertyTitle } from '../lib/format';
 import { setClientRole, useAccountEntries, useClient, useClientAccounts, useClientProperties, useIdentity, usePartyLinks } from '../lib/queries';
 import { validIsraeliId } from '../lib/idnumber';
@@ -80,6 +82,7 @@ export function ClientCard() {
         {deleting && <DeleteRecord kind="client" id={c.id} name={c.display_name} onClose={() => setDeleting(false)} onDeleted={() => navigate('/clients', { replace: true })} />}
         {editing && <ClientForm client={c} idNumber={identity.data?.id_number ?? null} opened onClose={() => setEditing(false)} />}
 
+        <ClientChats partyIds={household} />
         <Paper withBorder p="md">
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             <div><Text size="xs" c="dimmed">שם בדוחות</Text><Text size="sm" dir="ltr" ta="right">{c.legal_name ?? '—'}</Text></div>
@@ -204,5 +207,22 @@ export function ClientCard() {
       </Stack>
       );
     }}</QueryState>
+  );
+}
+
+// The client's WhatsApp chats, each with its AI summary (decision 186).
+function ClientChats({ partyIds }: { partyIds: string[] }) {
+  const q = useQuery({
+    queryKey: ['client-chats', partyIds],
+    queryFn: async () => ((await supabase.from('conversations').select('id, wa_phone, last_message_at, ai_summary, ai_summary_at, ai_waiting_on')
+      .in('client_party_id', partyIds).order('last_message_at', { ascending: false })).data ?? []) as (SummaryChat & { wa_phone: string })[],
+  });
+  const chats = (q.data ?? []).filter((c) => c.last_message_at);
+  if (!chats.length) return null;
+  return (
+    <Paper withBorder p={0} style={{ overflow: 'hidden' }}>
+      <Text size="sm" fw={600} px="md" pt="sm" pb={4}>וואטסאפ</Text>
+      {chats.map((c) => <ChatSummary key={c.id} chat={c} link />)}
+    </Paper>
   );
 }
