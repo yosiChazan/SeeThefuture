@@ -20,8 +20,11 @@ import { PropertyCard } from './pages/PropertyCard';
 import { DropboxCallback } from './pages/DropboxCallback';
 import { Settings } from './pages/Settings';
 import { Users } from './pages/Users';
+import { Privacy } from './pages/Privacy';
 
 export function App() {
+  // The privacy policy is public (decision 180): Meta's reviewers open it without signing in.
+  if (window.location.pathname.replace(/\/$/, '') === '/privacy') return <Privacy />;
   return (
     <AuthGate>
       <BrowserRouter>

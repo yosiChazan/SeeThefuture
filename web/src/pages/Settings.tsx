@@ -10,6 +10,7 @@ import { FileCategoriesSettings } from '../components/FileCategoriesSettings';
 import { FeeRatesSettings } from '../components/FeeRatesSettings';
 import { TaskCategoriesSettings } from '../components/TaskCategoriesSettings';
 import { SplitNames } from '../components/SplitNames';
+import { WhatsAppSettings } from '../components/WhatsAppSettings';
 import { useAccess } from '../lib/access';
 import { listSharedFiles, loadDropbox, saveSettings, startConnect } from '../lib/dropbox';
 
@@ -47,6 +48,7 @@ export function Settings() {
   return (
     <Stack>
       <Title order={2}>הגדרות</Title>
+      <WhatsAppSettings />
       <QueryState q={q}>{(d) => (
         <Paper withBorder p="md">
           <Group justify="space-between" mb="sm">
