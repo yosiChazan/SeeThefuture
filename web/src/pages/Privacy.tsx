@@ -4,6 +4,7 @@ import { Anchor, Container, Divider, List, Stack, Text, Title } from '@mantine/c
 // one for the WhatsApp app. In Hebrew and in English (Meta's reviewers read the English).
 
 const CONTACT_PHONE = '+972 55-775-0300';
+const CONTACT_EMAIL = 'yossi@bhrei.net';
 const UPDATED = '23.11.2026';
 
 export function Privacy() {
@@ -27,7 +28,7 @@ export function Privacy() {
             <Title order={3}>אבטחה ושמירה</Title>
             <Text>הגישה למערכת מוגבלת לעובדי החברה, עם סיסמה ואימות דו-שלבי, וכל עובד רואה רק את מה שנדרש לעבודתו. המידע נשמר כל עוד הוא נחוץ לשירות או כפי שהחוק מחייב.</Text>
             <Title order={3}>הזכויות שלך</Title>
-            <Text>אפשר לבקש לראות את המידע שנשמר עליך, לתקן אותו או למחוק אותו, בהודעת וואטסאפ למספר <Anchor href="https://wa.me/972557750300" dir="ltr">{CONTACT_PHONE}</Anchor>. כדי להפסיק לקבל מאיתנו הודעות, אפשר לכתוב "הסר" או לחסום את המספר.</Text>
+            <Text>אפשר לבקש לראות את המידע שנשמר עליך, לתקן אותו או למחוק אותו, במייל ל-<Anchor href={`mailto:${CONTACT_EMAIL}`} dir="ltr">{CONTACT_EMAIL}</Anchor> או בהודעת וואטסאפ למספר <Anchor href="https://wa.me/972557750300" dir="ltr">{CONTACT_PHONE}</Anchor>. כדי להפסיק לקבל מאיתנו הודעות, אפשר לכתוב "הסר" או לחסום את המספר.</Text>
           </Stack>
         </div>
 
@@ -50,7 +51,7 @@ export function Privacy() {
             <Title order={3}>Security and retention</Title>
             <Text>Access to the system is limited to Company staff, with a password and two-step verification, and each staff member sees only what their work requires. Information is kept as long as it is needed for the service or as required by law.</Text>
             <Title order={3}>Your rights</Title>
-            <Text>You may ask to see, correct or delete the information we keep about you by a WhatsApp message to <Anchor href="https://wa.me/972557750300">{CONTACT_PHONE}</Anchor>. To stop receiving messages from us, reply "STOP" or block the number.</Text>
+            <Text>You may ask to see, correct or delete the information we keep about you by e-mail to <Anchor href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</Anchor> or by a WhatsApp message to <Anchor href="https://wa.me/972557750300">{CONTACT_PHONE}</Anchor>. To stop receiving messages from us, reply "STOP" or block the number.</Text>
           </Stack>
         </div>
       </Stack>
