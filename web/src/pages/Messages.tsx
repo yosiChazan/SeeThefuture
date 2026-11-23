@@ -1,6 +1,6 @@
-import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Group, Menu, ScrollArea, Select, Stack, Switch, Text, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconArrowRight, IconBrandWhatsapp, IconChecks, IconDotsVertical, IconMoodSmile, IconPaperclip, IconSearch, IconSend } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowRight, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -12,10 +12,14 @@ import { must, supabase } from '../lib/supabase';
 // The shared WhatsApp inbox (SPEC §6.5, decisions 135, 139), laid out like WhatsApp: chats on
 // one side with the last message and its time, the chat on the other with green and white
 // bubbles on WhatsApp's background (ours on the left, as WhatsApp shows them in Hebrew), and the typing bar below. Until WhatsApp is connected,
-// sending is off; "a sample" shows how it will look, with made-up names.
+// sending is off; "a sample" shows how it will look, with made-up names. Once connected (decision
+// 180): sending through whatsapp-send (a text within 24 hours of the client's last message, an
+// approved template after them), pictures and files, delivery ticks, and what was sent from the
+// phone's app marked as such. New messages are fetched every 15 seconds.
 
-interface Conversation { id: string; client_party_id: string | null; wa_phone: string; assigned_to: string | null; status: 'open' | 'waiting' | 'closed'; last_message_at: string | null }
-interface Message { id: string; conversation_id: string; direction: 'in' | 'out'; body: string | null; media_path: string | null; sent_by: string | null; created_at: string }
+interface Conversation { id: string; client_party_id: string | null; wa_phone: string; contact_name?: string | null; assigned_to: string | null; status: 'open' | 'waiting' | 'closed'; last_message_at: string | null }
+interface Message { id: string; conversation_id: string; direction: 'in' | 'out'; body: string | null; media_path: string | null; sent_by: string | null; created_at: string;
+  kind?: string; origin?: 'api' | 'app' | 'history'; status?: string | null; error?: string | null; file_name?: string | null }
 
 const WA = {
   green: '#00a884', header: '#f0f2f5', panel: '#ffffff', chatBg: '#efeae2', out: '#d9fdd3', in: '#ffffff',
@@ -66,15 +70,15 @@ function sample(): { conversations: Conversation[]; messages: Message[]; names: 
 }
 
 function useConversations() {
-  return useQuery({ queryKey: ['conversations'], queryFn: async () => must(await supabase.from('conversations').select('*').order('last_message_at', { ascending: false, nullsFirst: false })) as Conversation[] });
+  return useQuery({ queryKey: ['conversations'], refetchInterval: 15_000, queryFn: async () => must(await supabase.from('conversations').select('*').order('last_message_at', { ascending: false, nullsFirst: false })) as Conversation[] });
 }
 // The last messages of all chats, for each chat's last line in the list.
 function useRecentMessages() {
-  return useQuery({ queryKey: ['messages-recent'], queryFn: async () => must(await supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(1000)) as Message[] });
+  return useQuery({ queryKey: ['messages-recent'], refetchInterval: 15_000, queryFn: async () => must(await supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(1000)) as Message[] });
 }
 function useMessages(id: string | null) {
   return useQuery({
-    queryKey: ['messages', id], enabled: !!id && !id.startsWith('s'),
+    queryKey: ['messages', id], enabled: !!id && !id.startsWith('s'), refetchInterval: 15_000,
     queryFn: async () => must(await supabase.from('messages').select('*').eq('conversation_id', id!).order('created_at')) as Message[],
   });
 }
@@ -98,13 +102,16 @@ export function Messages() {
     for (const m of demo ? [...demoData.messages].reverse() : recent.data ?? []) if (!out.has(m.conversation_id)) out.set(m.conversation_id, m);
     return out;
   }, [recent.data, demo, demoData]);
-  const who = (c: Conversation) => (c.client_party_id ? names.get(c.client_party_id) : null) ?? c.wa_phone;
+  const who = (c: Conversation) => (c.client_party_id ? names.get(c.client_party_id) : null) ?? c.contact_name ?? c.wa_phone;
+  const account = useQuery({ queryKey: ['whatsapp-account'], queryFn: async () => (must(await supabase.from('whatsapp_account').select('phone_number_id, connected_at').eq('id', 1).maybeSingle()) as { phone_number_id: string | null; connected_at: string | null } | null) });
+  const connected = !demo && !!account.data?.phone_number_id && !!account.data.connected_at;
   const list = conversations.filter((c) => (showClosed || c.status !== 'closed')
     && (!search.trim() || `${who(c)} ${c.wa_phone}`.includes(search.trim())));
   const current = conversations.find((c) => c.id === params.get('c')) ?? null;
   const thread = useMessages(current?.id ?? null);
   const messages = demo ? demoData.messages.filter((m) => m.conversation_id === current?.id) : thread.data ?? [];
-  const lastIn = [...messages].reverse().find((m) => m.direction === 'in');
+  // The 24 hours start from the client's last message to the connected number (not from the history).
+  const lastIn = [...messages].reverse().find((m) => m.direction === 'in' && m.origin !== 'history');
   const windowOpen = !!lastIn && Date.now() - new Date(lastIn.created_at).getTime() < WINDOW_MS;
   async function update(fields: Partial<Conversation>) {
     if (demo) return;
@@ -119,7 +126,7 @@ export function Messages() {
         <Title order={2}>הודעות</Title>
         <Switch label="תצוגה לדוגמה" checked={demo} onChange={(e) => { setDemo(e.currentTarget.checked); setParams({}); }} />
       </Group>
-      {!demo && !conversations.length && (
+      {!demo && !conversations.length && !connected && (
         <Alert color="green" icon={<IconBrandWhatsapp size={18} />} title="הוואטסאפ עוד לא מחובר למערכת">
           כשיחובר, כל הודעה מלקוח תופיע כאן ותשויך לכרטיס שלו לפי מספר הטלפון. עד אז, ליד כל טלפון בכרטיסים יש כפתור וואטסאפ. "תצוגה לדוגמה" מראה איך זה ייראה.
         </Alert>
@@ -153,7 +160,7 @@ export function Messages() {
                       <Group justify="space-between" wrap="nowrap" gap={4}>
                         <Group gap={3} wrap="nowrap" style={{ minWidth: 0 }}>
                           {last?.direction === 'out' && <IconChecks size={16} color={WA.tick} style={{ flexShrink: 0 }} />}
-                          <Text size="sm" c={WA.muted} lineClamp={1}>{last?.body ?? (last?.media_path ? '📎 קובץ' : c.wa_phone)}</Text>
+                          <Text size="sm" c={WA.muted} lineClamp={1}>{last?.body ?? (last ? kindLabel(last) : c.wa_phone)}</Text>
                         </Group>
                         {last?.direction === 'in' && c.status === 'open' && <Badge size="sm" circle color={WA.green} style={{ flexShrink: 0 }}>1</Badge>}
                       </Group>
@@ -216,11 +223,13 @@ export function Messages() {
                             position: 'relative', background: out ? WA.out : WA.in, borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)',
                             ...(first ? (out ? { borderStartEndRadius: 0 } : { borderStartStartRadius: 0 }) : {}),
                           }}>
-                            <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? (m.media_path ? '📎 קובץ' : '')}</Text>
+                            {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
+                            {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
+                              {out && m.origin === 'app' && <Tooltip label="נשלח מהאפליקציה בטלפון"><IconDeviceMobile size={12} color={WA.muted} /></Tooltip>}
                               {out && m.sent_by && <Text size="10px" c={WA.muted}>{staffNames.get(m.sent_by) ?? ''} ·</Text>}
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
-                              {out && <IconChecks size={15} color={WA.tick} />}
+                              {out && <Ticks status={m.status} error={m.error} />}
                             </Group>
                           </Box>
                         </Group>
@@ -229,17 +238,7 @@ export function Messages() {
                   })}
                 </Stack>
               </ScrollArea>
-              <Box bg={WA.header} px="sm" py={8}>
-                <Text size="xs" c={windowOpen ? WA.muted : '#b25e00'} ta="center" mb={6}>
-                  {windowOpen ? 'הלקוח כתב ב-24 השעות האחרונות: אפשר לענות חופשי' : 'עברו 24 שעות מההודעה האחרונה של הלקוח: אפשר לשלוח רק תבנית מאושרת'}
-                </Text>
-                <Group gap="xs" wrap="nowrap">
-                  <ActionIcon variant="subtle" color="gray" size="lg" disabled aria-label="אימוג'י"><IconMoodSmile size={24} /></ActionIcon>
-                  <ActionIcon variant="subtle" color="gray" size="lg" disabled aria-label="צירוף"><IconPaperclip size={24} /></ActionIcon>
-                  <TextInput style={{ flex: 1 }} radius="md" disabled placeholder="השליחה תופעל כשהוואטסאפ יחובר למערכת" styles={{ input: { background: '#fff', border: 'none' } }} />
-                  <ActionIcon size={42} radius="xl" color={WA.green} variant="filled" disabled aria-label="שליחה"><IconSend size={20} style={{ transform: 'scaleX(-1)' }} /></ActionIcon>
-                </Group>
-              </Box>
+              <Composer conversation={current} connected={connected} windowOpen={windowOpen} onSent={() => { qc.invalidateQueries({ queryKey: ['messages', current.id] }); qc.invalidateQueries({ queryKey: ['messages-recent'] }); qc.invalidateQueries({ queryKey: ['conversations'] }); }} />
             </>
           )}
         </Box>
@@ -247,5 +246,104 @@ export function Messages() {
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
     </Stack>
+  );
+}
+
+// What a message without text is.
+function kindLabel(m: Message): string {
+  const k = m.kind ?? 'text';
+  return ({ image: '📷 תמונה', video: '🎥 סרטון', audio: '🎤 הקלטה', document: `📄 ${m.file_name ?? 'מסמך'}`, sticker: 'מדבקה', location: '📍 מיקום', template: 'תבנית' } as Record<string, string>)[k] ?? (m.media_path ? '📎 קובץ' : '');
+}
+
+// The ticks of one of ours: sent ✓, delivered ✓✓, read ✓✓ in blue, failed ! with why.
+function Ticks({ status, error }: { status?: string | null; error?: string | null }) {
+  if (status === 'failed') return <Tooltip label={error ?? 'לא נמסרה'}><IconAlertCircle size={14} color="#d9480f" /></Tooltip>;
+  if (status === 'read') return <IconChecks size={15} color={WA.tick} />;
+  if (status === 'delivered') return <IconChecks size={15} color={WA.muted} />;
+  return <IconCheck size={14} color={WA.muted} />;
+}
+
+// A picture or file of a message, from the private bucket (a link that works for an hour).
+function Media({ path, kind, name }: { path: string; kind?: string; name?: string | null }) {
+  const url = useQuery({ queryKey: ['wa-media', path], staleTime: 50 * 60_000, queryFn: async () => (await supabase.storage.from('whatsapp').createSignedUrl(path, 3600)).data?.signedUrl ?? null });
+  if (!url.data) return <Text size="xs" c={WA.muted}>טוען קובץ…</Text>;
+  if (kind === 'image' || kind === 'sticker') return <Anchor href={url.data} target="_blank"><Image src={url.data} maw={kind === 'sticker' ? 120 : 280} radius="sm" mb={4} alt="" /></Anchor>;
+  if (kind === 'audio') return <audio controls src={url.data} style={{ maxWidth: 260 }} />;
+  if (kind === 'video') return <video controls src={url.data} style={{ maxWidth: 280, borderRadius: 6 }} />;
+  return <Anchor href={url.data} target="_blank" size="sm"><Group gap={4} wrap="nowrap"><IconFileText size={18} />{name ?? 'קובץ'}</Group></Anchor>;
+}
+
+interface Template { name: string; language: string; category: string; body: string }
+
+// The typing bar: a text within the 24 hours; after them, an approved template.
+function Composer({ conversation, connected, windowOpen, onSent }: { conversation: Conversation; connected: boolean; windowOpen: boolean; onSent: () => void }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState(false);
+  async function send(body: Record<string, unknown>) {
+    setBusy(true);
+    try {
+      const { error } = await supabase.functions.invoke('whatsapp-send', { body: { conversation_id: conversation.id, ...body } });
+      if (error) {
+        let msg = error.message;
+        try { msg = (await (error as { context?: Response }).context?.json())?.error ?? msg; } catch { /* keep */ }
+        throw new Error(msg);
+      }
+      setText(''); setPicking(false); onSent();
+      return true;
+    } catch (e) { notifications.show({ color: 'red', message: (e as Error).message }); return false; } finally { setBusy(false); }
+  }
+  return (
+    <Box bg={WA.header} px="sm" py={8}>
+      <Text size="xs" c={windowOpen ? WA.muted : '#b25e00'} ta="center" mb={6}>
+        {!connected ? 'השליחה תופעל כשהוואטסאפ יחובר למערכת (הגדרות ← וואטסאפ)'
+          : windowOpen ? 'הלקוח כתב ב-24 השעות האחרונות: אפשר לענות חופשי' : 'עברו 24 שעות מההודעה האחרונה של הלקוח: אפשר לשלוח רק תבנית מאושרת'}
+      </Text>
+      <Group gap="xs" wrap="nowrap" align="flex-end">
+        <Tooltip label="שליחת תבנית מאושרת"><ActionIcon variant="subtle" color="gray" size="lg" disabled={!connected} onClick={() => setPicking(true)} aria-label="תבנית"><IconTemplate size={24} /></ActionIcon></Tooltip>
+        <Textarea style={{ flex: 1 }} radius="md" autosize minRows={1} maxRows={6} disabled={!connected || !windowOpen || busy}
+          placeholder={!connected ? 'השליחה תופעל כשהוואטסאפ יחובר למערכת' : windowOpen ? 'הקלדת הודעה (Enter שולח, Shift+Enter שורה חדשה)' : 'אפשר לשלוח רק תבנית'}
+          value={text} onChange={(e) => setText(e.currentTarget.value)} styles={{ input: { background: '#fff', border: 'none' } }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && text.trim()) { e.preventDefault(); send({ text }); } }} />
+        <ActionIcon size={42} radius="xl" color={WA.green} variant="filled" disabled={!connected || !windowOpen || !text.trim()} loading={busy} onClick={() => send({ text })} aria-label="שליחה">
+          <IconSend size={20} style={{ transform: 'scaleX(-1)' }} />
+        </ActionIcon>
+      </Group>
+      {picking && <TemplatePicker busy={busy} onClose={() => setPicking(false)} onSend={(t, params) => send({ template: t.name, language: t.language, params, preview: fill(t.body, params) })} />}
+    </Box>
+  );
+}
+
+const fill = (body: string, params: string[]) => body.replace(/\{\{(\d+)\}\}/g, (_, n) => params[Number(n) - 1] || `{{${n}}}`);
+
+function TemplatePicker({ busy, onClose, onSend }: { busy: boolean; onClose: () => void; onSend: (t: Template, params: string[]) => void }) {
+  const q = useQuery({
+    queryKey: ['wa-templates'], staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('whatsapp-send', { body: { action: 'templates' } });
+      if (error) throw error;
+      return data.templates as Template[];
+    },
+  });
+  const [pick, setPick] = useState<string | null>(null);
+  const [params, setParams] = useState<string[]>([]);
+  const t = (q.data ?? []).find((x) => `${x.name}|${x.language}` === pick);
+  const count = t ? new Set(t.body.match(/\{\{\d+\}\}/g) ?? []).size : 0;
+  return (
+    <Modal opened onClose={onClose} title="שליחת תבנית מאושרת">
+      <Stack>
+        {q.isLoading ? <Text size="sm" c="dimmed">טוען תבניות…</Text> : q.error ? <Alert color="red">{(q.error as Error).message}</Alert> : !(q.data ?? []).length
+          ? <Alert color="yellow">אין תבניות מאושרות. יוצרים תבנית ב-WhatsApp Manager, ומחכים לאישור של Meta.</Alert>
+          : <Select label="תבנית" data={(q.data ?? []).map((x) => ({ value: `${x.name}|${x.language}`, label: `${x.name} (${x.language})` }))} value={pick} onChange={(x) => { setPick(x); setParams([]); }} />}
+        {t && <>
+          {Array.from({ length: count }, (_, i) => <TextInput key={i} label={`{{${i + 1}}}`} value={params[i] ?? ''} onChange={(e) => { const p = [...params]; p[i] = e.currentTarget.value; setParams(p); }} />)}
+          <Box p="sm" style={{ background: WA.out, borderRadius: 8 }}><Text size="sm" style={{ whiteSpace: 'pre-wrap' }} dir="auto">{fill(t.body, params)}</Text></Box>
+        </>}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>ביטול</Button>
+          <Button color="green" loading={busy} disabled={!t || params.filter((x) => x?.trim()).length < count} onClick={() => onSend(t!, params)}>שליחה</Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }
