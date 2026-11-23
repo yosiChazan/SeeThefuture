@@ -3,6 +3,8 @@
 //   { action: 'start', conversation_id, guide_id }  staff: hand the chat to the AI (24 hours at
 //                                                   most); it answers the client's last message now
 //   { action: 'stop', conversation_id }             staff: take the chat back
+//   { action: 'summary', conversation_id }          staff: a short summary of where the chat stands
+//                                                   (decision 186), saved on the chat
 //   { action: 'reply', conversation_id }            whatsapp-webhook, after a client's message in
 //                                                   a chat the AI holds (service-role key)
 // The AI sees only the guide and this chat (its text and the client's pictures), never the
@@ -156,6 +158,43 @@ async function answer(conversationId: string): Promise<Json> {
   return { sent: !!out.reply?.trim(), handback: out.handback };
 }
 
+// Where a chat stands (decision 186), for the office: in Hebrew, from its last messages.
+const SUMMARY_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string' },
+    waiting_on: { type: 'string', enum: ['us', 'client', 'none'] },
+  },
+  required: ['summary', 'waiting_on'],
+  additionalProperties: false,
+};
+async function summarize(conversationId: string): Promise<Json> {
+  const { data: rows } = await admin.from('messages').select('direction, origin, kind, body, created_at')
+    .eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(80);
+  const msgs = (rows ?? []).reverse();
+  if (!msgs.length) return { summary: null };
+  const who = (m: Json) => m.direction === 'in' ? 'לקוח' : m.origin === 'ai' ? 'AI' : m.origin === 'app' ? 'משרד (טלפון)' : 'משרד';
+  const transcript = msgs.map((m) => `[${new Date(m.created_at).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })}] ${who(m)}: ${(m.body ?? '').trim() || `[${m.kind}]`}`).join('\n');
+  const client = new Anthropic();
+  const res = await client.beta.messages.create({
+    model: MODEL,
+    max_tokens: 2000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: SUMMARY_SCHEMA } },
+    system: 'You summarize a WhatsApp chat between See the Future (an office that manages apartments abroad for Israeli owners) and one client, for the office staff. Write in Hebrew, 2-4 short sentences: what the client wants or asked, what was already done or answered, what is still open, and what the next step is and whose it is. Concrete (names of topics, dates if relevant), no greetings, no filler. waiting_on: "us" if the office should act next, "client" if we wait for the client, "none" if nothing is open.',
+    messages: [{ role: 'user', content: `<chat>\n${transcript}\n</chat>` }],
+    // deno-lint-ignore no-explicit-any
+  } as any);
+  if (res.stop_reason === 'refusal') return { summary: null };
+  // deno-lint-ignore no-explicit-any
+  const t = res.content.find((b: any) => b.type === 'text') as { text: string } | undefined;
+  const out = JSON.parse(t?.text ?? '{}');
+  const now = new Date().toISOString();
+  await admin.from('conversations').update({ ai_summary: out.summary ?? null, ai_summary_at: now, ai_waiting_on: out.waiting_on ?? null }).eq('id', conversationId);
+  return { summary: out.summary, waiting_on: out.waiting_on, at: now };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return reply(405, { error: 'POST only' });
@@ -181,6 +220,9 @@ Deno.serve(async (req) => {
   const [staff, mfa] = await Promise.all([caller.rpc('is_staff'), caller.rpc('mfa_verified')]);
   if (!me?.user || staff.data !== true || mfa.data !== true) return reply(403, { error: 'staff only' });
 
+  if (b.action === 'summary') {
+    try { return reply(200, await summarize(id)); } catch (e) { return reply(500, { error: (e as Error).message }); }
+  }
   if (b.action === 'stop') {
     await admin.from('conversations').update({ ai_guide_id: null, ai_until: null, ai_handback_reason: 'נעצר ע"י עובד', ai_handback_at: new Date().toISOString() }).eq('id', id);
     return reply(200, { ok: true });

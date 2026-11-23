@@ -8,6 +8,7 @@ import { useStaff } from '../components/ManualTopics';
 import { waLink } from '../components/Phone';
 import { useClients } from '../lib/queries';
 import { useAiGuides } from '../components/AiGuidesSettings';
+import { ChatSummary } from '../components/ChatSummary';
 import { must, supabase } from '../lib/supabase';
 
 // The shared WhatsApp inbox (SPEC §6.5, decisions 135, 139), laid out like WhatsApp: chats on
@@ -19,7 +20,8 @@ import { must, supabase } from '../lib/supabase';
 // phone's app marked as such. New messages are fetched every 15 seconds.
 
 interface Conversation { id: string; client_party_id: string | null; wa_phone: string; contact_name?: string | null; assigned_to: string | null; status: 'open' | 'waiting' | 'closed'; last_message_at: string | null;
-  ai_guide_id?: string | null; ai_until?: string | null; ai_handback_reason?: string | null; ai_handback_at?: string | null }
+  ai_guide_id?: string | null; ai_until?: string | null; ai_handback_reason?: string | null; ai_handback_at?: string | null;
+  ai_summary?: string | null; ai_summary_at?: string | null; ai_waiting_on?: 'us' | 'client' | 'none' | null }
 interface Message { id: string; conversation_id: string; direction: 'in' | 'out'; body: string | null; media_path: string | null; sent_by: string | null; created_at: string;
   kind?: string; origin?: 'api' | 'app' | 'history' | 'ai'; status?: string | null; error?: string | null; file_name?: string | null }
 
@@ -239,6 +241,7 @@ export function Messages() {
                 <Select size="xs" w={190} variant="unstyled" placeholder="לא שויכה" clearable value={current.assigned_to}
                   data={(staff.data ?? []).map((s) => ({ value: s.user_id, label: s.display_name }))} onChange={(x) => update({ assigned_to: x })} />
               </Group>
+              {!demo && connected && <ChatSummary chat={current} />}
               {current.ai_guide_id ? (
                 <Group px="md" py={6} gap="xs" wrap="nowrap" justify="space-between" style={{ background: '#f3f0ff', borderBottom: '1px solid #d0bfff' }}>
                   <Group gap={6} wrap="nowrap"><IconRobot size={18} color="#7048e8" />
