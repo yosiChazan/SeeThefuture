@@ -11,7 +11,8 @@ import { must, supabase } from '../lib/supabase';
 // Signup, with "connect your WhatsApp Business app") opens from here; when it closes, the
 // function whatsapp-connect takes the code, subscribes the webhooks and asks for the contacts and
 // the last 6 months of chats. The app's id and the signup configuration's id are public values,
-// set as VITE_META_APP_ID and VITE_META_CONFIG_ID on Cloudflare Pages.
+// set as VITE_META_APP_ID and VITE_META_CONFIG_ID on Cloudflare Pages. Without them the number is
+// connected through Dualhook (decision 182), on its site, and shows here once its first webhook arrives.
 
 const APP_ID = import.meta.env.VITE_META_APP_ID as string | undefined;
 const CONFIG_ID = import.meta.env.VITE_META_CONFIG_ID as string | undefined;
@@ -123,7 +124,7 @@ export function WhatsAppSettings() {
           <Text size="sm" c="dimmed">מחבר את המספר של החברה למערכת, כשהאפליקציה בטלפון ממשיכה לעבוד: הודעות של לקוחות, וגם מה שעונים מהטלפון, יופיעו בדף ההודעות.</Text>
           {a?.last_error && <Alert color="red" title="הניסיון האחרון נכשל">{a.last_error}</Alert>}
           {!APP_ID || !CONFIG_ID
-            ? <Alert color="yellow">חסרים מזהי האפליקציה של Meta (VITE_META_APP_ID, VITE_META_CONFIG_ID) בהגדרות האתר ב-Cloudflare.</Alert>
+            ? <Alert color="blue" title="חיבור דרך Dualhook">המספר מתחבר באתר של Dualhook (Connect WhatsApp), עם כתובת ה-webhook של המערכת. המערכת מזהה את החיבור לבד עם ההודעה הראשונה שמגיעה, ואז יופיע כאן "מחובר".</Alert>
             : access.isAdmin && <Button w="fit-content" color="green" leftSection={<IconBrandWhatsapp size={18} />} loading={busy} onClick={ask}>חיבור וואטסאפ</Button>}
         </Stack>
       )}
