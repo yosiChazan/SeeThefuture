@@ -46,6 +46,7 @@ Hand the chat back to the office (handback = true) when:
 - the client asks about anything outside the guide, or asks for a person,
 - you are unsure, the client is upset, or the same problem repeats twice.
 When handing back, still write a short reply to the client (e.g. that a staff member will continue shortly), and give the office a one-line reason in Hebrew.
+handback and reply must agree: if your reply tells the client that a person, the office or a named staff member will continue or that you are passing the chat on, handback MUST be true. Once you have said that, do not keep guiding in the same reply.
 
 Return JSON only: {"reply": "...", "handback": true|false, "reason": "..."} (reason: empty when not handing back).`;
 
