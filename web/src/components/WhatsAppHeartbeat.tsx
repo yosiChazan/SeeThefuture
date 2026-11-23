@@ -31,7 +31,10 @@ export function WhatsAppHeartbeat() {
     <Alert color={left <= 2 ? 'red' : 'orange'} icon={<IconBrandWhatsapp size={18} />} mb="md" title="תזכורת: לפתוח את WhatsApp Business בטלפון של החברה">
       <Group justify="space-between" wrap="wrap" gap="xs">
         <Text size="sm">עברו {days} ימים בלי שימוש באפליקציה בטלפון. {left > 0 ? `בעוד כ-${left} ימים` : 'בכל רגע'} Meta עלולה לנתק את הוואטסאפ מהמערכת. מספיק לפתוח את האפליקציה בטלפון (או לשלוח ממנה הודעה).</Text>
-        <Button size="xs" variant="white" color="dark" onClick={checked}>פתחתי את האפליקציה</Button>
+        <Group gap="xs">
+          <Button size="xs" color="green" component="a" href="https://web.whatsapp.com/" target="_blank" rel="noopener noreferrer" leftSection={<IconBrandWhatsapp size={14} />}>פתיחת WhatsApp Web</Button>
+          <Button size="xs" variant="white" color="dark" onClick={checked}>פתחתי את האפליקציה</Button>
+        </Group>
       </Group>
     </Alert>
   );
