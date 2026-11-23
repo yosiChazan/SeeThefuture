@@ -21,6 +21,7 @@ import { DropboxCallback } from './pages/DropboxCallback';
 import { Settings } from './pages/Settings';
 import { Users } from './pages/Users';
 import { Privacy } from './pages/Privacy';
+import { Broadcast } from './pages/Broadcast';
 
 export function App() {
   // The privacy policy is public (decision 180): Meta's reviewers open it without signing in.
@@ -42,6 +43,7 @@ export function App() {
             <Route path="cash" element={<CashBoxes />} />
             <Route path="tasks" element={<Tasks />} />
             <Route path="messages" element={<Messages />} />
+            <Route path="broadcast" element={<Broadcast />} />
             <Route path="documents-zip" element={<DriveZipImport />} />
             <Route path="leases" element={<Leases />} />
             <Route path="leases/:id" element={<LeaseCard />} />
