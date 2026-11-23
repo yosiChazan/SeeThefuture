@@ -226,7 +226,7 @@ export function Messages() {
                             {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
                             {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
-                              {out && m.origin === 'app' && <Tooltip label="נשלח מהאפליקציה בטלפון"><IconDeviceMobile size={12} color={WA.muted} /></Tooltip>}
+                              {out && m.origin === 'app' && <Badge size="xs" variant="light" color="teal" leftSection={<IconDeviceMobile size={11} />} style={{ textTransform: 'none' }}>מהטלפון</Badge>}
                               {out && m.sent_by && <Text size="10px" c={WA.muted}>{staffNames.get(m.sent_by) ?? ''} ·</Text>}
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
                               {out && <Ticks status={m.status} error={m.error} />}
