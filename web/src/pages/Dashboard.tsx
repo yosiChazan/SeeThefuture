@@ -21,6 +21,25 @@ function useCount(table: string, column: string, values: string[]) {
   });
 }
 
+// WhatsApp chats waiting for us (decision 184): not closed, and the last message in them is the
+// client's (not ours, from the inbox, the phone or the AI).
+function useUnanswered() {
+  return useQuery({
+    queryKey: ['unanswered-chats'], refetchInterval: 60_000,
+    queryFn: async () => {
+      const { data: convs, error } = await supabase.from('conversations').select('id').neq('status', 'closed');
+      if (error) throw new Error(error.message);
+      if (!convs?.length) return 0;
+      const { data: msgs, error: e2 } = await supabase.from('messages').select('conversation_id, direction, created_at')
+        .in('conversation_id', convs.map((c) => c.id)).order('created_at', { ascending: false }).limit(2000);
+      if (e2) throw new Error(e2.message);
+      const last = new Map<string, string>();
+      for (const m of msgs ?? []) if (!last.has(m.conversation_id)) last.set(m.conversation_id, m.direction);
+      return [...last.values()].filter((d) => d === 'in').length;
+    },
+  });
+}
+
 function Tile({ icon: Icon, color, label, value, to, hint }: { icon: typeof IconAlertTriangle; color: string; label: string; value: number | string; to?: string; hint?: string }) {
   const body = (
     <Paper withBorder p="md" h="100%">
@@ -42,7 +61,7 @@ export function Dashboard() {
   const properties = useProperties();
   const leases = useLeases();
   const pendingBatches = useCount('import_batches', 'status', ['parsed', 'in_review']);
-  const openConversations = useCount('conversations', 'status', ['open']);
+  const openConversations = useUnanswered();
   const ending = filterLeases(leases.data ?? [], 'ending').sort((a, b) => (a.end_date ?? '').localeCompare(b.end_date ?? ''));
   const incomplete = (leases.data ?? []).filter(isIncompleteLease).length;
 
@@ -53,7 +72,7 @@ export function Dashboard() {
         <Tile icon={IconFileImport} color="indigo" label="דוחות שממתינים לאישור" value={pendingBatches.data ?? '…'} to="/intake" />
         <Tile icon={IconCalendarDue} color="orange" label="חוזים שמסתיימים ב-60 יום" value={leases.data ? ending.length : '…'} to="/leases?view=ending" />
         <Tile icon={IconAlertTriangle} color="red" label="חוזים שחסרים בהם פרטים" value={leases.data ? incomplete : '…'} to="/leases?view=incomplete" />
-        <Tile icon={IconMessages} color="teal" label="הודעות שלא נענו" value={openConversations.data ?? '…'} hint="וואטסאפ ייבנה בשלב 6" />
+        <Tile icon={IconMessages} color="teal" label="הודעות שלא נענו" value={openConversations.data ?? '…'} to="/messages" hint="שיחות שההודעה האחרונה בהן היא של הלקוח" />
       </SimpleGrid>
 
       <Paper withBorder p="md">
