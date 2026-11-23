@@ -1,12 +1,13 @@
 import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconAlertCircle, IconArrowRight, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useStaff } from '../components/ManualTopics';
 import { waLink } from '../components/Phone';
 import { useClients } from '../lib/queries';
+import { useAiGuides } from '../components/AiGuidesSettings';
 import { must, supabase } from '../lib/supabase';
 
 // The shared WhatsApp inbox (SPEC §6.5, decisions 135, 139), laid out like WhatsApp: chats on
@@ -17,9 +18,10 @@ import { must, supabase } from '../lib/supabase';
 // approved template after them), pictures and files, delivery ticks, and what was sent from the
 // phone's app marked as such. New messages are fetched every 15 seconds.
 
-interface Conversation { id: string; client_party_id: string | null; wa_phone: string; contact_name?: string | null; assigned_to: string | null; status: 'open' | 'waiting' | 'closed'; last_message_at: string | null }
+interface Conversation { id: string; client_party_id: string | null; wa_phone: string; contact_name?: string | null; assigned_to: string | null; status: 'open' | 'waiting' | 'closed'; last_message_at: string | null;
+  ai_guide_id?: string | null; ai_until?: string | null; ai_handback_reason?: string | null; ai_handback_at?: string | null }
 interface Message { id: string; conversation_id: string; direction: 'in' | 'out'; body: string | null; media_path: string | null; sent_by: string | null; created_at: string;
-  kind?: string; origin?: 'api' | 'app' | 'history'; status?: string | null; error?: string | null; file_name?: string | null }
+  kind?: string; origin?: 'api' | 'app' | 'history' | 'ai'; status?: string | null; error?: string | null; file_name?: string | null }
 
 const WA = {
   green: '#00a884', header: '#f0f2f5', panel: '#ffffff', chatBg: '#efeae2', out: '#d9fdd3', in: '#ffffff',
@@ -113,6 +115,28 @@ export function Messages() {
   // The 24 hours start from the client's last message to the connected number (not from the history).
   const lastIn = [...messages].reverse().find((m) => m.direction === 'in' && m.origin !== 'history');
   const windowOpen = !!lastIn && Date.now() - new Date(lastIn.created_at).getTime() < WINDOW_MS;
+  // The AI in a chat (decision 183): hand over with a guide, or take back.
+  const guides = useAiGuides();
+  const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
+  const [aiPick, setAiPick] = useState(false);
+  const [aiGuide, setAiGuide] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  async function aiCall(body: Record<string, unknown>) {
+    setAiBusy(true);
+    try {
+      const { error } = await supabase.functions.invoke('whatsapp-ai', { body });
+      if (error) {
+        let msg = error.message;
+        try { msg = (await (error as { context?: Response }).context?.json())?.error ?? msg; } catch { /* keep */ }
+        throw new Error(msg);
+      }
+    } catch (e) { notifications.show({ color: 'red', message: (e as Error).message }); } finally {
+      setAiBusy(false);
+      await qc.invalidateQueries({ queryKey: ['conversations'] });
+      await qc.invalidateQueries({ queryKey: ['messages', current?.id] });
+    }
+  }
+  const aiStop = (id: string) => aiCall({ action: 'stop', conversation_id: id });
   async function update(fields: Partial<Conversation>) {
     if (demo) return;
     const r = await supabase.from('conversations').update(fields).eq('id', current!.id);
@@ -154,7 +178,10 @@ export function Messages() {
                     <Avatar radius="xl" size={49} color="teal">{initials(who(c)) || <IconBrandWhatsapp size={22} />}</Avatar>
                     <Box style={{ flex: 1, minWidth: 0 }}>
                       <Group justify="space-between" wrap="nowrap" gap={4}>
-                        <Text size="md" c={WA.text} lineClamp={1}>{who(c)}</Text>
+                        <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
+                          {c.ai_guide_id && <Tooltip label="ה-AI עונה בשיחה הזו"><IconRobot size={16} color="#7048e8" style={{ flexShrink: 0 }} /></Tooltip>}
+                          <Text size="md" c={WA.text} lineClamp={1}>{who(c)}</Text>
+                        </Group>
                         <Text size="xs" c={last?.direction === 'in' && c.status === 'open' ? WA.green : WA.muted} style={{ flexShrink: 0 }}>{listTime(c.last_message_at)}</Text>
                       </Group>
                       <Group justify="space-between" wrap="nowrap" gap={4}>
@@ -198,6 +225,9 @@ export function Messages() {
                     <Menu.Dropdown>
                       {current.client_party_id && !demo && <Menu.Item component={Link} to={`/clients/${current.client_party_id}`}>לכרטיס הלקוח</Menu.Item>}
                       {waLink(current.wa_phone) && <Menu.Item component="a" href={waLink(current.wa_phone)!} target="_blank" rel="noopener noreferrer">פתיחה באפליקציה</Menu.Item>}
+                      {!demo && connected && (current.ai_guide_id
+                        ? <Menu.Item color="violet" leftSection={<IconRobot size={16} />} onClick={() => aiStop(current.id)}>עצירת ה-AI</Menu.Item>
+                        : <Menu.Item color="violet" leftSection={<IconRobot size={16} />} onClick={() => setAiPick(true)}>העבר ל-AI…</Menu.Item>)}
                       <Menu.Label>מצב</Menu.Label>
                       {(Object.keys(STATUS_HE) as Conversation['status'][]).map((s) => <Menu.Item key={s} onClick={() => update({ status: s })}>{STATUS_HE[s]}</Menu.Item>)}
                     </Menu.Dropdown>
@@ -209,6 +239,19 @@ export function Messages() {
                 <Select size="xs" w={190} variant="unstyled" placeholder="לא שויכה" clearable value={current.assigned_to}
                   data={(staff.data ?? []).map((s) => ({ value: s.user_id, label: s.display_name }))} onChange={(x) => update({ assigned_to: x })} />
               </Group>
+              {current.ai_guide_id ? (
+                <Group px="md" py={6} gap="xs" wrap="nowrap" justify="space-between" style={{ background: '#f3f0ff', borderBottom: '1px solid #d0bfff' }}>
+                  <Group gap={6} wrap="nowrap"><IconRobot size={18} color="#7048e8" />
+                    <Text size="sm" c="#5f3dc4">ה-AI עונה ללקוח בשיחה הזו לפי "{guideTitle(current.ai_guide_id)}"{current.ai_until ? `, עד ${new Date(current.ai_until).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}. תשובה שלך (מכאן או מהטלפון) עוצרת אותו.</Text></Group>
+                  <Button size="compact-xs" color="violet" variant="light" onClick={() => aiStop(current.id)}>עצירה</Button>
+                </Group>
+              ) : current.ai_handback_reason && current.ai_handback_at && Date.now() - new Date(current.ai_handback_at).getTime() < 48 * 3600_000 ? (
+                <Group px="md" py={6} gap="xs" wrap="nowrap" justify="space-between" style={{ background: '#fff4e6', borderBottom: '1px solid #ffd8a8' }}>
+                  <Group gap={6} wrap="nowrap"><IconRobot size={18} color="#d9480f" />
+                    <Text size="sm" c="#d9480f">ה-AI החזיר אליך את השיחה ({hhmm(current.ai_handback_at)}): {current.ai_handback_reason}</Text></Group>
+                  <Button size="compact-xs" color="orange" variant="subtle" onClick={() => update({ ai_handback_reason: null })}>הבנתי</Button>
+                </Group>
+              ) : null}
               <ScrollArea style={{ flex: 1, backgroundColor: WA.chatBg, backgroundImage: DOODLE }}>
                 <Stack gap={2} px={{ base: 'sm', sm: 60 }} py="md">
                   {messages.map((m, i) => {
@@ -226,6 +269,7 @@ export function Messages() {
                             {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
                             {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
+                              {out && m.origin === 'ai' && <Badge size="xs" variant="light" color="violet" leftSection={<IconRobot size={11} />} style={{ textTransform: 'none' }}>AI</Badge>}
                               {out && m.origin === 'app' && <Badge size="xs" variant="light" color="teal" leftSection={<IconDeviceMobile size={11} />} style={{ textTransform: 'none' }}>מהטלפון</Badge>}
                               {out && m.sent_by && <Text size="10px" c={WA.muted}>{staffNames.get(m.sent_by) ?? ''} ·</Text>}
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
@@ -243,6 +287,20 @@ export function Messages() {
           )}
         </Box>
       </Box>
+      {aiPick && current && (
+        <Modal opened onClose={() => setAiPick(false)} title="העברת השיחה ל-AI">
+          <Stack>
+            <Text size="sm">ה-AI יענה ללקוח לפי המדריך שתבחר, כולל על צילומי מסך, עד שהנושא ייגמר, עד שתעצור, או עד 24 שעות. הוא לא רואה את הכרטיס של הלקוח ולא מדבר על כסף. אם הלקוח שואל משהו אחר, ה-AI מחזיר אליך את השיחה. התשובות שלו מסומנות "AI".</Text>
+            <Select label="מדריך" data={(guides.data ?? []).filter((g) => g.active).map((g) => ({ value: g.id, label: g.title }))} value={aiGuide} onChange={setAiGuide}
+              nothingFoundMessage="אין מדריך פעיל" placeholder={(guides.data ?? []).some((g) => g.active) ? 'בחירת מדריך' : 'אין מדריך פעיל (הגדרות ← מדריכים ל-AI)'} />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setAiPick(false)}>ביטול</Button>
+              <Button color="violet" leftSection={<IconRobot size={16} />} loading={aiBusy} disabled={!aiGuide}
+                onClick={async () => { await aiCall({ action: 'start', conversation_id: current.id, guide_id: aiGuide }); setAiPick(false); }}>העברה ל-AI</Button>
+            </Group>
+          </Stack>
+        </Modal>
+      )}
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
     </Stack>

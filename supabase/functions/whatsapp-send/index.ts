@@ -98,6 +98,7 @@ Deno.serve(async (req) => {
     conversation_id: conv.id, direction: 'out', body, kind, origin: 'api', status: 'sent', wa_message_id: j.messages[0].id,
     sent_by: me.user.id, created_at: now, wa_timestamp: now,
   }).select('id').single();
-  await admin.from('conversations').update({ last_message_at: now }).eq('id', conv.id);
+  // A person answered from the inbox: the chat is theirs again, not the AI's (decision 183).
+  await admin.from('conversations').update({ last_message_at: now, ai_guide_id: null, ai_until: null }).eq('id', conv.id);
   return reply(200, { ok: true, id: msg?.id, error: error?.message });
 });
