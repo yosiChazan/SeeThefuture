@@ -3,7 +3,7 @@ import { notifications } from '@mantine/notifications';
 import { IconFileZip } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { unzipSync } from 'fflate';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toE164 } from '../lib/phone';
 import { useClients } from '../lib/queries';
 import { supabase } from '../lib/supabase';
@@ -13,14 +13,15 @@ import { importId, parseWaExport, senders, type WaExportMessage } from '../lib/w
 // media", the pictures) into the inbox (SPEC decision 191, a temporary button). The export names
 // people, not numbers, so the client (or the number) is chosen here, and who of the senders is the
 // office. Messages from the connection on are skipped: they came in by themselves. Importing the
-// same file again adds nothing.
+// same file again adds nothing. The ZIP can also be one sent in a chat (exported on the phone and
+// shared to the company's number): its message has a button that opens this with the file.
 
 interface Parsed { name: string; text: string; msgs: WaExportMessage[]; files: Record<string, Uint8Array> }
 
 const MIME: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', opus: 'audio/ogg', ogg: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', pdf: 'application/pdf' };
 const kindOf = (f: string) => { const e = f.split('.').pop()!.toLowerCase(); return /^(jpe?g|png|webp|gif)$/.test(e) ? 'image' : /^(mp4|3gp|mov)$/.test(e) ? 'video' : /^(opus|ogg|mp3|m4a|aac)$/.test(e) ? 'audio' : 'document'; };
 
-export function WaImport({ onClose }: { onClose: () => void }) {
+export function WaImport({ onClose, from }: { onClose: () => void; from?: { path: string; name: string | null } }) {
   const qc = useQueryClient();
   const clients = useClients();
   const [parsed, setParsed] = useState<Parsed | null>(null);
@@ -29,6 +30,17 @@ export function WaImport({ onClose }: { onClose: () => void }) {
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // A ZIP sent in a chat: fetched from storage and read as if uploaded.
+  useEffect(() => {
+    if (!from || !clients.data) return;
+    (async () => {
+      const { data, error: e } = await supabase.storage.from('whatsapp').download(from.path);
+      if (e || !data) { setError(e?.message ?? 'הקובץ לא נמצא'); return; }
+      read(new File([data], from.name ?? 'chat.zip'));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from?.path, !!clients.data]);
 
   async function read(file: File | null) {
     setError(null); setParsed(null);
@@ -42,7 +54,9 @@ export function WaImport({ onClose }: { onClose: () => void }) {
       if (!msgs.length) throw new Error('לא נמצאו הודעות בקובץ');
       const files: Record<string, Uint8Array> = {};
       for (const [k, v] of Object.entries(all)) if (k !== txt) files[k.split('/').pop()!] = v;
-      const name = txt.replace(/^.*\//, '').replace(/\.txt$/i, '').replace(/^(WhatsApp Chat with|צ'אט WhatsApp עם|WhatsApp Chat -)\s*/i, '');
+      // iOS names the text "_chat.txt": the chat's name is then the ZIP's.
+      const base = /^_?chat\.txt$/i.test(txt.replace(/^.*\//, '')) ? file.name.replace(/\.zip$/i, '') : txt.replace(/^.*\//, '');
+      const name = base.replace(/[\u200e\u200f\u202a-\u202e]/g, '').replace(/\.txt$/i, '').replace(/^(WhatsApp Chat with|צ'אט WhatsApp עם|WhatsApp Chat -)\s*/i, '');
       setParsed({ name, text, msgs, files });
       const ss = senders(msgs);
       setOffice(ss.find((s) => /העתיד|future|STF/i.test(s.name))?.name ?? ss[1]?.name ?? null);
@@ -118,7 +132,7 @@ export function WaImport({ onClose }: { onClose: () => void }) {
     <Modal opened onClose={onClose} title="ייבוא שיחה מוואטסאפ (זמני)" size="lg">
       <Stack>
         <Text size="sm" c="dimmed">בטלפון: פותחים את הצ'אט ← ⋮ ← עוד ← ייצוא צ'אט ← "עם מדיה" (או בלי) ← שומרים את קובץ ה-ZIP ומעלים אותו כאן, שיחה אחת בכל פעם.</Text>
-        <FileInput label="קובץ ה-ZIP" accept=".zip,application/zip" leftSection={<IconFileZip size={16} />} placeholder="בחירת קובץ" onChange={read} clearable />
+        {!from && <FileInput label="קובץ ה-ZIP" accept=".zip,application/zip" leftSection={<IconFileZip size={16} />} placeholder="בחירת קובץ" onChange={read} clearable />}
         {error && <Alert color="red">{error}</Alert>}
         {parsed && <>
           <Table fz="sm" withRowBorders={false}>
