@@ -6,7 +6,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useStaff } from '../components/ManualTopics';
 import { waLink } from '../components/Phone';
-import { useClients } from '../lib/queries';
+import { useClients, useContacts } from '../lib/queries';
+import { WaSaveDoc, type WaFile } from '../components/WaSaveDoc';
 import { useAiGuides } from '../components/AiGuidesSettings';
 import { ChatSummary } from '../components/ChatSummary';
 import { WaImport } from '../components/WaImport';
@@ -93,13 +94,19 @@ export function Messages() {
   const real = useConversations();
   const recent = useRecentMessages();
   const clients = useClients();
+  const contacts = useContacts();
   const staff = useStaff();
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [showClosed, setShowClosed] = useState(false);
   const [demo, setDemo] = useState(false);
   const demoData = useMemo(sample, []);
-  const names = useMemo(() => demo ? demoData.names : new Map((clients.data ?? []).map((c) => [c.id, c.display_name])), [clients.data, demo, demoData]);
+  const names = useMemo(() => demo ? demoData.names : new Map([...(contacts.data ?? []), ...(clients.data ?? [])].map((c) => [c.id, c.display_name])), [clients.data, contacts.data, demo, demoData]);
+  // A known chat says whether it is a client or a contact (decision 195).
+  const roleOf = useMemo(() => {
+    const c = new Set((clients.data ?? []).map((x) => x.id)), k = new Set((contacts.data ?? []).map((x) => x.id));
+    return (id: string | null) => (!id ? null : c.has(id) || demo ? { label: 'לקוח', color: 'teal' } : k.has(id) ? { label: 'איש קשר', color: 'grape' } : null);
+  }, [clients.data, contacts.data, demo]);
   const staffNames = useMemo(() => new Map((staff.data ?? []).map((s) => [s.user_id, s.display_name])), [staff.data]);
   const conversations = demo ? demoData.conversations : (real.data ?? []);
   const lastOf = useMemo(() => {
@@ -174,6 +181,13 @@ export function Messages() {
   const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
   const [importing, setImporting] = useState<false | true | { path: string; name: string | null }>(false);   // true: upload a file; else a ZIP sent in a chat
   const [aiPick, setAiPick] = useState(false);
+  // Files of this chat already kept in the system (decision 195).
+  const [saving, setSaving] = useState<WaFile | null>(null);
+  const mediaIds = messages.filter((m) => m.media_path).map((m) => m.id);
+  const saved = useQuery({
+    queryKey: ['wa-saved', current?.id, mediaIds.length], enabled: !demo && mediaIds.length > 0,
+    queryFn: async () => new Set((must(await supabase.from('documents').select('source').in('source', mediaIds.map((id) => `whatsapp:${id}`))) as { source: string }[]).map((d) => d.source.slice(9))),
+  });
   const [aiGuide, setAiGuide] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   async function aiCall(body: Record<string, unknown>) {
@@ -239,6 +253,7 @@ export function Messages() {
                         <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
                           {c.ai_guide_id && <Tooltip label="ה-AI עונה בשיחה הזו"><IconRobot size={16} color="#7048e8" style={{ flexShrink: 0 }} /></Tooltip>}
                           <Text size="md" c={WA.text} lineClamp={1}>{who(c)}</Text>
+                          {roleOf(c.client_party_id) && <Badge size="xs" variant="light" color={roleOf(c.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(c.client_party_id)!.label}</Badge>}
                         </Group>
                         <Text size="xs" c={unreadOf.get(c.id) ? WA.green : WA.muted} style={{ flexShrink: 0 }}>{listTime(c.last_message_at)}</Text>
                       </Group>
@@ -272,7 +287,8 @@ export function Messages() {
                   <ActionIcon variant="subtle" color="gray" hiddenFrom="sm" onClick={() => setParams({})} aria-label="חזרה"><IconArrowRight size={20} /></ActionIcon>
                   <Avatar radius="xl" size={40} color="teal">{initials(who(current))}</Avatar>
                   <Box style={{ minWidth: 0 }}>
-                    <Text c={WA.text} lineClamp={1}>{who(current)}</Text>
+                    <Group gap={6} wrap="nowrap"><Text c={WA.text} lineClamp={1}>{who(current)}</Text>
+                      {roleOf(current.client_party_id) && <Badge size="xs" variant="light" color={roleOf(current.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(current.client_party_id)!.label}</Badge>}</Group>
                     <Text size="xs" c={WA.muted} dir="ltr" ta="right">{current.wa_phone}{current.assigned_to ? ` · ${staffNames.get(current.assigned_to) ?? ''}` : ''}</Text>
                   </Box>
                 </Group>
@@ -335,6 +351,10 @@ export function Messages() {
                               return <Group gap={3} mb={2} wrap="nowrap" style={{ color: s.c }}>{s.i}<Text size="xs" fw={700} c={s.c}>{s.t}</Text></Group>;
                             })()}
                             {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
+                            {m.media_path && !/\.zip$/i.test(m.file_name ?? m.media_path) && ['image', 'document', 'video'].includes(m.kind ?? '') && (
+                              <Group gap={4} mt={4}>{saved.data?.has(m.id)
+                                ? <Badge size="xs" variant="light" color="teal" leftSection={<IconCheck size={10} />} style={{ cursor: 'pointer' }} onClick={() => setSaving(m as WaFile)}>נשמר במערכת</Badge>
+                                : <Button size="compact-xs" variant="light" leftSection={<IconFileText size={12} />} onClick={() => setSaving(m as WaFile)}>שמירה במערכת</Button>}</Group>)}
                             {m.media_path && /\.zip$/i.test(m.file_name ?? m.media_path) && (
                               <Button size="compact-xs" variant="light" mt={4} leftSection={<IconFileZip size={14} />} onClick={() => setImporting({ path: m.media_path!, name: m.file_name ?? null })}>ייבוא השיחה מהקובץ</Button>)}
                             {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
@@ -368,6 +388,7 @@ export function Messages() {
           </Stack>
         </Modal>
       )}
+      {saving && current && <WaSaveDoc file={saving} partyId={roleOf(current.client_party_id)?.label === 'לקוח' ? current.client_party_id : null} onClose={() => setSaving(null)} />}
       {importing && <WaImport from={typeof importing === 'object' ? importing : undefined} onClose={() => setImporting(false)} />}
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
