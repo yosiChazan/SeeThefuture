@@ -5,8 +5,7 @@ import { supabase } from '../lib/supabase';
 
 // The reminder to open the WhatsApp Business app (SPEC decision 188): Meta disconnects the number
 // from the system after about 14 days without the app on the main phone (WhatsApp Web does not
-// count). A message from the app cannot be told from one from WhatsApp Web, so only "פתחתי את
-// האפליקציה בטלפון" resets it: shown on every page 10 days after the last press (or the connection).
+// count). Shown on every page 10 days after the last "פתחתי את האפליקציה בטלפון" (or the connection).
 const DAYS = 10, LIMIT = 14;
 
 export function WhatsAppHeartbeat() {
@@ -14,10 +13,10 @@ export function WhatsAppHeartbeat() {
   const q = useQuery({
     queryKey: ['wa-heartbeat'], refetchInterval: 30 * 60_000, staleTime: 10 * 60_000,
     queryFn: async () => {
-      const { data: acct } = await supabase.from('whatsapp_account').select('connected_at, app_checked_at').eq('id', 1).maybeSingle();
-      if (!acct?.connected_at) return null;
-      const times = [acct.connected_at, acct.app_checked_at].filter(Boolean).map((t) => new Date(t as string).getTime());
-      return Math.floor((Date.now() - Math.max(...times)) / 86_400_000);
+      // The same start as the e-mail: the last "opened" (or the connection).
+      const { data, error } = await supabase.rpc('wa_heartbeat_since');
+      if (error || !data) return null;
+      return Math.floor((Date.now() - new Date(data as string).getTime()) / 86_400_000);
     },
   });
   const days = q.data;
