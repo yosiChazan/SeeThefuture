@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Checkbox, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileZip, IconFileText, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,6 +7,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useStaff } from '../components/ManualTopics';
 import { waLink } from '../components/Phone';
 import { useClients, useContacts } from '../lib/queries';
+import { useAccess } from '../lib/access';
 import { WaSaveDoc, type WaFile } from '../components/WaSaveDoc';
 import { useAiGuides } from '../components/AiGuidesSettings';
 import { ChatSummary } from '../components/ChatSummary';
@@ -182,6 +183,11 @@ export function Messages() {
   const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
   const [importing, setImporting] = useState<false | true | { path: string; name: string | null }>(false);   // true: upload a file; else a ZIP sent in a chat
   const [aiPick, setAiPick] = useState(false);
+  // "Alliance special" (decision 197): clients of those apartments; no AI without the admin's approval.
+  const access = useAccess();
+  const specialQ = useQuery({ queryKey: ['special-alliance'], enabled: !demo, queryFn: async () => new Set((must(await supabase.rpc('special_alliance_parties')) as { party_id: string }[]).map((r) => r.party_id)) });
+  const isSpecial = (c: Conversation | null) => !!c?.client_party_id && !!specialQ.data?.has(c.client_party_id);
+  const [specialOk, setSpecialOk] = useState(false);
   // Quoted replies (decision 196): the message quoted, and the one being answered with a quote.
   const byWa = useMemo(() => new Map(messages.filter((m) => m.wa_message_id).map((m) => [m.wa_message_id!, m])), [messages]);
   const [quoting, setQuoting] = useState<Message | null>(null);
@@ -261,6 +267,7 @@ export function Messages() {
                           {c.ai_guide_id && <Tooltip label="ה-AI עונה בשיחה הזו"><IconRobot size={16} color="#7048e8" style={{ flexShrink: 0 }} /></Tooltip>}
                           <Text size="md" c={WA.text} lineClamp={1}>{who(c)}</Text>
                           {roleOf(c.client_party_id) && <Badge size="xs" variant="light" color={roleOf(c.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(c.client_party_id)!.label}</Badge>}
+                          {isSpecial(c) && <Badge size="xs" variant="filled" color="red" style={{ flexShrink: 0 }}>אליאנס מיוחד</Badge>}
                         </Group>
                         <Text size="xs" c={unreadOf.get(c.id) ? WA.green : WA.muted} style={{ flexShrink: 0 }}>{listTime(c.last_message_at)}</Text>
                       </Group>
@@ -325,6 +332,13 @@ export function Messages() {
                 <Select size="xs" w={190} variant="unstyled" placeholder="לא שויכה" clearable value={current.assigned_to}
                   data={(staff.data ?? []).map((s) => ({ value: s.user_id, label: s.display_name }))} onChange={(x) => update({ assigned_to: x })} />
               </Group>
+              {isSpecial(current) && (
+                <Group px="md" py={8} gap="xs" wrap="nowrap" style={{ background: '#c92a2a' }}>
+                  <IconAlertCircle size={22} color="#fff" style={{ flexShrink: 0 }} />
+                  <Text fw={800} c="#fff" size="md">אליאנס מיוחד</Text>
+                  <Text size="sm" c="#fff">· בלי הודעות אוטומטיות ובלי AI ללקוח הזה, אלא באישור של מנהל המערכת.</Text>
+                </Group>
+              )}
               {!demo && connected && <ChatSummary chat={current} auto={autoSummary} />}
               {current.ai_guide_id ? (
                 <Group px="md" py={6} gap="xs" wrap="nowrap" justify="space-between" style={{ background: '#f3f0ff', borderBottom: '1px solid #d0bfff' }}>
@@ -398,10 +412,14 @@ export function Messages() {
             <Text size="sm">ה-AI יענה ללקוח לפי המדריך שתבחר, כולל על צילומי מסך, עד שהנושא ייגמר, עד שתעצור, או עד 24 שעות. הוא לא רואה את הכרטיס של הלקוח ולא מדבר על כסף. אם הלקוח שואל משהו אחר, ה-AI מחזיר אליך את השיחה. התשובות שלו מסומנות "AI".</Text>
             <Select label="מדריך" data={(guides.data ?? []).filter((g) => g.active).map((g) => ({ value: g.id, label: g.title }))} value={aiGuide} onChange={setAiGuide}
               nothingFoundMessage="אין מדריך פעיל" placeholder={(guides.data ?? []).some((g) => g.active) ? 'בחירת מדריך' : 'אין מדריך פעיל (הגדרות ← מדריכים ל-AI)'} />
+            {isSpecial(current) && <Alert color="red" title="אליאנס מיוחד">
+              {access.isAdmin ? <Checkbox label="אני מאשר שה-AI יענה ללקוח הזה" checked={specialOk} onChange={(e) => setSpecialOk(e.currentTarget.checked)} />
+                : <Text size="sm">רק מנהל המערכת יכול להעביר שיחה של לקוח זה ל-AI.</Text>}
+            </Alert>}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setAiPick(false)}>ביטול</Button>
-              <Button color="violet" leftSection={<IconRobot size={16} />} loading={aiBusy} disabled={!aiGuide}
-                onClick={async () => { await aiCall({ action: 'start', conversation_id: current.id, guide_id: aiGuide }); setAiPick(false); }}>העברה ל-AI</Button>
+              <Button color="violet" leftSection={<IconRobot size={16} />} loading={aiBusy} disabled={!aiGuide || (isSpecial(current) && (!access.isAdmin || !specialOk))}
+                onClick={async () => { await aiCall({ action: 'start', conversation_id: current.id, guide_id: aiGuide, special_approved: isSpecial(current) && specialOk }); setAiPick(false); setSpecialOk(false); }}>העברה ל-AI</Button>
             </Group>
           </Stack>
         </Modal>
