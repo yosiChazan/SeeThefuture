@@ -1,6 +1,6 @@
 import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Checkbox, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileZip, IconFileText, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileText, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -11,7 +11,6 @@ import { useAccess } from '../lib/access';
 import { WaSaveDoc, type WaFile } from '../components/WaSaveDoc';
 import { useAiGuides } from '../components/AiGuidesSettings';
 import { ChatSummary } from '../components/ChatSummary';
-import { WaImport } from '../components/WaImport';
 import { must, supabase } from '../lib/supabase';
 
 // The shared WhatsApp inbox (SPEC §6.5, decisions 135, 139), laid out like WhatsApp: chats on
@@ -181,7 +180,6 @@ export function Messages() {
   // The AI in a chat (decision 183): hand over with a guide, or take back.
   const guides = useAiGuides();
   const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
-  const [importing, setImporting] = useState<false | true | { path: string; name: string | null }>(false);   // true: upload a file; else a ZIP sent in a chat
   const [aiPick, setAiPick] = useState(false);
   // "Alliance special" (decision 197): clients of those apartments; no AI without the admin's approval.
   const access = useAccess();
@@ -231,7 +229,6 @@ export function Messages() {
       <Group justify="space-between">
         <Title order={2}>הודעות</Title>
         <Group gap="sm">
-          {connected && <Button size="xs" variant="light" onClick={() => setImporting(true)}>ייבוא שיחה (זמני)</Button>}
           <Switch label="תצוגה לדוגמה" checked={demo} onChange={(e) => { setDemo(e.currentTarget.checked); setParams({}); }} />
         </Group>
       </Group>
@@ -384,8 +381,6 @@ export function Messages() {
                               <Group gap={4} mt={4}>{saved.data?.has(m.id)
                                 ? <Badge size="xs" variant="light" color="teal" leftSection={<IconCheck size={10} />} style={{ cursor: 'pointer' }} onClick={() => setSaving(m as WaFile)}>נשמר במערכת</Badge>
                                 : <Button size="compact-xs" variant="light" leftSection={<IconFileText size={12} />} onClick={() => setSaving(m as WaFile)}>שמירה במערכת</Button>}</Group>)}
-                            {m.media_path && /\.zip$/i.test(m.file_name ?? m.media_path) && (
-                              <Button size="compact-xs" variant="light" mt={4} leftSection={<IconFileZip size={14} />} onClick={() => setImporting({ path: m.media_path!, name: m.file_name ?? null })}>ייבוא השיחה מהקובץ</Button>)}
                             {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
@@ -425,7 +420,6 @@ export function Messages() {
         </Modal>
       )}
       {saving && current && <WaSaveDoc file={saving} partyId={roleOf(current.client_party_id)?.label === 'לקוח' ? current.client_party_id : null} onClose={() => setSaving(null)} />}
-      {importing && <WaImport from={typeof importing === 'object' ? importing : undefined} onClose={() => setImporting(false)} />}
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
     </Stack>
