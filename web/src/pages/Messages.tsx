@@ -2,7 +2,7 @@ import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Me
 import { notifications } from '@mantine/notifications';
 import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileZip, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useStaff } from '../components/ManualTopics';
 import { waLink } from '../components/Phone';
@@ -22,7 +22,7 @@ import { must, supabase } from '../lib/supabase';
 
 interface Conversation { id: string; client_party_id: string | null; wa_phone: string; contact_name?: string | null; assigned_to: string | null; status: 'open' | 'waiting' | 'closed'; last_message_at: string | null;
   ai_guide_id?: string | null; ai_until?: string | null; ai_handback_reason?: string | null; ai_handback_at?: string | null;
-  ai_summary?: string | null; ai_summary_at?: string | null; ai_waiting_on?: 'us' | 'client' | 'none' | null }
+  ai_summary?: string | null; ai_summary_at?: string | null; ai_waiting_on?: 'us' | 'client' | 'none' | null; staff_read_at?: string | null }
 interface Message { id: string; conversation_id: string; direction: 'in' | 'out'; body: string | null; media_path: string | null; sent_by: string | null; created_at: string;
   kind?: string; origin?: 'api' | 'app' | 'history' | 'ai'; status?: string | null; error?: string | null; file_name?: string | null }
 
@@ -107,6 +107,16 @@ export function Messages() {
     for (const m of demo ? [...demoData.messages].reverse() : recent.data ?? []) if (!out.has(m.conversation_id)) out.set(m.conversation_id, m);
     return out;
   }, [recent.data, demo, demoData]);
+  // Client messages the office has not seen yet (decision 192): after the chat was last open on a screen.
+  const unreadOf = useMemo(() => {
+    const out = new Map<string, number>();
+    const readAt = new Map(conversations.map((c) => [c.id, c.staff_read_at ?? '']));
+    for (const m of demo ? demoData.messages : recent.data ?? []) {
+      if (m.direction !== 'in' || m.origin === 'history') continue;
+      if (new Date(m.created_at).getTime() > new Date(readAt.get(m.conversation_id) || 0).getTime()) out.set(m.conversation_id, (out.get(m.conversation_id) ?? 0) + 1);
+    }
+    return out;
+  }, [recent.data, conversations, demo, demoData]);
   const who = (c: Conversation) => (c.client_party_id ? names.get(c.client_party_id) : null) ?? c.contact_name ?? c.wa_phone;
   // The AI summary is written again by itself only on the first visit to this page after an hour
   // away (decision 189); otherwise only with its refresh button.
@@ -129,6 +139,33 @@ export function Messages() {
   const current = conversations.find((c) => c.id === params.get('c')) ?? null;
   const thread = useMessages(current?.id ?? null);
   const messages = demo ? demoData.messages.filter((m) => m.conversation_id === current?.id) : thread.data ?? [];
+  // Where the chat opens (decision 192): at its end, or at the first message not seen yet, under a line.
+  const [opened, setOpened] = useState<{ id: string; readAt: number } | null>(null);
+  if (current && opened?.id !== current.id) setOpened({ id: current.id, readAt: new Date(current.staff_read_at ?? 0).getTime() });
+  const firstUnread = opened ? messages.find((m) => m.direction === 'in' && m.origin !== 'history' && new Date(m.created_at).getTime() > opened.readAt) : undefined;
+  const unreadHere = firstUnread ? messages.filter((m) => m.direction === 'in' && m.origin !== 'history' && new Date(m.created_at).getTime() > opened!.readAt).length : 0;
+  const viewport = useRef<HTMLDivElement>(null);
+  const placed = useRef<string | null>(null);
+  const atEnd = useRef(true);
+  useLayoutEffect(() => {
+    const v = viewport.current;
+    if (!v || !current || !messages.length) return;
+    if (placed.current !== current.id) {
+      placed.current = current.id;
+      const line = firstUnread && v.querySelector<HTMLElement>('[data-unread-line]');
+      v.scrollTop = line ? Math.max(0, line.getBoundingClientRect().top - v.getBoundingClientRect().top + v.scrollTop - v.clientHeight / 3) : v.scrollHeight;
+    } else if (atEnd.current) v.scrollTop = v.scrollHeight;   // a new message while at the end: follow it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, messages.length]);
+  // The chat on the screen is read.
+  const lastInAt = [...messages].reverse().find((m) => m.direction === 'in')?.created_at;
+  useEffect(() => {
+    if (demo || !current || !lastInAt) return;
+    if (current.staff_read_at && new Date(current.staff_read_at) >= new Date(lastInAt)) return;
+    supabase.from('conversations').update({ staff_read_at: new Date().toISOString() }).eq('id', current.id)
+      .then(() => qc.invalidateQueries({ queryKey: ['conversations'] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, lastInAt, demo]);
   // The 24 hours start from the client's last message to the connected number (not from the history).
   const lastIn = [...messages].reverse().find((m) => m.direction === 'in' && m.origin !== 'history');
   const windowOpen = !!lastIn && Date.now() - new Date(lastIn.created_at).getTime() < WINDOW_MS;
@@ -203,14 +240,14 @@ export function Messages() {
                           {c.ai_guide_id && <Tooltip label="ה-AI עונה בשיחה הזו"><IconRobot size={16} color="#7048e8" style={{ flexShrink: 0 }} /></Tooltip>}
                           <Text size="md" c={WA.text} lineClamp={1}>{who(c)}</Text>
                         </Group>
-                        <Text size="xs" c={last?.direction === 'in' && c.status === 'open' ? WA.green : WA.muted} style={{ flexShrink: 0 }}>{listTime(c.last_message_at)}</Text>
+                        <Text size="xs" c={unreadOf.get(c.id) ? WA.green : WA.muted} style={{ flexShrink: 0 }}>{listTime(c.last_message_at)}</Text>
                       </Group>
                       <Group justify="space-between" wrap="nowrap" gap={4}>
                         <Group gap={3} wrap="nowrap" style={{ minWidth: 0 }}>
-                          {last?.direction === 'out' && <IconChecks size={16} color={WA.tick} style={{ flexShrink: 0 }} />}
+                          {last?.direction === 'out' && <Ticks status={last.status} error={last.error} />}
                           <Text size="sm" c={WA.muted} lineClamp={1}>{last?.body ?? (last ? kindLabel(last) : c.wa_phone)}</Text>
                         </Group>
-                        {last?.direction === 'in' && c.status === 'open' && <Badge size="sm" circle color={WA.green} style={{ flexShrink: 0 }}>1</Badge>}
+                        {!!unreadOf.get(c.id) && !active && <Badge size="sm" circle color={WA.green} style={{ flexShrink: 0 }}>{unreadOf.get(c.id)}</Badge>}
                       </Group>
                     </Box>
                   </Group>
@@ -274,7 +311,8 @@ export function Messages() {
                   <Button size="compact-xs" color="orange" variant="subtle" onClick={() => update({ ai_handback_reason: null })}>הבנתי</Button>
                 </Group>
               ) : null}
-              <ScrollArea style={{ flex: 1, backgroundColor: WA.chatBg, backgroundImage: DOODLE }}>
+              <ScrollArea viewportRef={viewport} onScrollPositionChange={() => { const v = viewport.current; if (v) atEnd.current = v.scrollHeight - v.scrollTop - v.clientHeight < 80; }}
+                style={{ flex: 1, backgroundColor: WA.chatBg, backgroundImage: DOODLE }}>
                 <Stack gap={2} px={{ base: 'sm', sm: 60 }} py="md">
                   {messages.map((m, i) => {
                     const newDay = i === 0 || new Date(messages[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
@@ -282,6 +320,7 @@ export function Messages() {
                     const out = m.direction === 'out';
                     return (
                       <Box key={m.id}>
+                        {m === firstUnread && <Group justify="center" my={8} data-unread-line><Text size="xs" c={WA.muted} px={12} py={4} style={{ background: '#ffffffe6', borderRadius: 8 }}>{unreadHere === 1 ? 'הודעה אחת שלא נקראה' : `${unreadHere} הודעות שלא נקראו`}</Text></Group>}
                         {newDay && <Group justify="center" my={8}><Text size="xs" c={WA.muted} px={10} py={4} style={{ background: '#ffffffe6', borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)' }}>{dayLabel(m.created_at)}</Text></Group>}
                         <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0}>
                           <Box maw="65%" px={9} pt={6} pb={8} style={{
