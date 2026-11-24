@@ -73,3 +73,30 @@ export async function importId(phone: string, msg: WaExportMessage, n: number): 
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
   return 'import:' + [...hash.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+// A message already in the chat (from another export of it, or the connection).
+export interface Existing { id: string; at: number; direction: 'in' | 'out'; body: string | null; file: string | null; media: boolean }
+
+// "<המדיה הושמטה>", "<Media omitted>", "[הועברה] <התמונה הושמטה>": a file the export left out.
+const OMITTED = /<[^>]*(הושמט|omitted)[^>]*>/i;
+export const isOmitted = (text: string | null) => !!text && OMITTED.test(text);
+const norm = (t: string | null) => (t ?? '').replace(/\s+/g, ' ').trim();
+const WORDS: Record<string, RegExp> = { image: /תמונה|image/i, video: /סרטון|וידאו|video/i, audio: /הקלטה|שמע|audio/i, document: /מסמך|document/i };
+
+// Is this exported message already in the chat? Exports of the same chat differ (with or without
+// media, with or without seconds), so the same sender within 90 seconds with the same text (or the
+// same file) is the same message, and a left-out file is the file. "skip": it is there; "fill": the
+// one there is a left-out file and this one has it; null: new.
+export function matchExisting(m: { at: number; direction: 'in' | 'out'; text: string; file: string | null; kind: string }, existing: Existing[]): { kind: 'skip' } | { kind: 'fill'; id: string; at: number } | null {
+  const near = existing.filter((e) => e.direction === m.direction && Math.abs(e.at - m.at) <= 90_000)
+    .sort((a, b) => Math.abs(a.at - m.at) - Math.abs(b.at - m.at));
+  if (m.file) {
+    if (near.some((e) => e.media && e.file === m.file)) return { kind: 'skip' };
+    const left = near.filter((e) => !e.media && isOmitted(e.body));
+    const stem = m.file.replace(/\.\w+$/, '');
+    const best = left.find((e) => e.body!.includes(stem)) ?? left.find((e) => WORDS[m.kind]?.test(e.body!)) ?? left.find((e) => /מדיה|media/i.test(e.body!));
+    return best ? { kind: 'fill', id: best.id, at: best.at } : null;
+  }
+  if (isOmitted(m.text)) return near.some((e) => e.media || norm(e.body) === norm(m.text)) ? { kind: 'skip' } : null;
+  return near.some((e) => norm(e.body) === norm(m.text)) ? { kind: 'skip' } : null;
+}

@@ -51,3 +51,18 @@ test('neither number above 12: day first, unless the screen asks for month first
   assert.equal(parseWaExport(raw)[0].at.getMonth(), 10);
   assert.equal(parseWaExport(raw, 'month')[0].at.getMonth(), 4);
 });
+
+test('the same chat exported twice (with and without media, with and without seconds)', async () => {
+  const { matchExisting } = await import('./waExport.ts');
+  const t = (s: string) => new Date(`2026-11-15T12:${s}`).getTime();
+  const ex = [
+    { id: 'a', at: t('08:49'), direction: 'out' as const, body: 'היי רבקה', file: null, media: false },
+    { id: 'b', at: t('22:38'), direction: 'in' as const, body: '[הועברה] <התמונה הושמטה>', file: null, media: false },
+    { id: 'c', at: t('22:53'), direction: 'in' as const, body: '<המסמך הושמט> MC-A', file: null, media: false },
+  ];
+  assert.deepEqual(matchExisting({ at: t('08:00'), direction: 'out', text: 'היי רבקה', file: null, kind: 'text' }, ex), { kind: 'skip' });
+  assert.deepEqual(matchExisting({ at: t('22:00'), direction: 'in', text: '', file: 'IMG-1.jpg', kind: 'image' }, ex), { kind: 'fill', id: 'b', at: t('22:38') });
+  assert.deepEqual(matchExisting({ at: t('22:00'), direction: 'in', text: 'MC-A', file: 'MC-A.pdf', kind: 'document' }, ex), { kind: 'fill', id: 'c', at: t('22:53') });
+  assert.deepEqual(matchExisting({ at: t('22:00'), direction: 'in', text: '', file: 'IMG-1.jpg', kind: 'image' }, [{ id: 'd', at: t('22:00'), direction: 'in', body: null, file: 'IMG-1.jpg', media: true }]), { kind: 'skip' });
+  assert.equal(matchExisting({ at: t('08:00'), direction: 'in', text: 'היי רבקה', file: null, kind: 'text' }, ex), null);
+});

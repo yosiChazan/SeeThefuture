@@ -7,13 +7,14 @@ import { useEffect, useState } from 'react';
 import { toE164 } from '../lib/phone';
 import { useClients } from '../lib/queries';
 import { supabase } from '../lib/supabase';
-import { importId, parseWaExport, senders, type WaExportMessage } from '../lib/waExport';
+import { importId, matchExisting, parseWaExport, senders, type Existing, type WaExportMessage } from '../lib/waExport';
 
 // Importing a chat exported from WhatsApp ("ייצוא צ'אט" on the phone: a ZIP with the text and, "with
 // media", the pictures) into the inbox (SPEC decision 191, a temporary button). The export names
 // people, not numbers, so the client (or the number) is chosen here, and who of the senders is the
 // office. Messages from the connection on are skipped: they came in by themselves. Importing the
-// same file again adds nothing. The ZIP can also be one sent in a chat (exported on the phone and
+// same file again adds nothing, nor another export of the same chat (with or without media): a
+// message already there is skipped, and a file the earlier export left out is filled in. The ZIP can also be one sent in a chat (exported on the phone and
 // shared to the company's number): its message has a button that opens this with the file.
 
 interface Parsed { name: string; text: string; msgs: WaExportMessage[]; files: Record<string, Uint8Array> }
@@ -93,11 +94,19 @@ export function WaImport({ onClose, from }: { onClose: () => void; from?: { path
       } else if (!conv.client_party_id && clientId) {
         await supabase.from('conversations').update({ client_party_id: clientId }).eq('id', conv.id);
       }
+      // What the chat already holds, to match against.
+      const had = await supabase.from('messages').select('id, created_at, direction, body, file_name, media_path').eq('conversation_id', conv!.id);
+      if (had.error) throw new Error(had.error.message);
+      const existing: Existing[] = (had.data ?? []).map((x) => ({ id: x.id, at: new Date(x.created_at).getTime(), direction: x.direction, body: x.body, file: x.file_name, media: !!x.media_path }));
       const rows = [];
-      let n = 0, skipped = 0, pics = 0;
+      let n = 0, skipped = 0, pics = 0, there = 0, filled = 0;
       for (const m of parsed.msgs) {
         n++;
         if (m.at.getTime() >= until) { skipped++; continue; }
+        const direction = m.sender === office ? 'out' : 'in';
+        const kind = m.file ? kindOf(m.file) : 'text';
+        const match = matchExisting({ at: m.at.getTime(), direction, text: m.text, file: m.file && parsed.files[m.file] ? m.file : null, kind }, existing);
+        if (match?.kind === 'skip') { there++; continue; }
         const id = await importId(e164, m, n);
         let media_path: string | null = null;
         if (m.file && parsed.files[m.file]) {
@@ -106,9 +115,17 @@ export function WaImport({ onClose, from }: { onClose: () => void; from?: { path
           const up = await supabase.storage.from('whatsapp').upload(path, parsed.files[m.file], { contentType: MIME[ext] ?? 'application/octet-stream', upsert: true });
           if (!up.error) { media_path = path; pics++; }
         }
+        if (match?.kind === 'fill') {
+          if (media_path) {
+            const u = await supabase.from('messages').update({ kind, file_name: m.file, media_path, body: m.text || null }).eq('id', match.id);
+            if (u.error) throw new Error(u.error.message);
+            filled++;
+          }
+          continue;
+        }
         rows.push({
-          conversation_id: conv!.id, direction: m.sender === office ? 'out' : 'in', body: m.text || null,
-          kind: m.file ? kindOf(m.file) : 'text', file_name: m.file, media_path, origin: 'history',
+          conversation_id: conv!.id, direction, body: m.text || null,
+          kind, file_name: m.file, media_path, origin: 'history',
           wa_message_id: id, created_at: m.at.toISOString(), wa_timestamp: m.at.toISOString(),
         });
       }
@@ -118,7 +135,7 @@ export function WaImport({ onClose, from }: { onClose: () => void; from?: { path
       }
       const last = rows.reduce((a, r) => (r.created_at > a ? r.created_at : a), '');
       if (last && (!conv!.last_message_at || conv!.last_message_at < last)) await supabase.from('conversations').update({ last_message_at: last }).eq('id', conv!.id);
-      notifications.show({ color: 'teal', autoClose: false, message: `יובאו ${rows.length} הודעות${pics ? `, ${pics} קבצים` : ''}${skipped ? `. ${skipped} הודעות מאז החיבור דולגו (הן כבר במערכת)` : ''}.` });
+      notifications.show({ color: 'teal', autoClose: false, message: `יובאו ${rows.length} הודעות${pics ? `, ${pics} קבצים` : ''}${filled ? `. ${filled} קבצים הושלמו בהודעות שכבר היו` : ''}${there ? `. ${there} הודעות כבר היו בשיחה` : ''}${skipped ? `. ${skipped} הודעות מאז החיבור דולגו (הן כבר במערכת)` : ''}.` });
       await qc.invalidateQueries({ queryKey: ['conversations'] });
       await qc.invalidateQueries({ queryKey: ['messages-recent'] });
       onClose();
