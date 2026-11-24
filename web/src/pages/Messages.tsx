@@ -1,6 +1,6 @@
 import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileZip, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -135,7 +135,7 @@ export function Messages() {
   // The AI in a chat (decision 183): hand over with a guide, or take back.
   const guides = useAiGuides();
   const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
-  const [importing, setImporting] = useState(false);
+  const [importing, setImporting] = useState<false | true | { path: string; name: string | null }>(false);   // true: upload a file; else a ZIP sent in a chat
   const [aiPick, setAiPick] = useState(false);
   const [aiGuide, setAiGuide] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
@@ -296,6 +296,8 @@ export function Messages() {
                               return <Group gap={3} mb={2} wrap="nowrap" style={{ color: s.c }}>{s.i}<Text size="xs" fw={700} c={s.c}>{s.t}</Text></Group>;
                             })()}
                             {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
+                            {m.media_path && /\.zip$/i.test(m.file_name ?? m.media_path) && (
+                              <Button size="compact-xs" variant="light" mt={4} leftSection={<IconFileZip size={14} />} onClick={() => setImporting({ path: m.media_path!, name: m.file_name ?? null })}>ייבוא השיחה מהקובץ</Button>)}
                             {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
@@ -327,7 +329,7 @@ export function Messages() {
           </Stack>
         </Modal>
       )}
-      {importing && <WaImport onClose={() => setImporting(false)} />}
+      {importing && <WaImport from={typeof importing === 'object' ? importing : undefined} onClose={() => setImporting(false)} />}
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
     </Stack>
