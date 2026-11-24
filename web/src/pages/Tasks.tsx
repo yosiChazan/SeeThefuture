@@ -139,7 +139,7 @@ function MailLinks({ task, to, dir, from }: { task: OfficeTask; to: Assignee[]; 
 }
 
 // New task, or changing one (every change goes to the history).
-function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: OfficeTask; onClose: () => void; onSaved: (t: OfficeTask, added: Assignee[]) => void }) {
+function TaskForm({ dir, task, question = task?.kind === 'question', onClose, onSaved }: { dir: Directory; task?: OfficeTask; question?: boolean; onClose: () => void; onSaved: (t: OfficeTask, added: Assignee[]) => void }) {
   const qc = useQueryClient();
   const [v, setV] = useState({
     trigger: (task?.trigger_id ?? null) as string | null, subject: task?.subject ?? '', body: task?.body ?? '',
@@ -157,7 +157,7 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
         id = must(await supabase.rpc('create_office_task', {
           p_trigger: v.trigger, p_subject: v.subject, p_body: v.body, p_priority: v.priority,
           p_users: assignees.filter((a) => a.user_id).map((a) => a.user_id), p_parties: assignees.filter((a) => a.party_id).map((a) => a.party_id),
-          p_links: v.links.map(toLink), p_category: v.category,
+          p_links: v.links.map(toLink), p_category: v.category, p_kind: question ? 'question' : 'task',
         })) as string;
       } else {
         const fields = { trigger_id: v.trigger, subject: v.subject.trim(), body: v.body.trim() || null, priority: v.priority, category_id: v.category };
@@ -179,27 +179,27 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return (
-    <Modal opened onClose={onClose} title={task ? 'שינוי פרטי המשימה' : 'משימה חדשה'} size="lg">
+    <Modal opened onClose={onClose} title={question ? (task ? 'שינוי השאלה' : 'שאלה חדשה') : task ? 'שינוי פרטי המשימה' : 'משימה חדשה'} size="lg">
       <Stack>
-        <Group grow align="flex-start">
+        {!question && <Group grow align="flex-start">
           <Select label="טריגר" placeholder="בלי טריגר" clearable data={dir.trigOptions} value={v.trigger} onChange={(x) => setV({ ...v, trigger: x })} />
           <Select label="קטגוריה" placeholder="בלי קטגוריה" clearable data={dir.catOptions} value={v.category} onChange={(x) => setV({ ...v, category: x })} />
           <Select label="עדיפות" required data={PRIORITIES} value={v.priority} allowDeselect={false} onChange={(x) => x && setV({ ...v, priority: x as Priority })} />
-        </Group>
-        <TextInput label="נושא" required value={v.subject} onChange={(e) => setV({ ...v, subject: e.currentTarget.value })} />
+        </Group>}
+        <TextInput label={question ? 'השאלה' : 'נושא'} required value={v.subject} onChange={(e) => setV({ ...v, subject: e.currentTarget.value })} />
         <div>
-          <Textarea label="תוכן" autosize minRows={3} value={v.body} onChange={(e) => setV({ ...v, body: e.currentTarget.value })} />
+          <Textarea label={question ? 'פירוט (לא חובה)' : 'תוכן'} autosize minRows={3} value={v.body} onChange={(e) => setV({ ...v, body: e.currentTarget.value })} />
           <AddLink onAdd={(l) => setV({ ...v, body: append(v.body, l) })} />
         </div>
         <MultiSelect label="קשור ל" placeholder="לקוחות, נכסים, אנשי קשר, מדינות" searchable clearable data={dir.linkOptions} value={v.links}
           onChange={(x) => setV({ ...v, links: x })} nothingFoundMessage="לא נמצא" limit={60} />
-        <MultiSelect label="לטיפול של" placeholder="עובד, מנהל או לקוח" searchable clearable data={dir.assigneeOptions} value={v.assignees}
+        <MultiSelect label={question ? 'לשאול את' : 'לטיפול של'} required={question} placeholder="עובד, מנהל או לקוח" searchable clearable data={dir.assigneeOptions} value={v.assignees}
           onChange={(x) => setV({ ...v, assignees: x })} nothingFoundMessage="לא נמצא" limit={60}
-          description="המשימה גלויה רק לך, למי שהיא בטיפולו, להנהלה ולמנהל המערכת. אחרי השמירה יופיעו קישורים למייל אליהם" />
+          description={question ? 'השאלה תופיע אצל מי שנשאל. התשובה הראשונה סוגרת אותה' : 'המשימה גלויה רק לך, למי שהיא בטיפולו, להנהלה ולמנהל המערכת. אחרי השמירה יופיעו קישורים למייל אליהם'} />
         {task && <Text size="xs" c="dimmed">כל שינוי נרשם בהיסטוריה של המשימה.</Text>}
         {error && <Alert color="red">{error}</Alert>}
         <Group justify="flex-end"><Button variant="default" onClick={onClose}>ביטול</Button>
-          <Button onClick={save} loading={busy} disabled={!v.subject.trim()}>{task ? 'שמירת השינויים' : 'יצירה'}</Button></Group>
+          <Button onClick={save} loading={busy} disabled={!v.subject.trim() || (question && !v.assignees.length)}>{task ? 'שמירת השינויים' : question ? 'שליחת השאלה' : 'יצירה'}</Button></Group>
       </Stack>
     </Modal>
   );
@@ -210,19 +210,21 @@ function TaskForm({ dir, task, onClose, onSaved }: { dir: Directory; task?: Offi
 function useCanDelete() {
   const access = useAccess();
   const me = useMe();
-  return (t: OfficeTask) => t.status === 'done' && (access.isManagement || access.isAdmin || t.created_by === me);
+  // A question may be deleted at any time by whoever asked or was asked ("already talked about", decision 194).
+  return (t: OfficeTask) => (t.kind === 'question' && (access.isManagement || access.isAdmin || t.created_by === me || t.office_task_assignees.some((a) => a.user_id === me)))
+    || (t.status === 'done' && (access.isManagement || access.isAdmin || t.created_by === me));
 }
 function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; onClose: () => void }) {
   const qc = useQueryClient();
   const access = useAccess();
   const canDelete = useCanDelete();
   const remove = () => modals.openConfirmModal({
-    title: 'מחיקת משימה', children: <Text size="sm">"{task.subject}" תימחק עם ההיסטוריה שלה. אי אפשר לשחזר.</Text>,
+    title: task.kind === 'question' ? 'מחיקת השאלה (דובר כבר)' : 'מחיקת משימה', children: <Text size="sm">"{task.subject}" תימחק עם ההיסטוריה שלה. אי אפשר לשחזר.</Text>,
     labels: { confirm: 'מחיקה', cancel: 'ביטול' }, confirmProps: { color: 'red' },
     onConfirm: async () => {
       const r = await supabase.from('office_tasks').delete().eq('id', task.id).select('id');
       if (r.error || !r.data?.length) { notifications.show({ color: 'red', message: r.error?.message ?? 'המשימה לא נמחקה' }); return; }
-      notifications.show({ color: 'teal', message: 'המשימה נמחקה' });
+      notifications.show({ color: 'teal', message: task.kind === 'question' ? 'השאלה נמחקה' : 'המשימה נמחקה' });
       await qc.invalidateQueries({ queryKey: ['office-tasks'] });
       onClose();
     },
@@ -284,8 +286,9 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
     <Modal opened onClose={onClose} size="xl" title={task.subject}>
       <Stack>
         <Group gap="xs">
+          {task.kind === 'question' ? <Badge color={task.status === 'done' ? 'teal' : 'blue'}>{task.status === 'done' ? 'שאלה · נענתה' : 'שאלה · ממתינה לתשובה'}</Badge> : <>
           <Badge color={STATUS_COLOR[task.status]}>{STATUS_HE[task.status]}</Badge>
-          <Badge variant="light" color={PRIORITY_COLOR[task.priority]}>עדיפות {PRIORITY_HE[task.priority]}</Badge>
+          <Badge variant="light" color={PRIORITY_COLOR[task.priority]}>עדיפות {PRIORITY_HE[task.priority]}</Badge></>}
           {dir.trigLabel(task.trigger_id) && <Badge variant="outline">{dir.trigLabel(task.trigger_id)}</Badge>}
           {task.series_id && <Badge variant="light" color="indigo" leftSection={<IconRepeat size={12} />}>חוזרת · {task.occurrence_on && dayjs(task.occurrence_on).format('DD.MM.YYYY')}</Badge>}
           {dir.catLabel(task.category_id) && <Badge variant="light" color="cyan">{dir.catLabel(task.category_id)}</Badge>}
@@ -321,12 +324,12 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
 
         <Paper withBorder p="sm">
           <Stack gap="xs">
-            <Textarea label="תגובה חדשה (פותחת ענף)" autosize minRows={2} value={reply} onChange={(e) => setReply(e.currentTarget.value)} />
+            <Textarea label={task.kind === 'question' ? 'תשובה' : 'תגובה חדשה (פותחת ענף)'} autosize minRows={2} value={reply} onChange={(e) => setReply(e.currentTarget.value)} />
             <Group justify="space-between" align="flex-end">
               <Group gap="xs" align="flex-end">
                 <AddLink onAdd={(l) => setReply(append(reply, l))} />
                 <AddImages files={images} onChange={setImages} />
-                <Select size="xs" w={150} label="מצב" data={STATUSES} value={status} allowDeselect={false} onChange={(x) => x && setStatus(x as TaskStatus)} />
+                {task.kind !== 'question' && <Select size="xs" w={150} label="מצב" data={STATUSES} value={status} allowDeselect={false} onChange={(x) => x && setStatus(x as TaskStatus)} />}
               </Group>
               <Group gap="xs">
                 <Button size="xs" variant="default" leftSection={<IconFileTypePdf size={14} />} loading={exporting} onClick={async () => {
@@ -336,9 +339,9 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
                   setExporting(true);
                   try { await exportPdf(w); } catch (e) { w.close(); notifications.show({ color: 'red', message: (e as Error).message }); } finally { setExporting(false); }
                 }}>ייצוא ל-PDF</Button>
-                {canDelete(task) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={remove}>מחיקה</Button>}
+                {canDelete(task) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={remove}>{task.kind === 'question' ? 'מחיקה (דובר כבר)' : 'מחיקה'}</Button>}
                 {!access.isClient && <Button size="xs" variant="default" onClick={() => setEditing(true)}>העברה ושינוי פרטים</Button>}
-                <Button size="xs" onClick={send} loading={busy} disabled={!reply.trim() && !images.length && status === task.status}>שליחה</Button>
+                <Button size="xs" onClick={send} loading={busy} disabled={!reply.trim() && !images.length && status === task.status}>{task.kind === 'question' ? 'שליחת התשובה' : 'שליחה'}</Button>
               </Group>
             </Group>
           </Stack>
@@ -566,6 +569,13 @@ export function Tasks() {
   const all = tasks.data ?? [];
   const qc = useQueryClient();
   const [tab, setTab] = useState<string>('tasks');
+  // Tasks or questions (decision 194). Questions: only those I asked or was asked, whoever I am.
+  const [mode, setMode] = useState<'tasks' | 'questions'>(() => (params.get('mode') === 'questions' ? 'questions' : 'tasks'));
+  const questions = mode === 'questions';
+  const pool = all.filter((t) => questions
+    ? t.kind === 'question' && (t.created_by === me || t.office_task_assignees.some((a) => a.user_id === me))
+    : t.kind !== 'question');
+  const askedMe = all.filter((t) => t.kind === 'question' && t.status !== 'done' && t.office_task_assignees.some((a) => a.user_id === me)).length;
   // Recurring tasks whose date has come open now too, if the morning run has not yet.
   useEffect(() => {
     if (access.isClient) return;
@@ -581,7 +591,7 @@ export function Tasks() {
     { value: 'mine', label: 'אצלי' }, { value: 'sent', label: 'שפתחתי' },
     ...[...counts].map(([k, n]) => ({ value: k, label: `${dir.nameOf(toAssignee(k))} (${n})` })).sort((a, b) => a.label.localeCompare(b.label, 'he')),
   ];
-  const shown = sortTasks(filterTasks(all.filter((t) => state === 'all' || (state === 'done') === (t.status === 'done')), filters, me),
+  const shown = sortTasks(filterTasks(pool.filter((t) => state === 'all' || (state === 'done') === (t.status === 'done')), filters, me),
     sort, dir.nameOf, { trigger: dir.trigRank, category: dir.catRank }, thenSort);
   // Deleting the done tasks shown (after the filters), those the viewer may delete.
   const removeDone = () => {
@@ -607,19 +617,23 @@ export function Tasks() {
   return (
     <Stack>
       <Group justify="space-between">
-        <Title order={2}>משימות</Title>
-        {!access.isClient && tab === 'tasks' && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>משימה חדשה</Button>}
+        <Group gap="sm">
+          <Title order={2}>{questions ? 'שאלות' : 'משימות'}</Title>
+          {!access.isClient && <SegmentedControl value={mode} onChange={(x) => { setMode(x as typeof mode); setTab('tasks'); setFilters([]); }}
+            data={[{ value: 'tasks', label: 'משימות' }, { value: 'questions', label: askedMe ? `שאלות (${askedMe})` : 'שאלות' }]} />}
+        </Group>
+        {!access.isClient && tab === 'tasks' && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>{questions ? 'שאלה חדשה' : 'משימה חדשה'}</Button>}
       </Group>
-      <Tabs value={tab} onChange={(x) => x && setTab(x)}>
+      {!questions && <Tabs value={tab} onChange={(x) => x && setTab(x)}>
         <Tabs.List><Tabs.Tab value="tasks">משימות</Tabs.Tab>{!access.isClient && <Tabs.Tab value="series" leftSection={<IconRepeat size={14} />}>משימות חוזרות</Tabs.Tab>}</Tabs.List>
-      </Tabs>
-      {tab === 'series' ? <SeriesList dir={dir} /> : <>
+      </Tabs>}
+      {tab === 'series' && !questions ? <SeriesList dir={dir} /> : <>
       <Group gap="sm" align="flex-end">
         <SegmentedControl value={state} onChange={(x) => setState(x as typeof state)}
-          data={[{ value: 'open', label: 'פתוחות' }, { value: 'done', label: 'טופלו' }, { value: 'all', label: 'הכול' }]} />
+          data={questions ? [{ value: 'open', label: 'ממתינות לתשובה' }, { value: 'done', label: 'נענו' }, { value: 'all', label: 'הכול' }] : [{ value: 'open', label: 'פתוחות' }, { value: 'done', label: 'טופלו' }, { value: 'all', label: 'הכול' }]} />
         <Select label="מיון" w={170} allowDeselect={false} value={sort} onChange={(x) => x && setSort(x as SortKey)}
           data={[{ value: 'updated', label: 'עדכון אחרון' }, { value: 'created', label: 'תאריך פתיחה' }, { value: 'priority', label: 'דחיפות' }, { value: 'subject', label: 'נושא' }, { value: 'assignee', label: 'בטיפול של' }, { value: 'trigger', label: 'טריגר' }, { value: 'category', label: 'קטגוריה' }]} />
-        <Text size="sm" c="dimmed">{shown.length} משימות</Text>
+        <Text size="sm" c="dimmed">{shown.length} {questions ? 'שאלות' : 'משימות'}</Text>
         {state === 'done' && shown.some(canDelete) && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={removeDone}>מחיקת המשימות שטופלו ({shown.filter(canDelete).length})</Button>}
       </Group>
       <TaskFilters filters={filters} setFilters={setFilters} choices={choices} />
@@ -629,7 +643,7 @@ export function Tasks() {
           {created.to.length ? <><Text size="sm" mb={4}>מייל למי שהמשימה בטיפולו:</Text><MailLinks task={created.task} to={created.to} dir={dir} from={access.displayName} /></> : null}
         </Alert>
       )}
-      {!shown.length && !tasks.isLoading && <Text c="dimmed">אין משימות להצגה.</Text>}
+      {!shown.length && !tasks.isLoading && <Text c="dimmed">{questions ? 'אין שאלות להצגה.' : 'אין משימות להצגה.'}</Text>}
       <Stack gap="xs">
         {shown.map((t) => (
           <Card key={t.id} withBorder padding="sm" style={{ cursor: 'pointer' }} onClick={() => setParams({ task: t.id })}>
@@ -637,20 +651,22 @@ export function Tasks() {
               <Stack gap={4} style={{ minWidth: 0 }}>
                 <Group gap="xs">
                   <Text fw={600}>{t.subject}</Text>
-                  <Badge size="sm" variant="light" color={PRIORITY_COLOR[t.priority]}>{PRIORITY_HE[t.priority]}</Badge>
+                  {!questions && <Badge size="sm" variant="light" color={PRIORITY_COLOR[t.priority]}>{PRIORITY_HE[t.priority]}</Badge>}
                   {dir.trigLabel(t.trigger_id) && <Badge size="sm" variant="outline">{dir.trigLabel(t.trigger_id)}</Badge>}
                   {t.series_id && <Badge size="sm" variant="light" color="indigo" leftSection={<IconRepeat size={10} />}>{t.occurrence_on && dayjs(t.occurrence_on).format('DD.MM')}</Badge>}
                   {stillOpen.has(t.id) && <Badge size="sm" variant="light" color="orange">גם הקודמת עוד פתוחה</Badge>}
                   {dir.catLabel(t.category_id) && <Badge size="sm" variant="light" color="cyan">{dir.catLabel(t.category_id)}</Badge>}
-                  {(branches.data?.get(t.id) ?? 0) > 0 && <Badge size="sm" variant="light" color="orange">{branches.data!.get(t.id)} {branches.data!.get(t.id) === 1 ? 'ענף' : 'ענפים'} בטיפול</Badge>}
+                  {!questions && (branches.data?.get(t.id) ?? 0) > 0 && <Badge size="sm" variant="light" color="orange">{branches.data!.get(t.id)} {branches.data!.get(t.id) === 1 ? 'ענף' : 'ענפים'} בטיפול</Badge>}
                 </Group>
                 <Text size="xs" c="dimmed" lineClamp={1}>
-                  {t.office_task_assignees.length ? `בטיפול של ${t.office_task_assignees.map(dir.nameOf).join(', ')}` : 'לא הועברה לטיפול'}
+                  {questions ? `${t.created_by === me ? 'שאלת' : `${dir.users.get(t.created_by)?.display_name ?? 'לא ידוע'} שאל/ה`} את ${t.office_task_assignees.map(dir.nameOf).join(', ') || '—'}`
+                    : t.office_task_assignees.length ? `בטיפול של ${t.office_task_assignees.map(dir.nameOf).join(', ')}` : 'לא הועברה לטיפול'}
                   {t.office_task_links.length ? ` · ${t.office_task_links.map(dir.linkName).join(', ')}` : ''}
                 </Text>
               </Stack>
               <Stack gap={4} align="flex-end">
-                <Badge color={STATUS_COLOR[t.status]}>{STATUS_HE[t.status]}</Badge>
+                {questions ? <Badge color={t.status === 'done' ? 'teal' : 'blue'}>{t.status === 'done' ? 'נענתה' : 'ממתינה לתשובה'}</Badge>
+                  : <Badge color={STATUS_COLOR[t.status]}>{STATUS_HE[t.status]}</Badge>}
                 <Text size="xs" c="dimmed">{new Date(t.updated_at).toLocaleDateString('he-IL')}</Text>
               </Stack>
             </Group>
@@ -658,7 +674,7 @@ export function Tasks() {
         ))}
       </Stack>
       </>}
-      {adding && <TaskForm dir={dir} onClose={() => setAdding(false)} onSaved={(t, to) => { setAdding(false); setCreated({ task: t, to }); }} />}
+      {adding && <TaskForm dir={dir} question={questions} onClose={() => setAdding(false)} onSaved={(t, to) => { setAdding(false); setCreated({ task: t, to }); }} />}
       {current && <TaskView key={current.id} task={current} dir={dir} onClose={() => setParams({})} />}
     </Stack>
   );
