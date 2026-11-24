@@ -15,7 +15,7 @@ import { importId, parseWaExport, senders, type WaExportMessage } from '../lib/w
 // office. Messages from the connection on are skipped: they came in by themselves. Importing the
 // same file again adds nothing.
 
-interface Parsed { name: string; msgs: WaExportMessage[]; files: Record<string, Uint8Array> }
+interface Parsed { name: string; text: string; msgs: WaExportMessage[]; files: Record<string, Uint8Array> }
 
 const MIME: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', opus: 'audio/ogg', ogg: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', pdf: 'application/pdf' };
 const kindOf = (f: string) => { const e = f.split('.').pop()!.toLowerCase(); return /^(jpe?g|png|webp|gif)$/.test(e) ? 'image' : /^(mp4|3gp|mov)$/.test(e) ? 'video' : /^(opus|ogg|mp3|m4a|aac)$/.test(e) ? 'audio' : 'document'; };
@@ -37,12 +37,13 @@ export function WaImport({ onClose }: { onClose: () => void }) {
       const all = unzipSync(new Uint8Array(await file.arrayBuffer()));
       const txt = Object.keys(all).find((k) => k.toLowerCase().endsWith('.txt'));
       if (!txt) throw new Error('בקובץ אין את קובץ הטקסט של השיחה');
-      const msgs = parseWaExport(new TextDecoder().decode(all[txt]));
+      const text = new TextDecoder().decode(all[txt]);
+      const msgs = parseWaExport(text);
       if (!msgs.length) throw new Error('לא נמצאו הודעות בקובץ');
       const files: Record<string, Uint8Array> = {};
       for (const [k, v] of Object.entries(all)) if (k !== txt) files[k.split('/').pop()!] = v;
       const name = txt.replace(/^.*\//, '').replace(/\.txt$/i, '').replace(/^(WhatsApp Chat with|צ'אט WhatsApp עם|WhatsApp Chat -)\s*/i, '');
-      setParsed({ name, msgs, files });
+      setParsed({ name, text, msgs, files });
       const ss = senders(msgs);
       setOffice(ss.find((s) => /העתיד|future|STF/i.test(s.name))?.name ?? ss[1]?.name ?? null);
       // The client by the chat's name, if it matches one.
@@ -53,6 +54,14 @@ export function WaImport({ onClose }: { onClose: () => void }) {
   }
 
   const e164 = toE164(phone);
+  // Day and month the other way round (an export from a phone in English writes the month first).
+  const swap = () => setParsed((p) => {
+    if (!p) return p;
+    const first = p.msgs[0];
+    const asMonth = parseWaExport(p.text, 'month');
+    const msgs = asMonth[0] && first && asMonth[0].at.getTime() !== first.at.getTime() ? asMonth : parseWaExport(p.text, 'day');
+    return { ...p, msgs };
+  });
   const client = clients.data?.find((c) => c.id === clientId);
 
   async function run() {
@@ -115,7 +124,8 @@ export function WaImport({ onClose }: { onClose: () => void }) {
           <Table fz="sm" withRowBorders={false}>
             <Table.Tbody>
               <Table.Tr><Table.Td c="dimmed">שיחה</Table.Td><Table.Td>{parsed.name}</Table.Td></Table.Tr>
-              <Table.Tr><Table.Td c="dimmed">הודעות</Table.Td><Table.Td>{parsed.msgs.length} · {parsed.msgs[0].at.toLocaleDateString('he-IL')} עד {parsed.msgs.at(-1)!.at.toLocaleDateString('he-IL')}</Table.Td></Table.Tr>
+              <Table.Tr><Table.Td c="dimmed">הודעות</Table.Td><Table.Td>{parsed.msgs.length} · {parsed.msgs[0].at.toLocaleDateString('he-IL')} עד {parsed.msgs.at(-1)!.at.toLocaleDateString('he-IL')}
+                <Button size="compact-xs" variant="subtle" ml="xs" onClick={swap}>התאריכים לא נכונים? החלפת יום וחודש</Button></Table.Td></Table.Tr>
               <Table.Tr><Table.Td c="dimmed">קבצים</Table.Td><Table.Td>{withFiles}{missing ? ` (${missing} לא בקובץ: יוצאו בלי מדיה)` : ''}</Table.Td></Table.Tr>
             </Table.Tbody>
           </Table>
