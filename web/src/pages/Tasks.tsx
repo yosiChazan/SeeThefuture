@@ -5,7 +5,7 @@ import dayjs from 'dayjs';
 import { notifications } from '@mantine/notifications';
 import { IconCheck, IconFileTypePdf, IconMail, IconPencil, IconPhoto, IconPlus, IconRepeat, IconTrash, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AddLink, append, LinkedText, useMe } from '../components/ManualTopics';
 import { taskPrint, type PrintReply } from '../lib/taskPrint';
@@ -138,6 +138,18 @@ function MailLinks({ task, to, dir, from }: { task: OfficeTask; to: Assignee[]; 
   );
 }
 
+// Leaving a form with something typed in it (a click outside, Esc, ×) asks first (decision 198).
+function useGuardedClose(state: unknown, onClose: () => void) {
+  const start = useRef(JSON.stringify(state));
+  return () => {
+    if (JSON.stringify(state) === start.current) { onClose(); return; }
+    modals.openConfirmModal({
+      title: 'לצאת בלי לשמור?', children: <Text size="sm">מה שהקלדת לא יישמר.</Text>,
+      labels: { confirm: 'יציאה בלי שמירה', cancel: 'חזרה לטופס' }, confirmProps: { color: 'red' }, onConfirm: onClose,
+    });
+  };
+}
+
 // New task, or changing one (every change goes to the history).
 function TaskForm({ dir, task, question = task?.kind === 'question', onClose, onSaved }: { dir: Directory; task?: OfficeTask; question?: boolean; onClose: () => void; onSaved: (t: OfficeTask, added: Assignee[]) => void }) {
   const qc = useQueryClient();
@@ -148,6 +160,7 @@ function TaskForm({ dir, task, question = task?.kind === 'question', onClose, on
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const close = useGuardedClose(v, onClose);
   async function save() {
     setBusy(true); setError(null);
     try {
@@ -179,7 +192,7 @@ function TaskForm({ dir, task, question = task?.kind === 'question', onClose, on
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return (
-    <Modal opened onClose={onClose} title={question ? (task ? 'שינוי השאלה' : 'שאלה חדשה') : task ? 'שינוי פרטי המשימה' : 'משימה חדשה'} size="lg">
+    <Modal opened onClose={close} title={question ? (task ? 'שינוי השאלה' : 'שאלה חדשה') : task ? 'שינוי פרטי המשימה' : 'משימה חדשה'} size="lg">
       <Stack>
         {!question && <Group grow align="flex-start">
           <Select label="טריגר" placeholder="בלי טריגר" clearable data={dir.trigOptions} value={v.trigger} onChange={(x) => setV({ ...v, trigger: x })} />
@@ -371,6 +384,7 @@ function SeriesForm({ dir, series, onClose }: { dir: Directory; series?: Series;
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const close = useGuardedClose(v, onClose);
   const rule = { ...v, weekday: v.frequency === 'weekly' ? v.weekday : null, month_days: v.frequency === 'monthly' ? v.month_days.map(Number) : [],
     last_day: v.frequency === 'monthly' && v.last_day, year_dates: v.frequency === 'yearly' ? v.year_dates : [], workdays_only: v.frequency === 'daily' && v.workdays_only };
   const dateKey = (m: number, d: number) => `${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -395,7 +409,7 @@ function SeriesForm({ dir, series, onClose }: { dir: Directory; series?: Series;
     onClose();
   }
   return (
-    <Modal opened onClose={onClose} title={series ? 'עריכת משימה חוזרת' : 'משימה חוזרת חדשה'} size="lg">
+    <Modal opened onClose={close} title={series ? 'עריכת משימה חוזרת' : 'משימה חוזרת חדשה'} size="lg">
       <Stack>
         <TextInput label="נושא" required value={v.subject} onChange={(e) => setV({ ...v, subject: e.currentTarget.value })} />
         <div>
