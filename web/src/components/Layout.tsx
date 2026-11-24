@@ -19,7 +19,7 @@ const NAV = [
   { to: '/completeness', label: 'השלמת פרטים', icon: IconChecklist },
   { to: '/stats', label: 'סטטיסטיקות', icon: IconChartBar },
   { to: '/cash', label: 'קופות', icon: IconCash },
-  { to: '/tasks', label: 'משימות', icon: IconListCheck },
+  { to: '/tasks', label: 'משימות/שאלות', icon: IconListCheck },
   { to: '/messages', label: 'הודעות', icon: IconMessages },
   { to: '/broadcast', label: 'הודעה לעיר', icon: IconSpeakerphone },
 ];
