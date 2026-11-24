@@ -1,4 +1,4 @@
-// The WhatsApp reminder by e-mail (SPEC decision 188). Called each morning by pg_cron (and safe to
+// The WhatsApp reminder by e-mail (SPEC decision 188). Called every hour by pg_cron (and safe to
 // call by anyone): when app.wa_heartbeat_due() says it is time, mails the admins from the no-reply
 // address that the WhatsApp Business app on the company phone must be opened, then marks it sent.
 // Deployed with verify_jwt off. Secrets: SMTP_USER, SMTP_PASS, MAIL_FROM, optional MAIL_FROM_NAME,
