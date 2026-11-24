@@ -2,7 +2,7 @@ import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Me
 import { notifications } from '@mantine/notifications';
 import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useStaff } from '../components/ManualTopics';
 import { waLink } from '../components/Phone';
@@ -107,6 +107,20 @@ export function Messages() {
     return out;
   }, [recent.data, demo, demoData]);
   const who = (c: Conversation) => (c.client_party_id ? names.get(c.client_party_id) : null) ?? c.contact_name ?? c.wa_phone;
+  // The AI summary is written again by itself only on the first visit to this page after an hour
+  // away (decision 189); otherwise only with its refresh button.
+  const [autoSummary] = useState(() => {
+    try {
+      const last = Number(localStorage.getItem('messages-last-visit') ?? 0);
+      return Date.now() - last > 3600_000;
+    } catch { return false; }
+  });
+  useEffect(() => {
+    const mark = () => { try { localStorage.setItem('messages-last-visit', String(Date.now())); } catch { /* not kept */ } };
+    mark();
+    const t = setInterval(mark, 60_000);
+    return () => { clearInterval(t); mark(); };
+  }, []);
   const account = useQuery({ queryKey: ['whatsapp-account'], queryFn: async () => (must(await supabase.from('whatsapp_account').select('phone_number_id, connected_at').eq('id', 1).maybeSingle()) as { phone_number_id: string | null; connected_at: string | null } | null) });
   const connected = !demo && !!account.data?.phone_number_id && !!account.data.connected_at;
   const list = conversations.filter((c) => (showClosed || c.status !== 'closed')
@@ -241,7 +255,7 @@ export function Messages() {
                 <Select size="xs" w={190} variant="unstyled" placeholder="לא שויכה" clearable value={current.assigned_to}
                   data={(staff.data ?? []).map((s) => ({ value: s.user_id, label: s.display_name }))} onChange={(x) => update({ assigned_to: x })} />
               </Group>
-              {!demo && connected && <ChatSummary chat={current} />}
+              {!demo && connected && <ChatSummary chat={current} auto={autoSummary} />}
               {current.ai_guide_id ? (
                 <Group px="md" py={6} gap="xs" wrap="nowrap" justify="space-between" style={{ background: '#f3f0ff', borderBottom: '1px solid #d0bfff' }}>
                   <Group gap={6} wrap="nowrap"><IconRobot size={18} color="#7048e8" />
@@ -269,12 +283,16 @@ export function Messages() {
                             position: 'relative', background: out ? WA.out : WA.in, borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)',
                             ...(first ? (out ? { borderStartEndRadius: 0 } : { borderStartStartRadius: 0 }) : {}),
                           }}>
+                            {out && (() => {
+                              // Who in the office answered (decision 189): the staff member, the AI, or the company phone.
+                              const s = m.origin === 'ai' ? { t: 'AI', c: '#7048e8', i: <IconRobot size={12} /> }
+                                : m.origin === 'app' || m.origin === 'history' ? { t: 'מהטלפון של החברה', c: '#0b7a5f', i: <IconDeviceMobile size={12} /> }
+                                : { t: (m.sent_by && staffNames.get(m.sent_by)) || 'המשרד', c: '#1c7ed6', i: null };
+                              return <Group gap={3} mb={2} wrap="nowrap" style={{ color: s.c }}>{s.i}<Text size="xs" fw={700} c={s.c}>{s.t}</Text></Group>;
+                            })()}
                             {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
                             {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
-                              {out && m.origin === 'ai' && <Badge size="xs" variant="light" color="violet" leftSection={<IconRobot size={11} />} style={{ textTransform: 'none' }}>AI</Badge>}
-                              {out && m.origin === 'app' && <Badge size="xs" variant="light" color="teal" leftSection={<IconDeviceMobile size={11} />} style={{ textTransform: 'none' }}>מהטלפון</Badge>}
-                              {out && m.sent_by && <Text size="10px" c={WA.muted}>{staffNames.get(m.sent_by) ?? ''} ·</Text>}
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
                               {out && <Ticks status={m.status} error={m.error} />}
                             </Group>
