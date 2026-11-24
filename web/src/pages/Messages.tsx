@@ -366,7 +366,7 @@ export function Messages() {
                       <Box key={m.id} data-msg={m.id} className="wa-row">
                         {m === firstUnread && <Group justify="center" my={8} data-unread-line><Text size="xs" c={WA.muted} px={12} py={4} style={{ background: '#ffffffe6', borderRadius: 8 }}>{unreadHere === 1 ? 'הודעה אחת שלא נקראה' : `${unreadHere} הודעות שלא נקראו`}</Text></Group>}
                         {newDay && <Group justify="center" my={8}><Text size="xs" c={WA.muted} px={10} py={4} style={{ background: '#ffffffe6', borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)' }}>{dayLabel(m.created_at)}</Text></Group>}
-                        <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0} gap={4} wrap="nowrap" style={{ flexDirection: out ? 'row-reverse' : 'row' }}>
+                        <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0} gap={4} wrap="nowrap">
                           <Box maw="65%" px={9} pt={6} pb={8} style={{
                             position: 'relative', background: out ? WA.out : WA.in, borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)',
                             ...(first ? (out ? { borderStartEndRadius: 0 } : { borderStartStartRadius: 0 }) : {}),
@@ -393,7 +393,7 @@ export function Messages() {
                             </Group>
                           </Box>
                           {connected && windowOpen && m.wa_message_id && !m.wa_message_id.startsWith('import:') && (
-                            <Tooltip label="תשובה עם ציטוט"><ActionIcon className="wa-reply" size="sm" radius="xl" variant="white" color="gray" onClick={() => setQuoting(m)} aria-label="תשובה עם ציטוט">
+                            <Tooltip label="תשובה עם ציטוט"><ActionIcon className="wa-reply" style={{ order: out ? -1 : 1 }} size="sm" radius="xl" variant="white" color="gray" onClick={() => setQuoting(m)} aria-label="תשובה עם ציטוט">
                               <IconArrowBackUp size={14} /></ActionIcon></Tooltip>)}
                         </Group>
                       </Box>
