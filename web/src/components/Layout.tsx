@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Navigate, NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { useAccess } from '../lib/access';
 import { COUNTRY_HE } from '../lib/format';
+import { WhatsAppHeartbeat } from './WhatsAppHeartbeat';
 import { supabase } from '../lib/supabase';
 
 const NAV = [
@@ -91,6 +92,7 @@ export function Layout() {
         </AppShell.Section>
       </AppShell.Navbar>
       <AppShell.Main bg="gray.0">
+        <WhatsAppHeartbeat />
         <Outlet />
       </AppShell.Main>
     </AppShell>
