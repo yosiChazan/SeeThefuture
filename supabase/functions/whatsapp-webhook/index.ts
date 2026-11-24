@@ -167,12 +167,39 @@ async function handle(payload: Json) {
         } else if (change.field === 'smb_message_echoes') {
           for (const m of v.message_echoes ?? []) await save(m, { direction: 'out', peer: digits(m.to), origin: 'app' });
         } else if (change.field === 'history') {
+          // Up to 180 days of chats, many messages per call: saved in bulk, once per message id.
+          // The thread's number is its id (or context.wa_id); a message from our number is ours.
           for (const h of v.history ?? []) {
+            // Sharing declined (e.g. 2593109): noted, nothing to save, and not an error to retry.
+            if (h.errors?.length) {
+              await admin.from('whatsapp_account').update({ last_error: `history: ${h.errors.map((e: Json) => `${e.code} ${e.title ?? ''}`).join('; ')}`.slice(0, 500) }).eq('id', 1);
+              continue;
+            }
             for (const thread of h.threads ?? []) {
+              const peer = digits(thread.context?.wa_id ?? thread.id);
+              if (!peer) continue;
+              const conversation = await chat(peer);
+              const rows: Json[] = [];
               for (const m of thread.messages ?? []) {
-                const mine = digits(m.from) === own2;
-                const status = m.history_context?.status ? String(m.history_context.status).toLowerCase() : null;
-                await save(m, { direction: mine ? 'out' : 'in', peer: mine ? digits(m.to ?? thread.id) : digits(m.from), origin: 'history', status });
+                if (!m.id) continue;
+                const mine = digits(m.from) === own2 || (!!m.to && digits(m.from) !== peer);
+                const { kind, body, file } = bodyOf(m);
+                const at = m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : new Date().toISOString();
+                rows.push({
+                  conversation_id: conversation, direction: mine ? 'out' : 'in', body, kind, origin: 'history', file_name: file,
+                  status: mine ? (m.history_context?.status ? String(m.history_context.status).toLowerCase() : null) : null,
+                  wa_message_id: m.id, wa_timestamp: at, created_at: at,
+                });
+              }
+              for (let i = 0; i < rows.length; i += 500) {
+                const { error } = await admin.from('messages').upsert(rows.slice(i, i + 500), { onConflict: 'wa_message_id', ignoreDuplicates: true });
+                if (error) throw error;
+              }
+              // The chat's last time, if the history is newer than what it had.
+              const last = rows.reduce((a, r) => (r.created_at > a ? r.created_at : a), '');
+              if (last) {
+                const { data: c } = await admin.from('conversations').select('last_message_at').eq('id', conversation).single();
+                if (!c?.last_message_at || c.last_message_at < last) await admin.from('conversations').update({ last_message_at: last }).eq('id', conversation);
               }
             }
           }

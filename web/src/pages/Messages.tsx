@@ -313,7 +313,7 @@ export function Messages() {
 // What a message without text is.
 function kindLabel(m: Message): string {
   const k = m.kind ?? 'text';
-  return ({ image: '📷 תמונה', video: '🎥 סרטון', audio: '🎤 הקלטה', document: `📄 ${m.file_name ?? 'מסמך'}`, sticker: 'מדבקה', location: '📍 מיקום', template: 'תבנית' } as Record<string, string>)[k] ?? (m.media_path ? '📎 קובץ' : '');
+  return ({ image: '📷 תמונה', video: '🎥 סרטון', audio: '🎤 הקלטה', document: `📄 ${m.file_name ?? 'מסמך'}`, sticker: 'מדבקה', location: '📍 מיקום', template: 'תבנית', media_placeholder: '📎 קובץ (מההיסטוריה, לא הועבר)' } as Record<string, string>)[k] ?? (m.media_path ? '📎 קובץ' : '');
 }
 
 // The ticks of one of ours: sent ✓, delivered ✓✓, read ✓✓ in blue, failed ! with why.
