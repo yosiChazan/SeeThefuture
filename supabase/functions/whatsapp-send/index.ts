@@ -65,6 +65,37 @@ Deno.serve(async (req) => {
     })) });
   }
 
+  // Templates (decision 200): every template with its state, and submitting a new one for Meta's
+  // approval (the admin only). A body with {{1}}, {{2}}… needs an example for each.
+  if (b.action === 'templates_all') {
+    const r = await fetch(`${GRAPH()}/${acct.waba_id}/message_templates?fields=name,language,status,category,rejected_reason,components&limit=100`, { headers: auth });
+    const j = await r.json();
+    if (!r.ok) return reply(502, { error: j.error?.message ?? 'templates' });
+    // deno-lint-ignore no-explicit-any
+    return reply(200, { templates: (j.data ?? []).map((t: any) => ({ name: t.name, language: t.language, category: t.category, status: t.status, rejected_reason: t.rejected_reason ?? null,
+      // deno-lint-ignore no-explicit-any
+      body: (t.components ?? []).find((c: any) => c.type === 'BODY')?.text ?? '' })) });
+  }
+  if (b.action === 'create_template') {
+    if ((await caller.rpc('is_admin')).data !== true) return reply(403, { error: 'רק מנהל המערכת מגיש תבניות' });
+    const name = String(b.name ?? '').trim(), text = String(b.body ?? '').trim();
+    if (!/^[a-z0-9_]{1,512}$/.test(name)) return reply(400, { error: 'שם התבנית: אותיות אנגליות קטנות, ספרות וקו תחתון בלבד' });
+    if (!text) return reply(400, { error: 'אין נוסח' });
+    const vars = [...new Set([...text.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1])))].sort((x, y) => x - y);
+    const examples: string[] = Array.isArray(b.examples) ? b.examples.map(String) : [];
+    if (vars.length && examples.length < vars.length) return reply(400, { error: 'צריך דוגמה לכל משתנה' });
+    const component: Record<string, unknown> = { type: 'BODY', text };
+    if (vars.length) component.example = { body_text: [examples.slice(0, vars.length)] };
+    const r = await fetch(`${GRAPH()}/${acct.waba_id}/message_templates`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ name, language: String(b.language ?? 'he'), category: String(b.category ?? 'UTILITY'), components: [component] }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return reply(422, { error: j.error?.error_user_msg ?? j.error?.message ?? 'ההגשה נכשלה' });
+    await admin.from('audit_log').insert({ user_id: me.user.id, table_name: 'whatsapp_templates', action: 'template_submit', new_row: { name, text, id: j.id, status: j.status } });
+    return reply(200, { id: j.id, status: j.status, category: j.category });
+  }
+
   const { data: conv } = await admin.from('conversations').select('id, wa_phone').eq('id', String(b.conversation_id ?? '')).maybeSingle();
   if (!conv) return reply(404, { error: 'no such chat' });
   const to = conv.wa_phone.replace(/\D/g, '');
