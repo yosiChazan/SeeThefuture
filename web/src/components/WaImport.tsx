@@ -5,13 +5,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { unzipSync } from 'fflate';
 import { useEffect, useState } from 'react';
 import { toE164 } from '../lib/phone';
-import { useClients } from '../lib/queries';
+import { useClients, useContacts } from '../lib/queries';
 import { supabase } from '../lib/supabase';
 import { importId, parseWaExport, senders, type WaExportMessage } from '../lib/waExport';
 
 // Importing a chat exported from WhatsApp ("ייצוא צ'אט" on the phone: a ZIP with the text and, "with
 // media", the pictures) into the inbox (SPEC decision 191, a temporary button). The export names
-// people, not numbers, so the client (or the number) is chosen here, and who of the senders is the
+// people, not numbers, so the client or contact (or the number) is chosen here, and who of the senders is the
 // office. Messages from the connection on are skipped: they came in by themselves. Importing the
 // same file again adds nothing. The ZIP can also be one sent in a chat (exported on the phone and
 // shared to the company's number): its message has a button that opens this with the file.
@@ -23,7 +23,12 @@ const kindOf = (f: string) => { const e = f.split('.').pop()!.toLowerCase(); ret
 
 export function WaImport({ onClose, from }: { onClose: () => void; from?: { path: string; name: string | null } }) {
   const qc = useQueryClient();
-  const clients = useClients();
+  const clientsQ = useClients();
+  const contactsQ = useContacts();
+  // Clients and contacts alike (decision 191): a chat can be with either.
+  const people = [...(clientsQ.data ?? []).map((c) => ({ id: c.id, display_name: c.display_name, phone: c.phone ?? null, contact: false })),
+    ...(contactsQ.data ?? []).map((c) => ({ id: c.id, display_name: c.display_name, phone: c.phone ?? null, contact: true }))];
+  const clients = { data: clientsQ.data && contactsQ.data ? people : undefined };
   const [parsed, setParsed] = useState<Parsed | null>(null);
   const [office, setOffice] = useState<string | null>(null);
   const [clientId, setClientId] = useState<string | null>(null);
@@ -60,7 +65,7 @@ export function WaImport({ onClose, from }: { onClose: () => void; from?: { path
       setParsed({ name, text, msgs, files });
       const ss = senders(msgs);
       setOffice(ss.find((s) => /העתיד|future|STF/i.test(s.name))?.name ?? ss[1]?.name ?? null);
-      // The client by the chat's name, if it matches one.
+      // The client or contact by the chat's name, if it matches one.
       const match = (clients.data ?? []).find((c) => c.display_name.trim() === name.trim());
       if (match) { setClientId(match.id); setPhone(match.phone ?? ''); }
       else if (toE164(name)) setPhone(name);
@@ -144,11 +149,12 @@ export function WaImport({ onClose, from }: { onClose: () => void; from?: { path
             </Table.Tbody>
           </Table>
           <Select label="מי מהם המשרד" data={ss.map((s) => ({ value: s.name, label: `${s.name} (${s.count})` }))} value={office} onChange={setOffice} allowDeselect={false} />
-          <Select label="הלקוח" searchable clearable placeholder="בחירת לקוח (או מספר למטה)" value={clientId}
-            data={(clients.data ?? []).map((c) => ({ value: c.id, label: `${c.display_name}${c.phone ? ` · ${c.phone}` : ''}` }))}
+          <Select label="לקוח או איש קשר" searchable clearable placeholder="בחירה (או מספר למטה)" value={clientId}
+            data={[{ group: 'לקוחות', items: people.filter((c) => !c.contact) }, { group: 'אנשי קשר', items: people.filter((c) => c.contact) }]
+              .map((g) => ({ group: g.group, items: g.items.map((c) => ({ value: c.id, label: `${c.display_name}${c.phone ? ` · ${c.phone}` : ''}` })) }))}
             onChange={(x) => { setClientId(x); const c = clients.data?.find((y) => y.id === x); if (c?.phone) setPhone(c.phone); }} />
           <TextInput label="מספר הוואטסאפ של השיחה" value={phone} onChange={(e) => setPhone(e.currentTarget.value)} placeholder="+972…" dir="ltr"
-            error={phone && !e164 ? 'מספר לא תקין' : undefined} description={client && !client.phone ? 'ללקוח אין טלפון בכרטיס: מקלידים את המספר' : undefined} />
+            error={phone && !e164 ? 'מספר לא תקין' : undefined} description={client && !client.phone ? 'אין טלפון בכרטיס: מקלידים את המספר' : undefined} />
         </>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>ביטול</Button>
