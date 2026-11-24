@@ -17,7 +17,7 @@ export interface Assignee { id?: string; user_id: string | null; party_id: strin
 export interface TaskLink { id?: string; kind: 'client' | 'property' | 'contact' | 'country'; entity_id: string | null; country_code: string | null }
 export interface OfficeTask {
   id: string; created_by: string; created_at: string; updated_at: string; trigger_id: string | null; subject: string; body: string | null;
-  priority: Priority; status: TaskStatus; kind?: 'task' | 'question'; category_id?: string | null; series_id?: string | null; occurrence_on?: string | null; office_task_assignees: Assignee[]; office_task_links: TaskLink[];
+  priority: Priority; status: TaskStatus; kind?: 'task' | 'question'; files?: string[]; category_id?: string | null; series_id?: string | null; occurrence_on?: string | null; office_task_assignees: Assignee[]; office_task_links: TaskLink[];
 }
 export interface TaskEvent { id: string; task_id: string; kind: string; body: string | null; data: Record<string, unknown> | null; created_by: string | null; created_at: string; parent_id?: string | null; files?: string[]; edited_at?: string | null }
 
