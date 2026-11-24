@@ -60,7 +60,7 @@ export function ChatSummary({ chat, link = false, auto = false }: { chat: Summar
             : error ? <Text size="sm" c="red">{error}</Text>
             : <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{chat.ai_summary ?? 'עוד אין סיכום (↻ לסיכום)'}{chat.ai_summary && stale ? ' · יש הודעות חדשות מאז הסיכום' : ''}</Text>}
         </div>
-        <Tooltip label="סיכום מחדש"><ActionIcon size="sm" variant="subtle" color="violet" loading={busy} onClick={refresh} aria-label="סיכום מחדש"><IconRefresh size={14} /></ActionIcon></Tooltip>
+        <Tooltip label="לכתוב את סיכום ה-AI מחדש לפי ההודעות האחרונות"><ActionIcon size="sm" variant="subtle" color="violet" loading={busy} onClick={refresh} aria-label="סיכום מחדש"><IconRefresh size={14} /></ActionIcon></Tooltip>
       </Group>
     </Paper>
   );
