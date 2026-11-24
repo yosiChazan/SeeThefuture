@@ -4,9 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 
 // The reminder to open the WhatsApp Business app (SPEC decision 188): Meta disconnects the number
-// from the system after about 14 days without the app on the main phone. Shown on every page 10
-// days after the later of the connection, "פתחתי את האפליקציה בטלפון" and the last message sent
-// from the app or WhatsApp Web (the office's choice, though Meta counts only the phone).
+// from the system after about 14 days without the app on the main phone (WhatsApp Web does not
+// count). Shown on every page 10 days after the last "פתחתי את האפליקציה בטלפון" (or the connection).
 const DAYS = 10, LIMIT = 14;
 
 export function WhatsAppHeartbeat() {
@@ -14,7 +13,7 @@ export function WhatsAppHeartbeat() {
   const q = useQuery({
     queryKey: ['wa-heartbeat'], refetchInterval: 30 * 60_000, staleTime: 10 * 60_000,
     queryFn: async () => {
-      // The same start as the e-mail: the connection, the last "opened", or the last message from the app.
+      // The same start as the e-mail: the last "opened" (or the connection).
       const { data, error } = await supabase.rpc('wa_heartbeat_since');
       if (error || !data) return null;
       return Math.floor((Date.now() - new Date(data as string).getTime()) / 86_400_000);
@@ -30,7 +29,7 @@ export function WhatsAppHeartbeat() {
   return (
     <Alert color={left <= 2 ? 'red' : 'orange'} icon={<IconBrandWhatsapp size={18} />} mb="md" title="תזכורת: לפתוח את WhatsApp Business בטלפון של החברה">
       <Group justify="space-between" wrap="wrap" gap="xs">
-        <Text size="sm">עברו {days} ימים בלי שליחה מהאפליקציה ובלי סימון שהיא נפתחה בטלפון. {left > 0 ? `בעוד כ-${left} ימים` : 'בכל רגע'} Meta עלולה לנתק את הוואטסאפ מהמערכת. צריך לפתוח את WhatsApp Business <b>בטלפון של החברה</b> (WhatsApp Web לא נחשב), ואז ללחוץ "פתחתי".</Text>
+        <Text size="sm">עברו {days} ימים מאז שסומן שהאפליקציה נפתחה בטלפון. {left > 0 ? `בעוד כ-${left} ימים` : 'בכל רגע'} Meta עלולה לנתק את הוואטסאפ מהמערכת. צריך לפתוח את WhatsApp Business <b>בטלפון של החברה</b> (WhatsApp Web לא נחשב), ואז ללחוץ "פתחתי".</Text>
         <Group gap="xs">
           <Button size="xs" color="green" component="a" href="https://web.whatsapp.com/" target="_blank" rel="noopener noreferrer" leftSection={<IconBrandWhatsapp size={14} />}>פתיחת WhatsApp Web</Button>
           <Button size="xs" variant="white" color="dark" onClick={checked}>פתחתי את האפליקציה בטלפון</Button>
