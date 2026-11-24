@@ -473,7 +473,11 @@ function TemplatePicker({ busy, onClose, onSend }: { busy: boolean; onClose: () 
     queryKey: ['wa-templates'], staleTime: 5 * 60_000,
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke('whatsapp-send', { body: { action: 'templates' } });
-      if (error) throw error;
+      if (error) {
+        let msg = error.message;
+        try { msg = (await (error as { context?: Response }).context?.json())?.error ?? msg; } catch { /* keep */ }
+        throw new Error(msg);
+      }
       return data.templates as Template[];
     },
   });

@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
   try { b = await req.json(); } catch { return reply(400, { error: 'bad request' }); }
 
   if (b.action === 'templates') {
-    const r = await fetch(`${GRAPH()}/${acct.waba_id}/message_templates?fields=name,language,status,category,components&limit=200`, { headers: auth });
+    const r = await fetch(`${GRAPH()}/${acct.waba_id}/message_templates?fields=name,language,status,category,components&status=APPROVED&limit=100`, { headers: auth });
     const j = await r.json();
     if (!r.ok) return reply(502, { error: j.error?.message ?? 'templates' });
     // deno-lint-ignore no-explicit-any
