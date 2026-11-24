@@ -115,6 +115,7 @@ async function save(m: Json, o: { direction: 'in' | 'out'; peer: string; name?: 
   const { data: added, error: addError } = await admin.from('messages').upsert({
     conversation_id: conversation, direction: o.direction, body, kind, origin: o.origin, file_name: file,
     status: o.direction === 'out' ? (o.status ?? 'sent') : null, wa_message_id: m.id, wa_timestamp: at, created_at: at,
+    reply_to: m.context?.id ?? null,   // the message it quotes (decision 196)
   }, { onConflict: 'wa_message_id', ignoreDuplicates: true }).select('id');
   if (addError) throw addError;
   if (!added?.length) return;   // already here

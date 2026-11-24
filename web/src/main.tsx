@@ -25,8 +25,8 @@ window.addEventListener('vite:preloadError', (event) => {
 import { App } from './App';
 
 const theme = createTheme({
-  fontFamily: 'Heebo, system-ui, sans-serif',
-  headings: { fontFamily: 'Heebo, system-ui, sans-serif' },
+  fontFamily: "Heebo, 'Noto Color Emoji', system-ui, sans-serif",
+  headings: { fontFamily: "Heebo, 'Noto Color Emoji', system-ui, sans-serif" },
   primaryColor: 'indigo',
   defaultRadius: 'md',
   components: {
