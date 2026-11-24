@@ -762,11 +762,27 @@ function OfficeByCity() {
 // The final balance of every client with the box's holder (decision 170): the rates of the day
 // for each currency in hryvnia are typed in, and each client's hryvnia, dollars, euros and
 // shekels are added up into one sum, shown in the currency chosen. As of a date (default today).
+// The hryvnia of each client in short (decision 193): what came in (rent and the like), what was
+// paid to them (converted, or handed over), and what went to commissions and fees, from a date
+// chosen; all before it is one opening balance. The final balance does not depend on that date.
 const FB_CURRENCIES = ['USD', 'EUR', 'ILS'] as const;
+interface Hryvnia { opening: number; inflow: number; paid: number; fees: number; other: number }
+const FEES = new Set(['commission', 'office_fee', 'mgmt_fee', 'brokerage']);
+// Where a hryvnia entry of a client goes in the breakdown.
+function hryvniaPart(category: string, amount: number): keyof Hryvnia {
+  if (amount >= 0) return 'inflow';
+  if (category === 'fx' || category === 'transfer') return 'paid';
+  return FEES.has(category) ? 'fees' : 'other';
+}
+const PARTS = [
+  { key: 'opening', label: 'יתרת פתיחה' }, { key: 'inflow', label: 'נכנס' }, { key: 'paid', label: 'שולם (הומר)' },
+  { key: 'fees', label: 'עמלות ודמי ניהול' }, { key: 'other', label: 'הוצאות' },
+] as const;
 const RATES_KEY = 'final-balance-rates';
 function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) {
   const [open, setOpen] = useState(false);
   const [asOf, setAsOf] = useState<string | null>(null);
+  const [since, setSince] = useState<string | null>(null);
   const [rates, setRates] = useState<Record<string, number | ''>>({ USD: '', EUR: '', ILS: '' });
   // The rates typed last time stay, in gray, as the default (decision 172): an empty field uses
   // them; a typed one replaces them and is kept for next time. Kept in this browser only.
@@ -779,11 +795,11 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
   const [sort, setSort] = useState<{ key: string; desc: boolean }>({ key: 'name', desc: false });
   const holders = [...(box.holder_party_id ? [box.holder_party_id] : []), ...box.linked_manager_ids];
   const q = useQuery({
-    queryKey: ['final-balance', box.id, asOf], enabled: open && holders.length > 0,
+    queryKey: ['final-balance', box.id, asOf, since], enabled: open && holders.length > 0,
     queryFn: async () => {
-      const out: { amount: number; accounts: { beneficiary_party_id: string; currency: string } }[] = [];
+      const out: { amount: number; accounts: { beneficiary_party_id: string; currency: string }; transactions: { category: string; occurred_on: string } }[] = [];
       for (let at = 0; ; at += 1000) {
-        let qq = supabase.from('entries').select('amount, accounts!inner(kind, currency, holder_party_id, beneficiary_party_id), transactions!inner(status, occurred_on)')
+        let qq = supabase.from('entries').select('amount, accounts!inner(kind, currency, holder_party_id, beneficiary_party_id), transactions!inner(status, occurred_on, category)')
           .eq('accounts.kind', 'manager_cash').in('accounts.holder_party_id', holders).eq('transactions.status', 'posted');
         if (asOf) qq = qq.lte('transactions.occurred_on', asOf);
         const page = must(await qq.order('id').range(at, at + 999)) as unknown as typeof out;
@@ -791,11 +807,16 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
         if (page.length < 1000) break;
       }
       const m = new Map<string, Record<string, number>>();
+      const h = new Map<string, Hryvnia>();
       for (const e of out) {
-        const r = m.get(e.accounts.beneficiary_party_id) ?? m.set(e.accounts.beneficiary_party_id, {}).get(e.accounts.beneficiary_party_id)!;
+        const id = e.accounts.beneficiary_party_id;
+        const r = m.get(id) ?? m.set(id, {}).get(id)!;
         r[e.accounts.currency] = (r[e.accounts.currency] ?? 0) + Number(e.amount);
+        if (e.accounts.currency !== 'UAH') continue;
+        const x = h.get(id) ?? h.set(id, { opening: 0, inflow: 0, paid: 0, fees: 0, other: 0 }).get(id)!;
+        x[since && e.transactions.occurred_on < since ? 'opening' : hryvniaPart(e.transactions.category, Number(e.amount))] += Number(e.amount);
       }
-      return [...m].map(([id, b]) => ({ id, b }));
+      return [...m].map(([id, b]) => ({ id, b, h: h.get(id) ?? { opening: 0, inflow: 0, paid: 0, fees: 0, other: 0 } }));
     },
   });
   const rateOf = (c: string) => (c === 'UAH' ? 1 : Number(rates[c]) || saved[c] || 0);
@@ -803,8 +824,8 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
   const r2 = (n: number) => Math.round(n * 100) / 100;
   const rows = (q.data ?? []).map((r) => {
     const uah = ['UAH', ...FB_CURRENCIES].reduce((a, c) => a + (r.b[c] ?? 0) * rateOf(c), 0);
-    return { id: r.id, name: names.get(r.id) ?? '—', UAH: r2(r.b.UAH ?? 0), USD: r2(r.b.USD ?? 0), EUR: r2(r.b.EUR ?? 0), ILS: r2(r.b.ILS ?? 0), total: r2(uah), shown: show === 'UAH' ? r2(uah) : rateOf(show) ? r2(uah / rateOf(show)) : 0 };
-  }).filter((r) => r.UAH || r.USD || r.EUR || r.ILS);
+    return { id: r.id, name: names.get(r.id) ?? '—', opening: r2(r.h.opening), inflow: r2(r.h.inflow), paid: r2(-r.h.paid), fees: r2(-r.h.fees), other: r2(-r.h.other), UAH: r2(r.b.UAH ?? 0), USD: r2(r.b.USD ?? 0), EUR: r2(r.b.EUR ?? 0), ILS: r2(r.b.ILS ?? 0), total: r2(uah), shown: show === 'UAH' ? r2(uah) : rateOf(show) ? r2(uah / rateOf(show)) : 0 };
+  }).filter((r) => r.UAH || r.USD || r.EUR || r.ILS || r.inflow || r.paid || r.fees || r.other);
   type Row = (typeof rows)[number];
   const sorted = [...rows].sort((a, b) => {
     const x = a[sort.key as keyof Row], y = b[sort.key as keyof Row];
@@ -819,9 +840,9 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
   );
   // The table as a file for Excel (UTF-8 with a BOM, so Hebrew opens right).
   function download() {
-    const head = ['לקוח', 'גריבנה', 'דולר', 'יורו', 'שקל', 'סה"כ בגריבנה', `סה"כ ב-${show}`];
-    const lines = [head, ...sorted.map((r) => [r.name, r.UAH, r.USD, r.EUR, r.ILS, r.total, r.shown]), ['סה"כ', sum('UAH'), sum('USD'), sum('EUR'), sum('ILS'), sum('total'), sum('shown')],
-      [], [`שערים: USD ${rateOf('USD')} · EUR ${rateOf('EUR')} · ILS ${rateOf('ILS')} גריבנה`, `נכון ל-${asOf ? dayjs(asOf).format('DD.MM.YYYY') : dayjs().format('DD.MM.YYYY')}`]];
+    const head = ['לקוח', ...PARTS.map((p) => `${p.label} (₴)`), 'גריבנה', 'דולר', 'יורו', 'שקל', 'סה"כ בגריבנה', `סה"כ ב-${show}`];
+    const lines = [head, ...sorted.map((r) => [r.name, ...PARTS.map((p) => r[p.key]), r.UAH, r.USD, r.EUR, r.ILS, r.total, r.shown]), ['סה"כ', ...PARTS.map((p) => sum(p.key)), sum('UAH'), sum('USD'), sum('EUR'), sum('ILS'), sum('total'), sum('shown')],
+      [], [`שערים: USD ${rateOf('USD')} · EUR ${rateOf('EUR')} · ILS ${rateOf('ILS')} גריבנה`, `נכון ל-${asOf ? dayjs(asOf).format('DD.MM.YYYY') : dayjs().format('DD.MM.YYYY')}`, since ? `פירוט הגריבנה מ-${dayjs(since).format('DD.MM.YYYY')}` : 'פירוט הגריבנה מההתחלה']];
     const csv = '\ufeff' + lines.map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -835,7 +856,7 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
         <Button size="xs" variant="light" onClick={() => setOpen((o) => !o)}>{open ? 'סגירה' : 'פתיחה'}</Button>
       </Group>
       {open && <Stack gap="sm" mt="sm">
-        <Text size="xs" c="dimmed">מקלידים כמה גריבנה שווה כל מטבע, והיתרה של כל לקוח בכל המטבעות נסכמת לסכום אחד, במטבע שבוחרים. רק חישוב: שום דבר לא נרשם.</Text>
+        <Text size="xs" c="dimmed">פירוט הגריבנה: יתרת פתיחה (הכול לפני "פירוט מתאריך", נטו), נכנס (שכירות וכדומה), שולם (הומר למטבע אחר או נמסר ללקוח), עמלות ודמי ניהול, והוצאות (תיקונים, חשבונות וכו'). פתיחה + נכנס − שולם − עמלות − הוצאות = הגריבנה ביתרה הסופית. מקלידים כמה גריבנה שווה כל מטבע, והיתרה של כל לקוח בכל המטבעות נסכמת לסכום אחד, במטבע שבוחרים. רק חישוב: שום דבר לא נרשם.</Text>
         <Group gap="xs" align="flex-end">
           {FB_CURRENCIES.map((c) => (
             <NumberInput key={c} size="xs" label={`1 ${c} = ₴`} min={0} decimalScale={4} w={120} value={rates[c]} placeholder={saved[c] ? String(saved[c]) : undefined}
@@ -843,23 +864,29 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
               error={missing.includes(c) ? 'חסר שער' : undefined} />
           ))}
           <Select size="xs" label="סה״כ במטבע" w={110} data={['USD', 'EUR', 'ILS', 'UAH']} value={show} allowDeselect={false} onChange={(x) => x && setShow(x)} />
+          <DateInput size="xs" label="פירוט מתאריך" placeholder="מההתחלה" clearable value={since} onChange={(d) => setSince(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={140} />
           <DateInput size="xs" label="נכון לתאריך" placeholder="היום" clearable value={asOf} onChange={(d) => setAsOf(d ? dayjs(d).format('YYYY-MM-DD') : null)} valueFormat="DD.MM.YYYY" w={140} />
           <Button size="xs" variant="default" onClick={download} disabled={!rows.length}>הורדה לאקסל</Button>
         </Group>
         {q.isLoading ? <Text size="sm" c="dimmed">טוען…</Text> : (
-          <Table.ScrollContainer minWidth={760}>
+          <Table.ScrollContainer minWidth={1280}>
             <Table fz="sm" striped highlightOnHover verticalSpacing={4}>
-              <Table.Thead><Table.Tr>{th('name', 'לקוח')}{th('UAH', 'גריבנה')}{th('USD', 'דולר')}{th('EUR', 'יורו')}{th('ILS', 'שקל')}{th('total', 'סה"כ בגריבנה')}{th('shown', `סה"כ ב-${show}`)}</Table.Tr></Table.Thead>
+              <Table.Thead><Table.Tr><Table.Th />
+                <Table.Th colSpan={PARTS.length} ta="center" bg="gray.0" fz="xs">פירוט הגריבנה {since ? `מ-${dayjs(since).format('DD.MM.YYYY')}` : 'מההתחלה'}</Table.Th>
+                <Table.Th colSpan={6} ta="center" fz="xs">יתרה סופית</Table.Th></Table.Tr>
+                <Table.Tr>{th('name', 'לקוח')}{PARTS.map((p) => th(p.key, p.label))}{th('UAH', 'גריבנה')}{th('USD', 'דולר')}{th('EUR', 'יורו')}{th('ILS', 'שקל')}{th('total', 'סה"כ בגריבנה')}{th('shown', `סה"כ ב-${show}`)}</Table.Tr></Table.Thead>
               <Table.Tbody>
                 {sorted.map((r) => (
                   <Table.Tr key={r.id}>
                     <Table.Td><Anchor component={Link} to={`/clients/${r.id}`} size="sm">{r.name}</Anchor></Table.Td>
+                    {PARTS.map((p) => <Table.Td key={p.key} bg="gray.0" c={r[p.key] ? undefined : 'dimmed'}>{r[p.key] ? money(r[p.key], 'UAH') : '—'}</Table.Td>)}
                     {(['UAH', 'USD', 'EUR', 'ILS'] as const).map((c) => <Table.Td key={c} c={r[c] < 0 ? 'red.7' : r[c] ? undefined : 'dimmed'}>{r[c] ? money(r[c], c as Currency) : '—'}</Table.Td>)}
                     <Table.Td>{money(r.total, 'UAH')}</Table.Td>
                     <Table.Td fw={700} c={r.shown < 0 ? 'red.7' : undefined}>{missing.length ? '—' : money(r.shown, show as Currency)}</Table.Td>
                   </Table.Tr>
                 ))}
                 <Table.Tr fw={700}><Table.Td>סה"כ ({rows.length})</Table.Td>
+                  {PARTS.map((p) => <Table.Td key={p.key} bg="gray.0">{money(sum(p.key), 'UAH')}</Table.Td>)}
                   {(['UAH', 'USD', 'EUR', 'ILS'] as const).map((c) => <Table.Td key={c}>{money(sum(c), c as Currency)}</Table.Td>)}
                   <Table.Td>{money(sum('total'), 'UAH')}</Table.Td><Table.Td>{missing.length ? '—' : money(sum('shown'), show as Currency)}</Table.Td></Table.Tr>
               </Table.Tbody>
