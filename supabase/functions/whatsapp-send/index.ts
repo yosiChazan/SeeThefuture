@@ -1,5 +1,5 @@
 // Sends a WhatsApp message from the inbox (SPEC decision 180), through the connected number.
-//   { conversation_id, text }                         → a text; WhatsApp takes it only within 24
+//   { conversation_id, text, reply_to? }              → a text, quoting reply_to (a WhatsApp id) if given; WhatsApp takes it only within 24
 //                                                       hours of the client's last message
 //   { conversation_id, template, language, params? }  → an approved template (outside the 24 hours);
 //                                                       params fill {{1}}, {{2}}… of its body
@@ -85,8 +85,10 @@ Deno.serve(async (req) => {
     kind = 'text';
   }
 
+  // A quoted reply (decision 196).
+  const replyTo = !b.template && b.reply_to ? String(b.reply_to) : null;
   const r = await fetch(`${GRAPH()}/${acct.phone_number_id}/messages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, ...payload }),
+    method: 'POST', headers: auth, body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, ...payload, ...(replyTo ? { context: { message_id: replyTo } } : {}) }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.messages?.[0]?.id) {
@@ -96,7 +98,7 @@ Deno.serve(async (req) => {
   const now = new Date().toISOString();
   const { data: msg, error } = await admin.from('messages').insert({
     conversation_id: conv.id, direction: 'out', body, kind, origin: 'api', status: 'sent', wa_message_id: j.messages[0].id,
-    sent_by: me.user.id, created_at: now, wa_timestamp: now,
+    sent_by: me.user.id, created_at: now, wa_timestamp: now, reply_to: replyTo,
   }).select('id').single();
   // A person answered from the inbox: the chat is theirs again, not the AI's (decision 183).
   await admin.from('conversations').update({ last_message_at: now, ai_guide_id: null, ai_until: null }).eq('id', conv.id);

@@ -1,6 +1,6 @@
 import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileZip, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileZip, IconFileText, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -25,7 +25,8 @@ interface Conversation { id: string; client_party_id: string | null; wa_phone: s
   ai_guide_id?: string | null; ai_until?: string | null; ai_handback_reason?: string | null; ai_handback_at?: string | null;
   ai_summary?: string | null; ai_summary_at?: string | null; ai_waiting_on?: 'us' | 'client' | 'none' | null; staff_read_at?: string | null }
 interface Message { id: string; conversation_id: string; direction: 'in' | 'out'; body: string | null; media_path: string | null; sent_by: string | null; created_at: string;
-  kind?: string; origin?: 'api' | 'app' | 'history' | 'ai'; status?: string | null; error?: string | null; file_name?: string | null }
+  kind?: string; origin?: 'api' | 'app' | 'history' | 'ai'; status?: string | null; error?: string | null; file_name?: string | null;
+  wa_message_id?: string | null; reply_to?: string | null }
 
 const WA = {
   green: '#00a884', header: '#f0f2f5', panel: '#ffffff', chatBg: '#efeae2', out: '#d9fdd3', in: '#ffffff',
@@ -181,6 +182,12 @@ export function Messages() {
   const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
   const [importing, setImporting] = useState<false | true | { path: string; name: string | null }>(false);   // true: upload a file; else a ZIP sent in a chat
   const [aiPick, setAiPick] = useState(false);
+  // Quoted replies (decision 196): the message quoted, and the one being answered with a quote.
+  const byWa = useMemo(() => new Map(messages.filter((m) => m.wa_message_id).map((m) => [m.wa_message_id!, m])), [messages]);
+  const [quoting, setQuoting] = useState<Message | null>(null);
+  useEffect(() => setQuoting(null), [current?.id]);
+  const jumpTo = (id: string) => { const el = viewport.current?.querySelector<HTMLElement>(`[data-msg="${id}"]`); if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.animate([{ background: '#fff3bf' }, { background: 'transparent' }], { duration: 1500 }); } };
+  const quoteName = (m: Message) => (m.direction === 'out' ? 'המשרד' : current ? who(current) : '');
   // Files of this chat already kept in the system (decision 195).
   const [saving, setSaving] = useState<WaFile | null>(null);
   const mediaIds = messages.filter((m) => m.media_path).map((m) => m.id);
@@ -327,7 +334,9 @@ export function Messages() {
                   <Button size="compact-xs" color="orange" variant="subtle" onClick={() => update({ ai_handback_reason: null })}>הבנתי</Button>
                 </Group>
               ) : null}
-              <ScrollArea viewportRef={viewport} onScrollPositionChange={() => { const v = viewport.current; if (v) atEnd.current = v.scrollHeight - v.scrollTop - v.clientHeight < 80; }}
+              {/* The quote button shows on hovering a message; Emoji: Noto Color Emoji for everyone (main.tsx, decision 196). */}
+              <style>{`.wa-row .wa-reply{opacity:0;transition:opacity .15s}.wa-row:hover .wa-reply{opacity:1}@media (hover:none){.wa-row .wa-reply{opacity:.7}}`}</style>
+              <ScrollArea className="wa-chat" viewportRef={viewport} onScrollPositionChange={() => { const v = viewport.current; if (v) atEnd.current = v.scrollHeight - v.scrollTop - v.clientHeight < 80; }}
                 style={{ flex: 1, backgroundColor: WA.chatBg, backgroundImage: DOODLE }}>
                 <Stack gap={2} px={{ base: 'sm', sm: 60 }} py="md">
                   {messages.map((m, i) => {
@@ -335,10 +344,10 @@ export function Messages() {
                     const first = i === 0 || messages[i - 1].direction !== m.direction || newDay;
                     const out = m.direction === 'out';
                     return (
-                      <Box key={m.id}>
+                      <Box key={m.id} data-msg={m.id} className="wa-row">
                         {m === firstUnread && <Group justify="center" my={8} data-unread-line><Text size="xs" c={WA.muted} px={12} py={4} style={{ background: '#ffffffe6', borderRadius: 8 }}>{unreadHere === 1 ? 'הודעה אחת שלא נקראה' : `${unreadHere} הודעות שלא נקראו`}</Text></Group>}
                         {newDay && <Group justify="center" my={8}><Text size="xs" c={WA.muted} px={10} py={4} style={{ background: '#ffffffe6', borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)' }}>{dayLabel(m.created_at)}</Text></Group>}
-                        <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0}>
+                        <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0} gap={4} wrap="nowrap" style={{ flexDirection: out ? 'row-reverse' : 'row' }}>
                           <Box maw="65%" px={9} pt={6} pb={8} style={{
                             position: 'relative', background: out ? WA.out : WA.in, borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)',
                             ...(first ? (out ? { borderStartEndRadius: 0 } : { borderStartStartRadius: 0 }) : {}),
@@ -350,6 +359,7 @@ export function Messages() {
                                 : { t: (m.sent_by && staffNames.get(m.sent_by)) || 'המשרד', c: '#1c7ed6', i: null };
                               return <Group gap={3} mb={2} wrap="nowrap" style={{ color: s.c }}>{s.i}<Text size="xs" fw={700} c={s.c}>{s.t}</Text></Group>;
                             })()}
+                            {m.reply_to && <Quote q={byWa.get(m.reply_to)} name={(q) => quoteName(q)} out={out} onClick={(q) => jumpTo(q.id)} />}
                             {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
                             {m.media_path && !/\.zip$/i.test(m.file_name ?? m.media_path) && ['image', 'document', 'video'].includes(m.kind ?? '') && (
                               <Group gap={4} mt={4}>{saved.data?.has(m.id)
@@ -360,16 +370,19 @@ export function Messages() {
                             {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
-                              {out && <Ticks status={m.status} error={m.error} />}
+                              {out && !(m.origin === 'history' && !m.status) && <Ticks status={m.status} error={m.error} />}
                             </Group>
                           </Box>
+                          {connected && windowOpen && m.wa_message_id && !m.wa_message_id.startsWith('import:') && (
+                            <Tooltip label="תשובה עם ציטוט"><ActionIcon className="wa-reply" size="sm" radius="xl" variant="white" color="gray" onClick={() => setQuoting(m)} aria-label="תשובה עם ציטוט">
+                              <IconArrowBackUp size={14} /></ActionIcon></Tooltip>)}
                         </Group>
                       </Box>
                     );
                   })}
                 </Stack>
               </ScrollArea>
-              <Composer conversation={current} connected={connected} windowOpen={windowOpen} onSent={() => { qc.invalidateQueries({ queryKey: ['messages', current.id] }); qc.invalidateQueries({ queryKey: ['messages-recent'] }); qc.invalidateQueries({ queryKey: ['conversations'] }); }} />
+              <Composer conversation={current} connected={connected} windowOpen={windowOpen} quoting={quoting} quoteName={quoteName} onUnquote={() => setQuoting(null)} onSent={() => { setQuoting(null); qc.invalidateQueries({ queryKey: ['messages', current.id] }); qc.invalidateQueries({ queryKey: ['messages-recent'] }); qc.invalidateQueries({ queryKey: ['conversations'] }); }} />
             </>
           )}
         </Box>
@@ -403,6 +416,19 @@ function kindLabel(m: Message): string {
 }
 
 // The ticks of one of ours: sent ✓, delivered ✓✓, read ✓✓ in blue, failed ! with why.
+// The message a message quotes, as WhatsApp shows it: a colored bar, who wrote it, a line of it.
+function Quote({ q, name, out, onClick }: { q?: Message; name: (m: Message) => string; out: boolean; onClick?: (m: Message) => void }) {
+  const color = q?.direction === 'out' ? '#06cf9c' : '#a5b337';
+  return (
+    <Box mb={4} px={8} py={4} onClick={() => q && onClick?.(q)} style={{ background: out ? '#d1f4cc' : '#f5f6f6', borderRadius: 6, borderInlineStart: `4px solid ${color}`, cursor: q && onClick ? 'pointer' : undefined }}>
+      {q ? <>
+        <Text size="xs" fw={700} c={color}>{name(q)}</Text>
+        <Text size="xs" c={WA.muted} lineClamp={2} dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{q.body ? `${q.kind && q.kind !== 'text' ? `${kindLabel(q).split(' ')[0]} ` : ''}${q.body}` : kindLabel(q)}</Text>
+      </> : <Text size="xs" c={WA.muted}>הודעה מצוטטת (לא נמצאת במערכת)</Text>}
+    </Box>
+  );
+}
+
 function Ticks({ status, error }: { status?: string | null; error?: string | null }) {
   if (status === 'failed') return <Tooltip label={error ?? 'לא נמסרה'}><IconAlertCircle size={14} color="#d9480f" /></Tooltip>;
   if (status === 'read') return <IconChecks size={15} color={WA.tick} />;
@@ -423,7 +449,7 @@ function Media({ path, kind, name }: { path: string; kind?: string; name?: strin
 interface Template { name: string; language: string; category: string; body: string }
 
 // The typing bar: a text within the 24 hours; after them, an approved template.
-function Composer({ conversation, connected, windowOpen, onSent }: { conversation: Conversation; connected: boolean; windowOpen: boolean; onSent: () => void }) {
+function Composer({ conversation, connected, windowOpen, quoting, quoteName, onUnquote, onSent }: { conversation: Conversation; connected: boolean; windowOpen: boolean; quoting: Message | null; quoteName: (m: Message) => string; onUnquote: () => void; onSent: () => void }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -446,13 +472,15 @@ function Composer({ conversation, connected, windowOpen, onSent }: { conversatio
         {!connected ? 'השליחה תופעל כשהוואטסאפ יחובר למערכת (הגדרות ← וואטסאפ)'
           : windowOpen ? 'הלקוח כתב ב-24 השעות האחרונות: אפשר לענות חופשי' : 'עברו 24 שעות מההודעה האחרונה של הלקוח: אפשר לשלוח רק תבנית מאושרת'}
       </Text>
+      {quoting && <Group gap={4} wrap="nowrap" mb={6} px={4}><Box style={{ flex: 1, minWidth: 0 }}><Quote q={quoting} name={quoteName} out={false} /></Box>
+        <ActionIcon variant="subtle" color="gray" onClick={onUnquote} aria-label="ביטול הציטוט"><IconX size={16} /></ActionIcon></Group>}
       <Group gap="xs" wrap="nowrap" align="flex-end">
         <Tooltip label="שליחת תבנית מאושרת"><ActionIcon variant="subtle" color="gray" size="lg" disabled={!connected} onClick={() => setPicking(true)} aria-label="תבנית"><IconTemplate size={24} /></ActionIcon></Tooltip>
         <Textarea style={{ flex: 1 }} radius="md" autosize minRows={1} maxRows={6} disabled={!connected || !windowOpen || busy}
           placeholder={!connected ? 'השליחה תופעל כשהוואטסאפ יחובר למערכת' : windowOpen ? 'הקלדת הודעה (Enter שולח, Shift+Enter שורה חדשה)' : 'אפשר לשלוח רק תבנית'}
           value={text} onChange={(e) => setText(e.currentTarget.value)} styles={{ input: { background: '#fff', border: 'none' } }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && text.trim()) { e.preventDefault(); send({ text }); } }} />
-        <ActionIcon size={42} radius="xl" color={WA.green} variant="filled" disabled={!connected || !windowOpen || !text.trim()} loading={busy} onClick={() => send({ text })} aria-label="שליחה">
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && text.trim()) { e.preventDefault(); send({ text, reply_to: quoting?.wa_message_id }); } }} />
+        <ActionIcon size={42} radius="xl" color={WA.green} variant="filled" disabled={!connected || !windowOpen || !text.trim()} loading={busy} onClick={() => send({ text, reply_to: quoting?.wa_message_id })} aria-label="שליחה">
           <IconSend size={20} style={{ transform: 'scaleX(-1)' }} />
         </ActionIcon>
       </Group>
