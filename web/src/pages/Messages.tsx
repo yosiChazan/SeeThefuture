@@ -9,6 +9,7 @@ import { waLink } from '../components/Phone';
 import { useClients } from '../lib/queries';
 import { useAiGuides } from '../components/AiGuidesSettings';
 import { ChatSummary } from '../components/ChatSummary';
+import { WaImport } from '../components/WaImport';
 import { must, supabase } from '../lib/supabase';
 
 // The shared WhatsApp inbox (SPEC §6.5, decisions 135, 139), laid out like WhatsApp: chats on
@@ -134,6 +135,7 @@ export function Messages() {
   // The AI in a chat (decision 183): hand over with a guide, or take back.
   const guides = useAiGuides();
   const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
+  const [importing, setImporting] = useState(false);
   const [aiPick, setAiPick] = useState(false);
   const [aiGuide, setAiGuide] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
@@ -164,7 +166,10 @@ export function Messages() {
     <Stack gap="sm">
       <Group justify="space-between">
         <Title order={2}>הודעות</Title>
-        <Switch label="תצוגה לדוגמה" checked={demo} onChange={(e) => { setDemo(e.currentTarget.checked); setParams({}); }} />
+        <Group gap="sm">
+          {connected && <Button size="xs" variant="light" onClick={() => setImporting(true)}>ייבוא שיחה (זמני)</Button>}
+          <Switch label="תצוגה לדוגמה" checked={demo} onChange={(e) => { setDemo(e.currentTarget.checked); setParams({}); }} />
+        </Group>
       </Group>
       {!demo && !conversations.length && !connected && (
         <Alert color="green" icon={<IconBrandWhatsapp size={18} />} title="הוואטסאפ עוד לא מחובר למערכת">
@@ -322,6 +327,7 @@ export function Messages() {
           </Stack>
         </Modal>
       )}
+      {importing && <WaImport onClose={() => setImporting(false)} />}
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
     </Stack>
