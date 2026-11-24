@@ -767,16 +767,18 @@ function OfficeByCity() {
 // chosen; all before it is one opening balance. The final balance does not depend on that date.
 const FB_CURRENCIES = ['USD', 'EUR', 'ILS'] as const;
 interface Hryvnia { opening: number; inflow: number; paid: number; fees: number; other: number }
-const FEES = new Set(['commission', 'office_fee', 'mgmt_fee', 'brokerage']);
+// What went to the company: its commissions and the office fee. All other charges (the manager's
+// fee, repairs, bills, brokerage) are one column.
+const TO_COMPANY = new Set(['commission', 'office_fee']);
 // Where a hryvnia entry of a client goes in the breakdown.
 function hryvniaPart(category: string, amount: number): keyof Hryvnia {
   if (amount >= 0) return 'inflow';
   if (category === 'fx' || category === 'transfer') return 'paid';
-  return FEES.has(category) ? 'fees' : 'other';
+  return TO_COMPANY.has(category) ? 'fees' : 'other';
 }
 const PARTS = [
   { key: 'opening', label: 'יתרת פתיחה' }, { key: 'inflow', label: 'נכנס' }, { key: 'paid', label: 'שולם (הומר)' },
-  { key: 'fees', label: 'עמלות ודמי ניהול' }, { key: 'other', label: 'הוצאות' },
+  { key: 'other', label: 'דמי ניהול והוצאות' }, { key: 'fees', label: 'עמלות לחברה' },
 ] as const;
 const RATES_KEY = 'final-balance-rates';
 function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) {
@@ -856,7 +858,7 @@ function FinalBalance({ box, names }: { box: Box; names: Map<string, string> }) 
         <Button size="xs" variant="light" onClick={() => setOpen((o) => !o)}>{open ? 'סגירה' : 'פתיחה'}</Button>
       </Group>
       {open && <Stack gap="sm" mt="sm">
-        <Text size="xs" c="dimmed">פירוט הגריבנה: יתרת פתיחה (הכול לפני "פירוט מתאריך", נטו), נכנס (שכירות וכדומה), שולם (הומר למטבע אחר או נמסר ללקוח), עמלות ודמי ניהול, והוצאות (תיקונים, חשבונות וכו'). פתיחה + נכנס − שולם − עמלות − הוצאות = הגריבנה ביתרה הסופית. מקלידים כמה גריבנה שווה כל מטבע, והיתרה של כל לקוח בכל המטבעות נסכמת לסכום אחד, במטבע שבוחרים. רק חישוב: שום דבר לא נרשם.</Text>
+        <Text size="xs" c="dimmed">פירוט הגריבנה: יתרת פתיחה (הכול לפני "פירוט מתאריך", נטו), נכנס (שכירות וכדומה), שולם (הומר למטבע אחר או נמסר ללקוח), דמי ניהול והוצאות (דמי הניהול של המנהל, תיקונים, חשבונות, תיווך), ועמלות לחברה (עמלות ודמי ניהול משרד). פתיחה + נכנס − שולם − דמי ניהול והוצאות − עמלות לחברה = הגריבנה ביתרה הסופית. מקלידים כמה גריבנה שווה כל מטבע, והיתרה של כל לקוח בכל המטבעות נסכמת לסכום אחד, במטבע שבוחרים. רק חישוב: שום דבר לא נרשם.</Text>
         <Group gap="xs" align="flex-end">
           {FB_CURRENCIES.map((c) => (
             <NumberInput key={c} size="xs" label={`1 ${c} = ₴`} min={0} decimalScale={4} w={120} value={rates[c]} placeholder={saved[c] ? String(saved[c]) : undefined}
