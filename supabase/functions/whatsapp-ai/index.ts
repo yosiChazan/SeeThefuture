@@ -96,6 +96,11 @@ async function answer(conversationId: string): Promise<Json> {
   const { data: c } = await admin.from('conversations').select('*').eq('id', conversationId).maybeSingle();
   if (!c?.ai_guide_id) return { skipped: 'not with the AI' };
   if (c.ai_until && new Date(c.ai_until) < new Date()) { await handBack(c.id, 'עבר הזמן שהוקצב ל-AI'); return { skipped: 'expired' }; }
+  // "Alliance special" (decision 197): no automatic message without an admin's approval.
+  if (!c.ai_special_ok && (await admin.rpc('wa_special', { p_conversation: c.id })).data === true) {
+    await handBack(c.id, 'אליאנס מיוחד: ה-AI לא עונה בלי אישור של מנהל המערכת');
+    return { skipped: 'special alliance' };
+  }
   const { data: guide } = await admin.from('ai_guides').select('title, content, active').eq('id', c.ai_guide_id).maybeSingle();
   if (!guide?.active) { await handBack(c.id, 'המדריך לא פעיל'); return { skipped: 'guide off' }; }
 
@@ -230,13 +235,20 @@ Deno.serve(async (req) => {
   if (b.action === 'start') {
     const { data: g } = await admin.from('ai_guides').select('id, active').eq('id', String(b.guide_id ?? '')).maybeSingle();
     if (!g?.active) return reply(400, { error: 'המדריך לא קיים או לא אושר לשימוש' });
+    // "Alliance special" (decision 197): only an admin, and only with an explicit approval.
+    const special = (await admin.rpc('wa_special', { p_conversation: id })).data === true;
+    if (special) {
+      const isAdmin = (await caller.rpc('is_admin')).data === true;
+      if (!isAdmin) return reply(403, { error: 'אליאנס מיוחד: רק מנהל המערכת יכול להעביר את השיחה ל-AI' });
+      if (b.special_approved !== true) return reply(409, { error: 'אליאנס מיוחד: נדרש אישור מפורש' });
+    }
     const now = new Date();
     const { error } = await admin.from('conversations').update({
-      ai_guide_id: g.id, ai_started_at: now.toISOString(), ai_started_by: me.user.id,
+      ai_guide_id: g.id, ai_started_at: now.toISOString(), ai_started_by: me.user.id, ai_special_ok: special,
       ai_until: new Date(now.getTime() + HOURS * 3600_000).toISOString(), ai_handback_reason: null, ai_handback_at: null,
     }).eq('id', id);
     if (error) return reply(500, { error: error.message });
-    await admin.from('audit_log').insert({ user_id: me.user.id, table_name: 'conversations', row_id: id, action: 'ai_start', new_row: { guide_id: g.id } });
+    await admin.from('audit_log').insert({ user_id: me.user.id, table_name: 'conversations', row_id: id, action: 'ai_start', new_row: { guide_id: g.id, special_alliance: special } });
     try { return reply(200, { ok: true, ...(await answer(id)) }); } catch (e) {
       await handBack(id, `תקלה ב-AI: ${(e as Error).message}`.slice(0, 300));
       return reply(500, { error: (e as Error).message });
