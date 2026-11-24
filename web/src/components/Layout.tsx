@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Navigate, NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { useAccess } from '../lib/access';
 import { COUNTRY_HE } from '../lib/format';
+import { WhatsAppHeartbeat } from './WhatsAppHeartbeat';
 import { supabase } from '../lib/supabase';
 
 const NAV = [
@@ -18,7 +19,7 @@ const NAV = [
   { to: '/completeness', label: 'השלמת פרטים', icon: IconChecklist },
   { to: '/stats', label: 'סטטיסטיקות', icon: IconChartBar },
   { to: '/cash', label: 'קופות', icon: IconCash },
-  { to: '/tasks', label: 'משימות', icon: IconListCheck },
+  { to: '/tasks', label: 'משימות/שאלות', icon: IconListCheck },
   { to: '/messages', label: 'הודעות', icon: IconMessages },
 ];
 
@@ -90,6 +91,7 @@ export function Layout() {
         </AppShell.Section>
       </AppShell.Navbar>
       <AppShell.Main bg="gray.0">
+        <WhatsAppHeartbeat />
         <Outlet />
       </AppShell.Main>
     </AppShell>

@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useAccess } from '../lib/access';
 import { must, supabase } from '../lib/supabase';
+import { WaTemplates } from './WaTemplates';
 
 // Connecting the company's WhatsApp number (SPEC decision 180): Meta's signup window (Embedded
 // Signup, with "connect your WhatsApp Business app") opens from here; when it closes, the
@@ -118,6 +119,7 @@ export function WhatsAppSettings() {
           <Text size="sm">אנשי קשר התקבלו: {when(a!.contacts_sync_at)} · ההיסטוריה התקבלה: {when(a!.history_sync_at)}</Text>
           <Text size="sm" c="dimmed">הודעה אחרונה מ-Meta: {when(a!.last_webhook_at)}</Text>
           {a!.last_error && <Alert color="orange" mt="xs" title="שגיאה אחרונה">{a!.last_error}</Alert>}
+          <WaTemplates />
         </Stack>
       ) : (
         <Stack gap="xs">

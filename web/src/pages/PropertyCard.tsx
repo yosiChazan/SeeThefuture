@@ -1,6 +1,9 @@
-import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Breadcrumbs, Button, Group, Switch, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { notifications } from '@mantine/notifications';
+import { must, supabase } from '../lib/supabase';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
 import { OwnershipChange, PropertyEdit } from '../components/PropertyEdit';
@@ -15,6 +18,20 @@ import { COUNTRY_HE, date, isCurrentOwnership, propertyTitle } from '../lib/form
 import { usePropertyEntries, useProperty } from '../lib/queries';
 import { EditableLedger, PropertyEntries } from '../components/PropertyEntries';
 
+
+// "Alliance special" (SPEC decision 197): shown to everyone; marked or unmarked by the admin only.
+function SpecialAlliance({ id }: { id: string }) {
+  const access = useAccess();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['special-alliance', id], queryFn: async () => (must(await supabase.from('properties').select('special_alliance').eq('id', id).single()) as { special_alliance: boolean }).special_alliance });
+  async function toggle(on: boolean) {
+    const r = await supabase.from('properties').update({ special_alliance: on }).eq('id', id);
+    if (r.error) notifications.show({ color: 'red', message: r.error.message });
+    await qc.invalidateQueries({ queryKey: ['special-alliance'] });
+  }
+  if (access.isAdmin) return <Switch size="xs" color="red" label="אליאנס מיוחד" checked={!!q.data} onChange={(e) => toggle(e.currentTarget.checked)} />;
+  return q.data ? <Badge color="red" variant="filled">אליאנס מיוחד</Badge> : null;
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -47,6 +64,7 @@ export function PropertyCard() {
           <Group justify="space-between">
             <Title order={2}>{propertyTitle(p)}</Title>
             <Group gap="xs">
+              <SpecialAlliance id={p.id} />
               <CountryBadge code={p.country_code} /><StatusBadge status={p.status} size="md" />
               {access.canEdit(p.country_code) && <Button size="xs" variant="light" leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>עריכה</Button>}
               {access.isAdmin && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={() => setDeleting(true)}>מחיקת נכס</Button>}

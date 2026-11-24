@@ -1,12 +1,14 @@
-import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Checkbox, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileText, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useStaff } from '../components/ManualTopics';
 import { waLink } from '../components/Phone';
-import { useClients } from '../lib/queries';
+import { useClients, useContacts } from '../lib/queries';
+import { useAccess } from '../lib/access';
+import { WaSaveDoc, type WaFile } from '../components/WaSaveDoc';
 import { useAiGuides } from '../components/AiGuidesSettings';
 import { ChatSummary } from '../components/ChatSummary';
 import { must, supabase } from '../lib/supabase';
@@ -21,9 +23,10 @@ import { must, supabase } from '../lib/supabase';
 
 interface Conversation { id: string; client_party_id: string | null; wa_phone: string; contact_name?: string | null; assigned_to: string | null; status: 'open' | 'waiting' | 'closed'; last_message_at: string | null;
   ai_guide_id?: string | null; ai_until?: string | null; ai_handback_reason?: string | null; ai_handback_at?: string | null;
-  ai_summary?: string | null; ai_summary_at?: string | null; ai_waiting_on?: 'us' | 'client' | 'none' | null }
+  ai_summary?: string | null; ai_summary_at?: string | null; ai_waiting_on?: 'us' | 'client' | 'none' | null; staff_read_at?: string | null }
 interface Message { id: string; conversation_id: string; direction: 'in' | 'out'; body: string | null; media_path: string | null; sent_by: string | null; created_at: string;
-  kind?: string; origin?: 'api' | 'app' | 'history' | 'ai'; status?: string | null; error?: string | null; file_name?: string | null }
+  kind?: string; origin?: 'api' | 'app' | 'history' | 'ai'; status?: string | null; error?: string | null; file_name?: string | null;
+  wa_message_id?: string | null; reply_to?: string | null }
 
 const WA = {
   green: '#00a884', header: '#f0f2f5', panel: '#ffffff', chatBg: '#efeae2', out: '#d9fdd3', in: '#ffffff',
@@ -92,13 +95,19 @@ export function Messages() {
   const real = useConversations();
   const recent = useRecentMessages();
   const clients = useClients();
+  const contacts = useContacts();
   const staff = useStaff();
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [showClosed, setShowClosed] = useState(false);
   const [demo, setDemo] = useState(false);
   const demoData = useMemo(sample, []);
-  const names = useMemo(() => demo ? demoData.names : new Map((clients.data ?? []).map((c) => [c.id, c.display_name])), [clients.data, demo, demoData]);
+  const names = useMemo(() => demo ? demoData.names : new Map([...(contacts.data ?? []), ...(clients.data ?? [])].map((c) => [c.id, c.display_name])), [clients.data, contacts.data, demo, demoData]);
+  // A known chat says whether it is a client or a contact (decision 195).
+  const roleOf = useMemo(() => {
+    const c = new Set((clients.data ?? []).map((x) => x.id)), k = new Set((contacts.data ?? []).map((x) => x.id));
+    return (id: string | null) => (!id ? null : c.has(id) || demo ? { label: 'לקוח', color: 'teal' } : k.has(id) ? { label: 'איש קשר', color: 'grape' } : null);
+  }, [clients.data, contacts.data, demo]);
   const staffNames = useMemo(() => new Map((staff.data ?? []).map((s) => [s.user_id, s.display_name])), [staff.data]);
   const conversations = demo ? demoData.conversations : (real.data ?? []);
   const lastOf = useMemo(() => {
@@ -106,7 +115,31 @@ export function Messages() {
     for (const m of demo ? [...demoData.messages].reverse() : recent.data ?? []) if (!out.has(m.conversation_id)) out.set(m.conversation_id, m);
     return out;
   }, [recent.data, demo, demoData]);
+  // Client messages the office has not seen yet (decision 192): after the chat was last open on a screen.
+  const unreadOf = useMemo(() => {
+    const out = new Map<string, number>();
+    const readAt = new Map(conversations.map((c) => [c.id, c.staff_read_at ?? '']));
+    for (const m of demo ? demoData.messages : recent.data ?? []) {
+      if (m.direction !== 'in' || m.origin === 'history') continue;
+      if (new Date(m.created_at).getTime() > new Date(readAt.get(m.conversation_id) || 0).getTime()) out.set(m.conversation_id, (out.get(m.conversation_id) ?? 0) + 1);
+    }
+    return out;
+  }, [recent.data, conversations, demo, demoData]);
   const who = (c: Conversation) => (c.client_party_id ? names.get(c.client_party_id) : null) ?? c.contact_name ?? c.wa_phone;
+  // The AI summary is written again by itself only on the first visit to this page after an hour
+  // away (decision 189); otherwise only with its refresh button.
+  const [autoSummary] = useState(() => {
+    try {
+      const last = Number(localStorage.getItem('messages-last-visit') ?? 0);
+      return Date.now() - last > 3600_000;
+    } catch { return false; }
+  });
+  useEffect(() => {
+    const mark = () => { try { localStorage.setItem('messages-last-visit', String(Date.now())); } catch { /* not kept */ } };
+    mark();
+    const t = setInterval(mark, 60_000);
+    return () => { clearInterval(t); mark(); };
+  }, []);
   const account = useQuery({ queryKey: ['whatsapp-account'], queryFn: async () => (must(await supabase.from('whatsapp_account').select('phone_number_id, connected_at').eq('id', 1).maybeSingle()) as { phone_number_id: string | null; connected_at: string | null } | null) });
   const connected = !demo && !!account.data?.phone_number_id && !!account.data.connected_at;
   const list = conversations.filter((c) => (showClosed || c.status !== 'closed')
@@ -114,6 +147,33 @@ export function Messages() {
   const current = conversations.find((c) => c.id === params.get('c')) ?? null;
   const thread = useMessages(current?.id ?? null);
   const messages = demo ? demoData.messages.filter((m) => m.conversation_id === current?.id) : thread.data ?? [];
+  // Where the chat opens (decision 192): at its end, or at the first message not seen yet, under a line.
+  const [opened, setOpened] = useState<{ id: string; readAt: number } | null>(null);
+  if (current && opened?.id !== current.id) setOpened({ id: current.id, readAt: new Date(current.staff_read_at ?? 0).getTime() });
+  const firstUnread = opened ? messages.find((m) => m.direction === 'in' && m.origin !== 'history' && new Date(m.created_at).getTime() > opened.readAt) : undefined;
+  const unreadHere = firstUnread ? messages.filter((m) => m.direction === 'in' && m.origin !== 'history' && new Date(m.created_at).getTime() > opened!.readAt).length : 0;
+  const viewport = useRef<HTMLDivElement>(null);
+  const placed = useRef<string | null>(null);
+  const atEnd = useRef(true);
+  useLayoutEffect(() => {
+    const v = viewport.current;
+    if (!v || !current || !messages.length) return;
+    if (placed.current !== current.id) {
+      placed.current = current.id;
+      const line = firstUnread && v.querySelector<HTMLElement>('[data-unread-line]');
+      v.scrollTop = line ? Math.max(0, line.getBoundingClientRect().top - v.getBoundingClientRect().top + v.scrollTop - v.clientHeight / 3) : v.scrollHeight;
+    } else if (atEnd.current) v.scrollTop = v.scrollHeight;   // a new message while at the end: follow it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, messages.length]);
+  // The chat on the screen is read.
+  const lastInAt = [...messages].reverse().find((m) => m.direction === 'in')?.created_at;
+  useEffect(() => {
+    if (demo || !current || !lastInAt) return;
+    if (current.staff_read_at && new Date(current.staff_read_at) >= new Date(lastInAt)) return;
+    supabase.from('conversations').update({ staff_read_at: new Date().toISOString() }).eq('id', current.id)
+      .then(() => qc.invalidateQueries({ queryKey: ['conversations'] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, lastInAt, demo]);
   // The 24 hours start from the client's last message to the connected number (not from the history).
   const lastIn = [...messages].reverse().find((m) => m.direction === 'in' && m.origin !== 'history');
   const windowOpen = !!lastIn && Date.now() - new Date(lastIn.created_at).getTime() < WINDOW_MS;
@@ -121,6 +181,24 @@ export function Messages() {
   const guides = useAiGuides();
   const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
   const [aiPick, setAiPick] = useState(false);
+  // "Alliance special" (decision 197): clients of those apartments; no AI without the admin's approval.
+  const access = useAccess();
+  const specialQ = useQuery({ queryKey: ['special-alliance'], enabled: !demo, queryFn: async () => new Set((must(await supabase.rpc('special_alliance_parties')) as { party_id: string }[]).map((r) => r.party_id)) });
+  const isSpecial = (c: Conversation | null) => !!c?.client_party_id && !!specialQ.data?.has(c.client_party_id);
+  const [specialOk, setSpecialOk] = useState(false);
+  // Quoted replies (decision 196): the message quoted, and the one being answered with a quote.
+  const byWa = useMemo(() => new Map(messages.filter((m) => m.wa_message_id).map((m) => [m.wa_message_id!, m])), [messages]);
+  const [quoting, setQuoting] = useState<Message | null>(null);
+  useEffect(() => setQuoting(null), [current?.id]);
+  const jumpTo = (id: string) => { const el = viewport.current?.querySelector<HTMLElement>(`[data-msg="${id}"]`); if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.animate([{ background: '#fff3bf' }, { background: 'transparent' }], { duration: 1500 }); } };
+  const quoteName = (m: Message) => (m.direction === 'out' ? 'המשרד' : current ? who(current) : '');
+  // Files of this chat already kept in the system (decision 195).
+  const [saving, setSaving] = useState<WaFile | null>(null);
+  const mediaIds = messages.filter((m) => m.media_path).map((m) => m.id);
+  const saved = useQuery({
+    queryKey: ['wa-saved', current?.id, mediaIds.length], enabled: !demo && mediaIds.length > 0,
+    queryFn: async () => new Set((must(await supabase.from('documents').select('source').in('source', mediaIds.map((id) => `whatsapp:${id}`))) as { source: string }[]).map((d) => d.source.slice(9))),
+  });
   const [aiGuide, setAiGuide] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   async function aiCall(body: Record<string, unknown>) {
@@ -150,7 +228,9 @@ export function Messages() {
     <Stack gap="sm">
       <Group justify="space-between">
         <Title order={2}>הודעות</Title>
-        <Switch label="תצוגה לדוגמה" checked={demo} onChange={(e) => { setDemo(e.currentTarget.checked); setParams({}); }} />
+        <Group gap="sm">
+          <Switch label="תצוגה לדוגמה" checked={demo} onChange={(e) => { setDemo(e.currentTarget.checked); setParams({}); }} />
+        </Group>
       </Group>
       {!demo && !conversations.length && !connected && (
         <Alert color="green" icon={<IconBrandWhatsapp size={18} />} title="הוואטסאפ עוד לא מחובר למערכת">
@@ -183,15 +263,17 @@ export function Messages() {
                         <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
                           {c.ai_guide_id && <Tooltip label="ה-AI עונה בשיחה הזו"><IconRobot size={16} color="#7048e8" style={{ flexShrink: 0 }} /></Tooltip>}
                           <Text size="md" c={WA.text} lineClamp={1}>{who(c)}</Text>
+                          {roleOf(c.client_party_id) && <Badge size="xs" variant="light" color={roleOf(c.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(c.client_party_id)!.label}</Badge>}
+                          {isSpecial(c) && <Badge size="xs" variant="filled" color="red" style={{ flexShrink: 0 }}>אליאנס מיוחד</Badge>}
                         </Group>
-                        <Text size="xs" c={last?.direction === 'in' && c.status === 'open' ? WA.green : WA.muted} style={{ flexShrink: 0 }}>{listTime(c.last_message_at)}</Text>
+                        <Text size="xs" c={unreadOf.get(c.id) ? WA.green : WA.muted} style={{ flexShrink: 0 }}>{listTime(c.last_message_at)}</Text>
                       </Group>
                       <Group justify="space-between" wrap="nowrap" gap={4}>
                         <Group gap={3} wrap="nowrap" style={{ minWidth: 0 }}>
-                          {last?.direction === 'out' && <IconChecks size={16} color={WA.tick} style={{ flexShrink: 0 }} />}
+                          {last?.direction === 'out' && <Ticks status={last.status} error={last.error} />}
                           <Text size="sm" c={WA.muted} lineClamp={1}>{last?.body ?? (last ? kindLabel(last) : c.wa_phone)}</Text>
                         </Group>
-                        {last?.direction === 'in' && c.status === 'open' && <Badge size="sm" circle color={WA.green} style={{ flexShrink: 0 }}>1</Badge>}
+                        {!!unreadOf.get(c.id) && !active && <Badge size="sm" circle color={WA.green} style={{ flexShrink: 0 }}>{unreadOf.get(c.id)}</Badge>}
                       </Group>
                     </Box>
                   </Group>
@@ -216,7 +298,13 @@ export function Messages() {
                   <ActionIcon variant="subtle" color="gray" hiddenFrom="sm" onClick={() => setParams({})} aria-label="חזרה"><IconArrowRight size={20} /></ActionIcon>
                   <Avatar radius="xl" size={40} color="teal">{initials(who(current))}</Avatar>
                   <Box style={{ minWidth: 0 }}>
-                    <Text c={WA.text} lineClamp={1}>{who(current)}</Text>
+                    <Group gap={6} wrap="nowrap"><Text c={WA.text} lineClamp={1}>{who(current)}</Text>
+                      {roleOf(current.client_party_id) && <Badge size="xs" variant="light" color={roleOf(current.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(current.client_party_id)!.label}</Badge>}
+                      {/* The client's or contact's card, in a new tab (decision 195). */}
+                      {roleOf(current.client_party_id) && !demo && <Tooltip label={`פתיחת הכרטיס של ${roleOf(current.client_party_id)!.label === 'לקוח' ? 'הלקוח' : 'איש הקשר'} בדף חדש`}>
+                        <ActionIcon size="sm" variant="subtle" color="gray" component="a" target="_blank" rel="noopener"
+                          href={`/${roleOf(current.client_party_id)!.label === 'לקוח' ? 'clients' : 'contacts'}/${current.client_party_id}`} aria-label="פתיחת הכרטיס בדף חדש">
+                          <IconExternalLink size={16} /></ActionIcon></Tooltip>}</Group>
                     <Text size="xs" c={WA.muted} dir="ltr" ta="right">{current.wa_phone}{current.assigned_to ? ` · ${staffNames.get(current.assigned_to) ?? ''}` : ''}</Text>
                   </Box>
                 </Group>
@@ -241,7 +329,14 @@ export function Messages() {
                 <Select size="xs" w={190} variant="unstyled" placeholder="לא שויכה" clearable value={current.assigned_to}
                   data={(staff.data ?? []).map((s) => ({ value: s.user_id, label: s.display_name }))} onChange={(x) => update({ assigned_to: x })} />
               </Group>
-              {!demo && connected && <ChatSummary chat={current} />}
+              {isSpecial(current) && (
+                <Group px="md" py={8} gap="xs" wrap="nowrap" style={{ background: '#c92a2a' }}>
+                  <IconAlertCircle size={22} color="#fff" style={{ flexShrink: 0 }} />
+                  <Text fw={800} c="#fff" size="md">אליאנס מיוחד</Text>
+                  <Text size="sm" c="#fff">· בלי הודעות אוטומטיות ובלי AI ללקוח הזה, אלא באישור של מנהל המערכת.</Text>
+                </Group>
+              )}
+              {!demo && connected && <ChatSummary chat={current} auto={autoSummary} />}
               {current.ai_guide_id ? (
                 <Group px="md" py={6} gap="xs" wrap="nowrap" justify="space-between" style={{ background: '#f3f0ff', borderBottom: '1px solid #d0bfff' }}>
                   <Group gap={6} wrap="nowrap"><IconRobot size={18} color="#7048e8" />
@@ -255,37 +350,53 @@ export function Messages() {
                   <Button size="compact-xs" color="orange" variant="subtle" onClick={() => update({ ai_handback_reason: null })}>הבנתי</Button>
                 </Group>
               ) : null}
-              <ScrollArea style={{ flex: 1, backgroundColor: WA.chatBg, backgroundImage: DOODLE }}>
+              {/* The quote button shows on hovering a message; Emoji: Noto Color Emoji for everyone (main.tsx, decision 196). */}
+              <style>{`.wa-row .wa-reply{opacity:0;transition:opacity .15s}.wa-row:hover .wa-reply{opacity:1}@media (hover:none){.wa-row .wa-reply{opacity:.7}}`}</style>
+              <ScrollArea className="wa-chat" viewportRef={viewport} onScrollPositionChange={() => { const v = viewport.current; if (v) atEnd.current = v.scrollHeight - v.scrollTop - v.clientHeight < 80; }}
+                style={{ flex: 1, backgroundColor: WA.chatBg, backgroundImage: DOODLE }}>
                 <Stack gap={2} px={{ base: 'sm', sm: 60 }} py="md">
                   {messages.map((m, i) => {
                     const newDay = i === 0 || new Date(messages[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
                     const first = i === 0 || messages[i - 1].direction !== m.direction || newDay;
                     const out = m.direction === 'out';
                     return (
-                      <Box key={m.id}>
+                      <Box key={m.id} data-msg={m.id} className="wa-row">
+                        {m === firstUnread && <Group justify="center" my={8} data-unread-line><Text size="xs" c={WA.muted} px={12} py={4} style={{ background: '#ffffffe6', borderRadius: 8 }}>{unreadHere === 1 ? 'הודעה אחת שלא נקראה' : `${unreadHere} הודעות שלא נקראו`}</Text></Group>}
                         {newDay && <Group justify="center" my={8}><Text size="xs" c={WA.muted} px={10} py={4} style={{ background: '#ffffffe6', borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)' }}>{dayLabel(m.created_at)}</Text></Group>}
-                        <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0}>
+                        <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0} gap={4} wrap="nowrap">
                           <Box maw="65%" px={9} pt={6} pb={8} style={{
                             position: 'relative', background: out ? WA.out : WA.in, borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)',
                             ...(first ? (out ? { borderStartEndRadius: 0 } : { borderStartStartRadius: 0 }) : {}),
                           }}>
+                            {out && (() => {
+                              // Who in the office answered (decision 189): the staff member, the AI, or the company phone.
+                              const s = m.origin === 'ai' ? { t: 'AI', c: '#7048e8', i: <IconRobot size={12} /> }
+                                : m.origin === 'app' || m.origin === 'history' ? { t: 'מהטלפון של החברה', c: '#0b7a5f', i: <IconDeviceMobile size={12} /> }
+                                : { t: (m.sent_by && staffNames.get(m.sent_by)) || 'המשרד', c: '#1c7ed6', i: null };
+                              return <Group gap={3} mb={2} wrap="nowrap" style={{ color: s.c }}>{s.i}<Text size="xs" fw={700} c={s.c}>{s.t}</Text></Group>;
+                            })()}
+                            {m.reply_to && <Quote q={byWa.get(m.reply_to)} name={(q) => quoteName(q)} out={out} onClick={(q) => jumpTo(q.id)} />}
                             {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
+                            {m.media_path && !/\.zip$/i.test(m.file_name ?? m.media_path) && ['image', 'document', 'video'].includes(m.kind ?? '') && (
+                              <Group gap={4} mt={4}>{saved.data?.has(m.id)
+                                ? <Badge size="xs" variant="light" color="teal" leftSection={<IconCheck size={10} />} style={{ cursor: 'pointer' }} onClick={() => setSaving(m as WaFile)}>נשמר במערכת</Badge>
+                                : <Button size="compact-xs" variant="light" leftSection={<IconFileText size={12} />} onClick={() => setSaving(m as WaFile)}>שמירה במערכת</Button>}</Group>)}
                             {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
-                              {out && m.origin === 'ai' && <Badge size="xs" variant="light" color="violet" leftSection={<IconRobot size={11} />} style={{ textTransform: 'none' }}>AI</Badge>}
-                              {out && m.origin === 'app' && <Badge size="xs" variant="light" color="teal" leftSection={<IconDeviceMobile size={11} />} style={{ textTransform: 'none' }}>מהטלפון</Badge>}
-                              {out && m.sent_by && <Text size="10px" c={WA.muted}>{staffNames.get(m.sent_by) ?? ''} ·</Text>}
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
-                              {out && <Ticks status={m.status} error={m.error} />}
+                              {out && !(m.origin === 'history' && !m.status) && <Ticks status={m.status} error={m.error} />}
                             </Group>
                           </Box>
+                          {connected && windowOpen && m.wa_message_id && !m.wa_message_id.startsWith('import:') && (
+                            <Tooltip label="תשובה עם ציטוט"><ActionIcon className="wa-reply" style={{ order: out ? -1 : 1 }} size="sm" radius="xl" variant="white" color="gray" onClick={() => setQuoting(m)} aria-label="תשובה עם ציטוט">
+                              <IconArrowBackUp size={14} /></ActionIcon></Tooltip>)}
                         </Group>
                       </Box>
                     );
                   })}
                 </Stack>
               </ScrollArea>
-              <Composer conversation={current} connected={connected} windowOpen={windowOpen} onSent={() => { qc.invalidateQueries({ queryKey: ['messages', current.id] }); qc.invalidateQueries({ queryKey: ['messages-recent'] }); qc.invalidateQueries({ queryKey: ['conversations'] }); }} />
+              <Composer conversation={current} connected={connected} windowOpen={windowOpen} quoting={quoting} quoteName={quoteName} onUnquote={() => setQuoting(null)} onSent={() => { setQuoting(null); qc.invalidateQueries({ queryKey: ['messages', current.id] }); qc.invalidateQueries({ queryKey: ['messages-recent'] }); qc.invalidateQueries({ queryKey: ['conversations'] }); }} />
             </>
           )}
         </Box>
@@ -296,14 +407,19 @@ export function Messages() {
             <Text size="sm">ה-AI יענה ללקוח לפי המדריך שתבחר, כולל על צילומי מסך, עד שהנושא ייגמר, עד שתעצור, או עד 24 שעות. הוא לא רואה את הכרטיס של הלקוח ולא מדבר על כסף. אם הלקוח שואל משהו אחר, ה-AI מחזיר אליך את השיחה. התשובות שלו מסומנות "AI".</Text>
             <Select label="מדריך" data={(guides.data ?? []).filter((g) => g.active).map((g) => ({ value: g.id, label: g.title }))} value={aiGuide} onChange={setAiGuide}
               nothingFoundMessage="אין מדריך פעיל" placeholder={(guides.data ?? []).some((g) => g.active) ? 'בחירת מדריך' : 'אין מדריך פעיל (הגדרות ← מדריכים ל-AI)'} />
+            {isSpecial(current) && <Alert color="red" title="אליאנס מיוחד">
+              {access.isAdmin ? <Checkbox label="אני מאשר שה-AI יענה ללקוח הזה" checked={specialOk} onChange={(e) => setSpecialOk(e.currentTarget.checked)} />
+                : <Text size="sm">רק מנהל המערכת יכול להעביר שיחה של לקוח זה ל-AI.</Text>}
+            </Alert>}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setAiPick(false)}>ביטול</Button>
-              <Button color="violet" leftSection={<IconRobot size={16} />} loading={aiBusy} disabled={!aiGuide}
-                onClick={async () => { await aiCall({ action: 'start', conversation_id: current.id, guide_id: aiGuide }); setAiPick(false); }}>העברה ל-AI</Button>
+              <Button color="violet" leftSection={<IconRobot size={16} />} loading={aiBusy} disabled={!aiGuide || (isSpecial(current) && (!access.isAdmin || !specialOk))}
+                onClick={async () => { await aiCall({ action: 'start', conversation_id: current.id, guide_id: aiGuide, special_approved: isSpecial(current) && specialOk }); setAiPick(false); setSpecialOk(false); }}>העברה ל-AI</Button>
             </Group>
           </Stack>
         </Modal>
       )}
+      {saving && current && <WaSaveDoc file={saving} partyId={roleOf(current.client_party_id)?.label === 'לקוח' ? current.client_party_id : null} onClose={() => setSaving(null)} />}
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
     </Stack>
@@ -317,6 +433,19 @@ function kindLabel(m: Message): string {
 }
 
 // The ticks of one of ours: sent ✓, delivered ✓✓, read ✓✓ in blue, failed ! with why.
+// The message a message quotes, as WhatsApp shows it: a colored bar, who wrote it, a line of it.
+function Quote({ q, name, out, onClick }: { q?: Message; name: (m: Message) => string; out: boolean; onClick?: (m: Message) => void }) {
+  const color = q?.direction === 'out' ? '#06cf9c' : '#a5b337';
+  return (
+    <Box mb={4} px={8} py={4} onClick={() => q && onClick?.(q)} style={{ background: out ? '#d1f4cc' : '#f5f6f6', borderRadius: 6, borderInlineStart: `4px solid ${color}`, cursor: q && onClick ? 'pointer' : undefined }}>
+      {q ? <>
+        <Text size="xs" fw={700} c={color}>{name(q)}</Text>
+        <Text size="xs" c={WA.muted} lineClamp={2} dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{q.body ? `${q.kind && q.kind !== 'text' ? `${kindLabel(q).split(' ')[0]} ` : ''}${q.body}` : kindLabel(q)}</Text>
+      </> : <Text size="xs" c={WA.muted}>הודעה מצוטטת (לא נמצאת במערכת)</Text>}
+    </Box>
+  );
+}
+
 function Ticks({ status, error }: { status?: string | null; error?: string | null }) {
   if (status === 'failed') return <Tooltip label={error ?? 'לא נמסרה'}><IconAlertCircle size={14} color="#d9480f" /></Tooltip>;
   if (status === 'read') return <IconChecks size={15} color={WA.tick} />;
@@ -337,7 +466,7 @@ function Media({ path, kind, name }: { path: string; kind?: string; name?: strin
 interface Template { name: string; language: string; category: string; body: string }
 
 // The typing bar: a text within the 24 hours; after them, an approved template.
-function Composer({ conversation, connected, windowOpen, onSent }: { conversation: Conversation; connected: boolean; windowOpen: boolean; onSent: () => void }) {
+function Composer({ conversation, connected, windowOpen, quoting, quoteName, onUnquote, onSent }: { conversation: Conversation; connected: boolean; windowOpen: boolean; quoting: Message | null; quoteName: (m: Message) => string; onUnquote: () => void; onSent: () => void }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -360,13 +489,15 @@ function Composer({ conversation, connected, windowOpen, onSent }: { conversatio
         {!connected ? 'השליחה תופעל כשהוואטסאפ יחובר למערכת (הגדרות ← וואטסאפ)'
           : windowOpen ? 'הלקוח כתב ב-24 השעות האחרונות: אפשר לענות חופשי' : 'עברו 24 שעות מההודעה האחרונה של הלקוח: אפשר לשלוח רק תבנית מאושרת'}
       </Text>
+      {quoting && <Group gap={4} wrap="nowrap" mb={6} px={4}><Box style={{ flex: 1, minWidth: 0 }}><Quote q={quoting} name={quoteName} out={false} /></Box>
+        <ActionIcon variant="subtle" color="gray" onClick={onUnquote} aria-label="ביטול הציטוט"><IconX size={16} /></ActionIcon></Group>}
       <Group gap="xs" wrap="nowrap" align="flex-end">
         <Tooltip label="שליחת תבנית מאושרת"><ActionIcon variant="subtle" color="gray" size="lg" disabled={!connected} onClick={() => setPicking(true)} aria-label="תבנית"><IconTemplate size={24} /></ActionIcon></Tooltip>
         <Textarea style={{ flex: 1 }} radius="md" autosize minRows={1} maxRows={6} disabled={!connected || !windowOpen || busy}
           placeholder={!connected ? 'השליחה תופעל כשהוואטסאפ יחובר למערכת' : windowOpen ? 'הקלדת הודעה (Enter שולח, Shift+Enter שורה חדשה)' : 'אפשר לשלוח רק תבנית'}
           value={text} onChange={(e) => setText(e.currentTarget.value)} styles={{ input: { background: '#fff', border: 'none' } }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && text.trim()) { e.preventDefault(); send({ text }); } }} />
-        <ActionIcon size={42} radius="xl" color={WA.green} variant="filled" disabled={!connected || !windowOpen || !text.trim()} loading={busy} onClick={() => send({ text })} aria-label="שליחה">
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && text.trim()) { e.preventDefault(); send({ text, reply_to: quoting?.wa_message_id }); } }} />
+        <ActionIcon size={42} radius="xl" color={WA.green} variant="filled" disabled={!connected || !windowOpen || !text.trim()} loading={busy} onClick={() => send({ text, reply_to: quoting?.wa_message_id })} aria-label="שליחה">
           <IconSend size={20} style={{ transform: 'scaleX(-1)' }} />
         </ActionIcon>
       </Group>
@@ -382,7 +513,11 @@ function TemplatePicker({ busy, onClose, onSend }: { busy: boolean; onClose: () 
     queryKey: ['wa-templates'], staleTime: 5 * 60_000,
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke('whatsapp-send', { body: { action: 'templates' } });
-      if (error) throw error;
+      if (error) {
+        let msg = error.message;
+        try { msg = (await (error as { context?: Response }).context?.json())?.error ?? msg; } catch { /* keep */ }
+        throw new Error(msg);
+      }
       return data.templates as Template[];
     },
   });

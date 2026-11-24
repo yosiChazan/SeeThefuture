@@ -7,7 +7,8 @@ import { supabase } from '../lib/supabase';
 
 // Where a WhatsApp chat stands, summarized by AI (SPEC decision 186): what the client wants, what
 // was done, what is open and whose turn it is. Written again when the chat is shown after new
-// messages, or on request (the refresh button).
+// messages, only when the page asks for it (auto: the inbox after an hour away), or on request
+// (the refresh button). The client's card never writes it by itself.
 
 export interface SummaryChat {
   id: string; last_message_at: string | null;
@@ -16,7 +17,7 @@ export interface SummaryChat {
 
 const WAITING = { us: { label: 'ממתין לנו', color: 'orange' }, client: { label: 'ממתין ללקוח', color: 'blue' }, none: { label: 'אין משהו פתוח', color: 'gray' } } as const;
 
-export function ChatSummary({ chat, link = false }: { chat: SummaryChat; link?: boolean }) {
+export function ChatSummary({ chat, link = false, auto = false }: { chat: SummaryChat; link?: boolean; auto?: boolean }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,9 +39,9 @@ export function ChatSummary({ chat, link = false }: { chat: SummaryChat; link?: 
   // New messages since the last summary: summarize again, once per chat and change.
   useEffect(() => {
     const key = `${chat.id}:${chat.last_message_at}`;
-    if (stale && asked.current !== key) { asked.current = key; refresh(); }
+    if (auto && stale && asked.current !== key) { asked.current = key; refresh(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.id, chat.last_message_at, stale]);
+  }, [chat.id, chat.last_message_at, stale, auto]);
 
   if (!chat.last_message_at) return null;
   const w = chat.ai_waiting_on ? WAITING[chat.ai_waiting_on] : null;
@@ -57,9 +58,9 @@ export function ChatSummary({ chat, link = false }: { chat: SummaryChat; link?: 
           </Group>
           {busy && !chat.ai_summary ? <Group gap={6}><Loader size="xs" /><Text size="sm" c="dimmed">מסכם…</Text></Group>
             : error ? <Text size="sm" c="red">{error}</Text>
-            : <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{chat.ai_summary ?? 'עוד אין סיכום'}</Text>}
+            : <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{chat.ai_summary ?? 'עוד אין סיכום (↻ לסיכום)'}{chat.ai_summary && stale ? ' · יש הודעות חדשות מאז הסיכום' : ''}</Text>}
         </div>
-        <Tooltip label="סיכום מחדש"><ActionIcon size="sm" variant="subtle" color="violet" loading={busy} onClick={refresh} aria-label="סיכום מחדש"><IconRefresh size={14} /></ActionIcon></Tooltip>
+        <Tooltip label="לכתוב את סיכום ה-AI מחדש לפי ההודעות האחרונות"><ActionIcon size="sm" variant="subtle" color="violet" loading={busy} onClick={refresh} aria-label="סיכום מחדש"><IconRefresh size={14} /></ActionIcon></Tooltip>
       </Group>
     </Paper>
   );
