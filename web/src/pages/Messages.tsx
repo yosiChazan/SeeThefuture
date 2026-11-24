@@ -1,6 +1,6 @@
 import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconFileZip, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileZip, IconFileText, IconSearch, IconSend, IconTemplate } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -288,7 +288,12 @@ export function Messages() {
                   <Avatar radius="xl" size={40} color="teal">{initials(who(current))}</Avatar>
                   <Box style={{ minWidth: 0 }}>
                     <Group gap={6} wrap="nowrap"><Text c={WA.text} lineClamp={1}>{who(current)}</Text>
-                      {roleOf(current.client_party_id) && <Badge size="xs" variant="light" color={roleOf(current.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(current.client_party_id)!.label}</Badge>}</Group>
+                      {roleOf(current.client_party_id) && <Badge size="xs" variant="light" color={roleOf(current.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(current.client_party_id)!.label}</Badge>}
+                      {/* The client's or contact's card, in a new tab (decision 195). */}
+                      {roleOf(current.client_party_id) && !demo && <Tooltip label={`פתיחת הכרטיס של ${roleOf(current.client_party_id)!.label === 'לקוח' ? 'הלקוח' : 'איש הקשר'} בדף חדש`}>
+                        <ActionIcon size="sm" variant="subtle" color="gray" component="a" target="_blank" rel="noopener"
+                          href={`/${roleOf(current.client_party_id)!.label === 'לקוח' ? 'clients' : 'contacts'}/${current.client_party_id}`} aria-label="פתיחת הכרטיס בדף חדש">
+                          <IconExternalLink size={16} /></ActionIcon></Tooltip>}</Group>
                     <Text size="xs" c={WA.muted} dir="ltr" ta="right">{current.wa_phone}{current.assigned_to ? ` · ${staffNames.get(current.assigned_to) ?? ''}` : ''}</Text>
                   </Box>
                 </Group>
