@@ -21,17 +21,23 @@ export const CURRENCY_SIGN: Record<Currency, string> = { ILS: '₪', USD: '$', E
 export const CURRENCIES = Object.keys(CURRENCY_SIGN) as Currency[];
 
 export const ACCOUNT_KIND_HE: Record<string, string> = {
-  rent_pool: 'קופת שכירות', expense_pool: 'קופת הוצאות', manager_cash: 'מזומן אצל מנהל',
+  rent_pool: 'שכירות אצל המנהל (מירח)', expense_pool: 'הקופה הקטנה (הוצאות בניין)', manager_cash: 'קופה אצל מנהל',
   hotel_balance: 'יתרה במלון', client_bank: 'חשבון בנק של הלקוח', company: 'חשבון חברה', legacy_card: 'כרטיס ישן',
   deposit_held: 'פיקדון שוכר אצל המנהל',
 };
 
 export const CATEGORY_HE: Record<string, string> = {
-  rent: 'שכירות', mgmt_fee: 'דמי ניהול', utilities: 'חשבונות', building_fees: 'הוצאות בניין', legal_fees: 'שכ"ט עו"ד',
+  rent: 'שכירות', mgmt_fee: 'דמי ניהול מנהל', office_fee: 'דמי ניהול משרד', utilities: 'חשבונות', building_fees: 'הוצאות בניין', legal_fees: 'שכ"ט עו"ד',
   repair: 'תיקונים', brokerage: 'תיווך', fx: 'המרת מטבע', deposit: 'פיקדון', opening_balance: 'יתרת פתיחה', vat: 'מע"מ',
   transfer: 'העברה', other: 'אחר', tax_withheld: 'מס במקור', hotel_share: 'חלק המלון', loan: 'הלוואה',
   purchase_installment: 'תשלום רכישה', deal_fee: 'דמי עסקה', commission: 'עמלה',
 };
+
+// The category as a client reads it. The manager's fee and the office's are two categories
+// (decision 167, which replaced the Odessa-only "דמי ניהול STF" of decision 145).
+export function categoryLabel(category: string, _city?: string | null): string {
+  return CATEGORY_HE[category] ?? category;
+}
 
 // The client's own bank account shows what the reports say was paid into it, not
 // the balance at the bank (we do not see what the owner takes out).

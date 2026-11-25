@@ -1,7 +1,7 @@
 import { ActionIcon, Anchor, Badge, Button, Group, Modal, NumberInput, Paper, SegmentedControl, Select, Stack, Table, Text, TextInput, Textarea, Title, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { IconPlus, IconTrash } from '@tabler/icons-react';
+import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useState } from 'react';
@@ -116,6 +116,7 @@ export function ContactAssignments({ partyId }: { partyId: string }) {
   const key = ['assignments', partyId];
   const q = useQuery({ queryKey: key, queryFn: async () => must(await supabase.from('contact_assignments').select(ASSIGNMENT_COLS).eq('party_id', partyId)) as unknown as Assignment[] });
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Assignment | null>(null);
   async function remove(a: Assignment) {
     const { error } = await supabase.from('contact_assignments').delete().eq('id', a.id);
     if (error) notifications.show({ color: 'red', message: error.message });
@@ -136,25 +137,30 @@ export function ContactAssignments({ partyId }: { partyId: string }) {
                 <Table.Td w={80}><Badge size="sm" variant="light" color="gray">{SCOPE_HE[scopeOf(a)]}</Badge></Table.Td>
                 <Table.Td>{placeOf(a)}</Table.Td>
                 <Table.Td><Text size="sm" c="dimmed">{a.role ?? ''}</Text></Table.Td>
-                <Table.Td w={40}>{canEdit && <ActionIcon variant="subtle" color="red" aria-label="הסרה" onClick={() => remove(a)}><IconTrash size={16} /></ActionIcon>}</Table.Td>
+                <Table.Td w={70}>{canEdit && <Group gap={2} wrap="nowrap">
+                  <ActionIcon variant="subtle" aria-label="עריכה" onClick={() => setEditing(a)}><IconPencil size={16} /></ActionIcon>
+                  <ActionIcon variant="subtle" color="red" aria-label="הסרה" onClick={() => remove(a)}><IconTrash size={16} /></ActionIcon>
+                </Group>}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
         </Table>
       ) : <Text c="dimmed" size="sm">לא משויך לשום דבר</Text>}
       {adding && <AddAssignment partyId={partyId} onClose={() => setAdding(false)} />}
+      {editing && <AddAssignment partyId={partyId} current={editing} onClose={() => setEditing(null)} />}
     </Paper>
   );
 }
 
-function AddAssignment({ partyId, onClose }: { partyId: string; onClose: () => void }) {
+// Adding a responsibility, or changing one (what it is for, and the role): SPEC decision 134.
+function AddAssignment({ partyId, current, onClose }: { partyId: string; current?: Assignment; onClose: () => void }) {
   const qc = useQueryClient();
   const access = useAccess();
   const geo = useGeo();
   const properties = useProperties();
-  const [scope, setScope] = useState<Scope>('property');
-  const [target, setTarget] = useState<string | null>(null);
-  const [role, setRole] = useState('');
+  const [scope, setScope] = useState<Scope>(current ? scopeOf(current) : 'property');
+  const [target, setTarget] = useState<string | null>(current ? (current.property?.id ?? current.building?.id ?? current.city?.id ?? current.country_code) : null);
+  const [role, setRole] = useState(current?.role ?? '');
   const [busy, setBusy] = useState(false);
   const countries = (['UA', 'RO', 'GE', 'GR'] as Country[]).filter((c) => access.canRead(c));
   const cityName = new Map((geo.data?.cities ?? []).map((c) => [c.id, c.name_he]));
@@ -166,13 +172,15 @@ function AddAssignment({ partyId, onClose }: { partyId: string; onClose: () => v
     if (!target) return;
     setBusy(true);
     const col = { property: 'property_id', building: 'building_id', city: 'city_id', country: 'country_code' }[scope];
-    const { error } = await supabase.from('contact_assignments').insert({ party_id: partyId, [col]: target, role: role.trim() || null });
+    const row = { property_id: null, building_id: null, city_id: null, country_code: null, [col]: target, role: role.trim() || null };
+    const { error } = current ? await supabase.from('contact_assignments').update(row).eq('id', current.id)
+      : await supabase.from('contact_assignments').insert({ party_id: partyId, ...row });
     setBusy(false);
     if (error) { notifications.show({ color: 'red', message: error.message }); return; }
     await qc.invalidateQueries(); onClose();
   }
   return (
-    <Modal opened onClose={onClose} title="שיוך איש קשר">
+    <Modal opened onClose={onClose} title={current ? 'עריכת שיוך' : 'שיוך איש קשר'}>
       <Stack>
         <SegmentedControl value={scope} onChange={(v) => { setScope(v as Scope); setTarget(null); }}
           data={(Object.keys(SCOPE_HE) as Scope[]).map((s) => ({ value: s, label: SCOPE_HE[s] }))} />

@@ -51,6 +51,8 @@ export interface ClientRow {
   kind: 'person' | 'company';
   email: string | null;
   phone: string | null;
+  phone_label?: string | null;
+  extra_phones?: ExtraPhone[];
   tax_id: string | null;
   address: string | null;
   notes: string | null;
@@ -59,7 +61,9 @@ export interface ClientRow {
   ownerships: { valid_to: string | null; property: { id: string; country_code: Country } | null }[];
 }
 
-const CLIENT_COLS = `id, display_name, first_name, last_name, legal_name, kind, email, phone, tax_id, address, notes,
+export interface ExtraPhone { phone: string; label: string | null }   // decision 154
+
+const CLIENT_COLS = `id, display_name, first_name, last_name, legal_name, kind, email, phone, phone_label, extra_phones, tax_id, address, notes,
   identity:party_identity(id_number),
   referred_by:parties!referred_by_party_id(id, display_name),
   ownerships(valid_to, property:properties(id, country_code)), party_roles!inner(role)`;
@@ -113,7 +117,8 @@ export interface EntryRow {
   currency: string;
   memo: string | null;
   account_id: string | null;
-  transaction: { id: string; occurred_on: string; category: string; description: string | null; status: string };
+  property?: { id: string; unit_no: string; building: { name: string; project: { name: string } | null; city: { name_en: string } | null } | null } | null;   // labels by city (145), the apartment column (155)
+  transaction: { id: string; occurred_on: string; period?: string; category: string; description: string | null; status: string; import_batch_id?: string | null; created_by?: string | null; country_code?: string; source?: string | null };
 }
 
 // Every posted entry of the accounts, oldest first. The API returns at most 1,000
@@ -126,7 +131,7 @@ export function useAccountEntries(accountIds: string[]) {
       const out: EntryRow[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('entries')
-          .select('id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, category, description, status)')
+          .select('id, amount, currency, memo, account_id, property:properties(id, unit_no, building:buildings(name, project:projects(name), city:cities(name_en))), transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code)')
           .in('account_id', accountIds).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as EntryRow[];
         out.push(...page);
         if (page.length < 1000) break;
@@ -144,7 +149,7 @@ export function usePropertyEntries(propertyId: string) {
       const out: (EntryRow & { account: Account })[] = [];
       for (let from = 0; ; from += 1000) {
         const page = must(await supabase.from('entries')
-          .select(`id, amount, currency, memo, account_id, transaction:transactions!inner(id, occurred_on, category, description, status), account:accounts!inner(${ACCOUNT_COLS})`)
+          .select(`id, amount, currency, memo, account_id, property:properties(id, unit_no, building:buildings(name, project:projects(name), city:cities(name_en))), transaction:transactions!inner(id, occurred_on, period, category, description, status, import_batch_id, created_by, country_code), account:accounts!inner(${ACCOUNT_COLS})`)
           .eq('property_id', propertyId).eq('transaction.status', 'posted').order('id').range(from, from + 999)) as unknown as (EntryRow & { account: Account })[];
         out.push(...page);
         if (page.length < 1000) break;
@@ -225,7 +230,7 @@ export function usePurchasePayments(propertyId: string) {
 
 // A property's services and its charges history (SPEC decision 71).
 export interface ServiceRow { id: string; kind: string; provider: string | null; client_code: string | null; status: string | null; deadline: string | null; notes: string | null }
-export interface ChargeRow { id: string; period: string; kind: string; amount: number; currency: Currency; due_date: string | null; payer: string; status: string; notes: string | null }
+export interface ChargeRow { id: string; period: string; kind: string; amount: number; currency: Currency; due_date: string | null; payer: string; status: string; notes: string | null; document_id?: string | null }
 export function usePropertyServices(propertyId: string) {
   return useQuery({
     queryKey: ['services', propertyId],
@@ -238,7 +243,7 @@ export function usePropertyCharges(propertyId: string) {
     queryFn: async () => {
       const out: ChargeRow[] = [];
       for (let from = 0; ; from += 1000) {
-        const page = must(await supabase.from('charges').select('id, period, kind, amount, currency, due_date, payer, status, notes')
+        const page = must(await supabase.from('charges').select('id, period, kind, amount, currency, due_date, payer, status, notes, document_id')
           .eq('property_id', propertyId).order('period', { ascending: false }).order('kind').range(from, from + 999)) as ChargeRow[];
         out.push(...page);
         if (page.length < 1000) return out;
@@ -260,7 +265,7 @@ export function useClientPropertyActivity(partyIds: string | string[]) {
       if (!ids.length) return { charges: [] as (ChargeRow & { property_id: string })[], deals: [] as (DealRow & { property_id: string })[], payments: [] as PurchasePaymentRow[], owned };
       const charges: (ChargeRow & { property_id: string })[] = [];
       for (let from = 0; ; from += 1000) {
-        const page = must(await supabase.from('charges').select('id, property_id, period, kind, amount, currency, due_date, payer, status, notes')
+        const page = must(await supabase.from('charges').select('id, property_id, period, kind, amount, currency, due_date, payer, status, notes, document_id')
           .in('property_id', ids).order('period', { ascending: false }).order('kind').range(from, from + 999)) as (ChargeRow & { property_id: string })[];
         charges.push(...page);
         if (page.length < 1000) break;
@@ -280,14 +285,14 @@ export function useClientPropertyActivity(partyIds: string | string[]) {
 // Everyone who is not a client: tenants, suppliers, lawyers, managers, marketers and
 // parties set aside as contacts (SPEC decision 76).
 export interface ContactRow {
-  id: string; display_name: string; kind: 'person' | 'company'; phone: string | null; email: string | null; notes: string | null;
+  id: string; display_name: string; kind: 'person' | 'company'; phone: string | null; phone_label?: string | null; extra_phones?: ExtraPhone[]; email: string | null; notes: string | null;
   party_roles: { role: string }[];
 }
 export function useContacts() {
   return useQuery({
     queryKey: ['contacts'],
     queryFn: async () => {
-      const rows = must(await supabase.from('parties').select('id, display_name, kind, phone, email, notes, party_roles(role)').order('display_name')) as ContactRow[];
+      const rows = must(await supabase.from('parties').select('id, display_name, kind, phone, phone_label, extra_phones, email, notes, party_roles(role)').order('display_name')) as ContactRow[];
       return rows.filter((p) => !p.party_roles.some((r) => r.role === 'client'));
     },
   });

@@ -27,13 +27,15 @@ const SORT_VALUE: Record<SortKey, (p: Property) => string | [string, number] | n
   status: (p) => STATUS_HE[p.status],
   rent: (p) => { const l = currentLease(p); return l && l.rent_amount !== null ? [l.rent_currency ?? '', Number(l.rent_amount)] : null; },
 };
-function compare(key: SortKey, desc: boolean) {
-  return (a: Property, b: Property) => {
-    const x = SORT_VALUE[key](a), y = SORT_VALUE[key](b);
-    if (x === null || y === null) return x === y ? natural(a, b) : x === null ? 1 : -1;
-    const d = Array.isArray(x) && Array.isArray(y) ? he(x[0], y[0]) || x[1] - y[1] : he(String(x), String(y));
-    return (desc ? -d : d) || natural(a, b);
-  };
+function by(key: SortKey, desc: boolean, a: Property, b: Property) {
+  const x = SORT_VALUE[key](a), y = SORT_VALUE[key](b);
+  if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
+  const d = Array.isArray(x) && Array.isArray(y) ? he(x[0], y[0]) || x[1] - y[1] : he(String(x), String(y));
+  return desc ? -d : d;
+}
+// Rows equal by this sort keep the sort before it (decision 157), then the natural order.
+function compare(key: SortKey, desc: boolean, then: SortKey | null, thenDesc: boolean) {
+  return (a: Property, b: Property) => by(key, desc, a, b) || (then ? by(then, thenDesc, a, b) : 0) || natural(a, b);
 }
 
 export function Properties() {
@@ -44,6 +46,8 @@ export function Properties() {
   const search = params.get('q') ?? '';
   const sort = (SORT_KEYS.includes(params.get('sort') as SortKey) ? params.get('sort') : 'country') as SortKey;
   const desc = params.get('dir') === 'desc';
+  const then = (SORT_KEYS.includes(params.get('then') as SortKey) ? params.get('then') : null) as SortKey | null;
+  const thenDesc = params.get('thenDir') === 'desc';
   const q = useProperties();
   const access = useAccess();
   const [adding, setAdding] = useState(false);
@@ -65,15 +69,20 @@ export function Properties() {
       .filter((p) => !status || p.status === status)
       .filter((p) => !city || p.building.city.name_he === city)
       .filter((p) => !s || [p.building.name, p.building.address, p.unit_no, owners(p), p.building.project?.name].some((x) => x?.toLowerCase().includes(s)))
-      .sort(compare(sort, desc));
-  }, [q.data, country, status, city, search, sort, desc]);
-  const onSort = (k: SortKey) => update({ sort: k, dir: k === sort && !desc ? 'desc' : 'asc' });
+      .sort(compare(sort, desc, then, thenDesc));
+  }, [q.data, country, status, city, search, sort, desc, then, thenDesc]);
+  const onSort = (k: SortKey) => update(k === sort ? { sort: k, dir: desc ? 'asc' : 'desc' } : { sort: k, dir: 'asc', then: sort, thenDir: desc ? 'desc' : 'asc' });
 
   return (
     <Stack>
       <Group justify="space-between">
         <Title order={2}>נכסים</Title>
-        {access.countries.some((c) => access.canEdit(c)) && <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>נכס חדש</Button>}
+        {access.countries.some((c) => access.canEdit(c)) && (
+          <Group gap="xs">
+            <Button variant="default" component={Link} to="/documents-zip">ייבוא מסמכים מ-ZIP</Button>
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>נכס חדש</Button>
+          </Group>
+        )}
       </Group>
       {adding && <PropertyForm onClose={() => setAdding(false)} />}
       <Group>

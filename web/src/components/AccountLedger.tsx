@@ -1,29 +1,198 @@
-import { Group, Paper, SegmentedControl, Stack, Table, Text } from '@mantine/core';
+import { Affix, Alert, Button, Checkbox, Group, Modal, Paper, SegmentedControl, Select, Stack, Switch, Table, Text, TextInput } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAccess } from '../lib/access';
+import { must, supabase } from '../lib/supabase';
 import { useState } from 'react';
-import { ACCOUNT_KIND_HE, CATEGORY_HE, amountLabel, date, money } from '../lib/format';
+import { ACCOUNT_KIND_HE, categoryLabel, amountLabel, date, money, propertyTitle } from '../lib/format';
 import type { EntryRow } from '../lib/queries';
+import { nextSort, sortLedger, type LedgerKey, type LedgerSort } from '../lib/ledgerSort';
+import { toggleRows, totalsByCurrency } from '../lib/selection';
+import { SourceBadge, useTransactionSources, type TxnSource } from './SourceBadge';
 import type { Account, Currency } from '../lib/types';
 
 const FROM = '2026-01-01';
+
+// A column title that sorts the table on a click, up and down (decision 147).
+function SortTh({ k, sort, set, w, children }: { k: LedgerKey; sort: LedgerSort; set: (s: LedgerSort) => void; w?: number; children: React.ReactNode }) {
+  const on = sort.key === k;
+  return (
+    <Table.Th w={w} onClick={() => set(nextSort(sort, k))} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+      {children} <Text span size="xs" c={on ? undefined : 'dimmed'}>{on ? (sort.desc ? '▼' : '▲') : '↕'}</Text>
+    </Table.Th>
+  );
+}
+// Marking rows to add them up (decision 148): a click on a row (Shift: the whole range from the
+// last click), or its box; the header's box marks or clears every row shown. The total of what
+// is marked, per currency, floats at the bottom of the screen.
+export interface Marks { selected: Set<string>; toggle: (order: string[], id: string, shift: boolean) => void; setMany: (ids: string[], on: boolean) => void }
+function useMarks(): Marks & { clear: () => void } {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [last, setLast] = useState<string | null>(null);
+  return {
+    selected,
+    toggle: (order, id, shift) => { setSelected((s) => toggleRows(s, order, id, last, shift)); setLast(id); },
+    setMany: (ids, on) => setSelected((s) => { const n = new Set(s); for (const x of ids) { if (on) n.add(x); else n.delete(x); } return n; }),
+    clear: () => { setSelected(new Set()); setLast(null); },
+  };
+}
+const rowClick = (m: Marks, order: string[], id: string) => (ev: React.MouseEvent) => {
+  if ((ev.target as HTMLElement).closest('button, a, input')) return;
+  if (ev.shiftKey) window.getSelection()?.removeAllRanges();
+  m.toggle(order, id, ev.shiftKey);
+};
+const markStyle = (on: boolean) => ({ cursor: 'pointer', backgroundColor: on ? 'var(--mantine-color-blue-light)' : undefined });
+function MarkAll({ m, ids }: { m: Marks; ids: string[] }) {
+  const n = ids.filter((x) => m.selected.has(x)).length;
+  return <Table.Th w={32}><Checkbox size="xs" aria-label="סימון הכל" checked={n > 0 && n === ids.length} indeterminate={n > 0 && n < ids.length} onChange={() => m.setMany(ids, n < ids.length)} /></Table.Th>;
+}
+function MarkBox({ m, order, id }: { m: Marks; order: string[]; id: string }) {
+  return <Table.Td><Checkbox size="xs" aria-label="סימון" checked={m.selected.has(id)} onChange={() => undefined}
+    onClick={(ev) => { ev.stopPropagation(); m.toggle(order, id, ev.shiftKey); }} /></Table.Td>;
+}
+
+// Editing (an entry made by hand) and voiding (any posted transaction, by finance; decision 153).
+type Edit = { can: (e: EntryRow) => boolean; open: (transactionId: string) => void };
+function Actions({ e, edit, onVoid }: { e: EntryRow; edit?: Edit; onVoid: (e: EntryRow) => void }) {
+  const access = useAccess();
+  const canVoid = access.isAdmin || (!!e.transaction.country_code && access.canApprove(e.transaction.country_code as never));
+  return (
+    <Table.Td style={{ whiteSpace: 'nowrap' }}>
+      {edit?.can(e) && <Button size="compact-xs" variant="subtle" onClick={() => edit.open(e.transaction.id)}>עריכה</Button>}
+      {canVoid && <Button size="compact-xs" variant="subtle" color="red" onClick={() => onVoid(e)}>ביטול</Button>}
+    </Table.Td>
+  );
+}
+
+const WORD = 'מחיקה';
+function VoidTxn({ e, onClose }: { e: EntryRow; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState('');
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function go() {
+    setBusy(true); setError(null);
+    const { error: err } = await supabase.rpc('void_transaction', { p_txn: e.transaction.id, p_reason: reason });
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    notifications.show({ color: 'teal', message: 'התנועה בוטלה. היא נשארת בהיסטוריה כמבוטלת' });
+    await qc.invalidateQueries();
+    onClose();
+  }
+  return (
+    <Modal opened onClose={onClose} title="ביטול תנועה">
+      <Stack>
+        <Text size="sm">{date(e.transaction.occurred_on)} · {typeOf(e)} · {descOf(e)}</Text>
+        <Text size="sm">כל השורות של התנועה (בכל החשבונות ואצל כל הבעלים) יבוטלו, וגם השורה שלה בקופה, אם יש. התנועה נשארת בהיסטוריה כמבוטלת, עם מי ביטל, מתי ולמה.</Text>
+        <TextInput label="סיבה" required placeholder="למשל: נרשם פעמיים" value={reason} onChange={(x) => setReason(x.currentTarget.value)} />
+        <TextInput label={`לאישור, כתבו "${WORD}"`} value={typed} onChange={(x) => setTyped(x.currentTarget.value)} />
+        {error && <Alert color="red">{error}</Alert>}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>חזרה</Button>
+          <Button color="red" onClick={go} loading={busy} disabled={typed.trim() !== WORD || !reason.trim()}>ביטול התנועה</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+// Voided transactions of these accounts, struck through, with who, when and why.
+function Voided({ accountIds }: { accountIds: string[] }) {
+  const q = useQuery({
+    queryKey: ['voided', accountIds],
+    queryFn: async () => must(await supabase.from('entries').select('id, amount, currency, memo, property:properties(id, unit_no, building:buildings(name, project:projects(name), city:cities(name_en))), transaction:transactions!inner(id, occurred_on, category, description, status, voided_at, void_reason, voided_by)')
+      .in('account_id', accountIds).eq('transaction.status', 'void').order('id').limit(1000)) as unknown as
+      { id: string; amount: number; currency: string; memo: string | null; property: EntryRow['property']; transaction: { id: string; occurred_on: string; category: string; description: string | null; voided_at: string | null; void_reason: string | null } }[],
+  });
+  const rows = [...(q.data ?? [])].sort((a, b) => b.transaction.occurred_on.localeCompare(a.transaction.occurred_on));
+  return (
+    <Paper withBorder p="sm">
+      <Text fw={600} size="sm" mb="xs">תנועות שבוטלו ({rows.length})</Text>
+      {!rows.length ? <Text size="sm" c="dimmed">{q.isLoading ? 'טוען…' : 'אין'}</Text> : (
+        <Table.ScrollContainer minWidth={600}>
+          <Table fz="sm" verticalSpacing={4}>
+            <Table.Thead><Table.Tr><Table.Th>תאריך</Table.Th><Table.Th>דירה</Table.Th><Table.Th>תיאור</Table.Th><Table.Th>סכום</Table.Th><Table.Th>בוטלה</Table.Th><Table.Th>סיבה</Table.Th></Table.Tr></Table.Thead>
+            <Table.Tbody>{rows.map((e) => (
+              <Table.Tr key={e.id} c="dimmed">
+                <Table.Td td="line-through">{date(e.transaction.occurred_on)}</Table.Td>
+                <Table.Td td="line-through"><Text size="xs">{unitOf(e as unknown as EntryRow)}</Text></Table.Td>
+                <Table.Td td="line-through"><Text size="sm" lineClamp={1}>{e.memo ?? e.transaction.description ?? ''}</Text></Table.Td>
+                <Table.Td td="line-through" style={{ whiteSpace: 'nowrap' }}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
+                <Table.Td>{e.transaction.voided_at ? date(e.transaction.voided_at.slice(0, 10)) : '—'}</Table.Td>
+                <Table.Td>{e.transaction.void_reason ?? ''}</Table.Td>
+              </Table.Tr>
+            ))}</Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
+    </Paper>
+  );
+}
+
+const typeOf = (e: EntryRow) => categoryLabel(e.transaction.category, e.property?.building?.city?.name_en);
+// The apartment a row belongs to (decision 155), on a client's card.
+const unitOf = (e: EntryRow) => (e.property?.building ? propertyTitle({ unit_no: e.property.unit_no, building: e.property.building }) : '');
+const descOf = (e: EntryRow) => e.memo ?? e.transaction.description ?? '';
 
 // One card per account: entries with a running total. From 2026 by default, with
 // everything before 1.1.2026 summed into one opening line; or the whole history.
 // On a property card only that property's entries are given, so the total is the
 // property's share of the account, and the account's owner is named.
-export function AccountLedger({ accounts, entries, property = false }: { accounts: Account[]; entries: EntryRow[]; property?: boolean }) {
+// Shown by date by default (SPEC decision 122): one list, newest first, with the account and the
+// currency of each entry, and no running total (it would mix accounts and currencies); or one
+// card per account as above.
+// `edit`: an edit button on a row the user may edit (SPEC decision 119: a movement entered by
+// hand, by its author or an admin).
+export function AccountLedger({ accounts, entries, property = false, edit }: {
+  accounts: Account[]; entries: EntryRow[]; property?: boolean; edit?: { can: (e: EntryRow) => boolean; open: (transactionId: string) => void };
+}) {
   const [range, setRange] = useState<'2026' | 'all'>('2026');
+  const [view, setView] = useState<'date' | 'account'>('date');
+  const [sortA, setSortA] = useState<LedgerSort>({ key: 'date', desc: false });
+  const marks = useMarks();
+  const [voiding, setVoiding] = useState<EntryRow | null>(null);
+  const [showVoid, setShowVoid] = useState(false);
+  const marked = entries.filter((e) => marks.selected.has(e.id));
+  const sums = totalsByCurrency(marked.map((e) => ({ amount: Number(e.amount), currency: e.currency })));
   const shown = accounts.filter((a) => entries.some((e) => e.account_id === a.id));
+  // The source column shows only for the viewer who may see a source here (decision 138).
+  const sources = useTransactionSources(entries.map((e) => e.transaction.id));
+  const showSrc = (sources.data?.size ?? 0) > 0;
   return (
     <Stack>
-      <SegmentedControl value={range} onChange={(v) => setRange(v as '2026' | 'all')} w="fit-content"
-        data={[{ value: '2026', label: 'מתחילת 2026' }, { value: 'all', label: 'כל התנועות' }]} />
+      <Group gap="sm">
+        <SegmentedControl value={view} onChange={(v) => setView(v as 'date' | 'account')} w="fit-content"
+          data={[{ value: 'date', label: 'לפי תאריך' }, { value: 'account', label: 'לפי קופה' }]} />
+        <SegmentedControl value={range} onChange={(v) => setRange(v as '2026' | 'all')} w="fit-content"
+          data={[{ value: '2026', label: 'מתחילת 2026' }, { value: 'all', label: 'כל התנועות' }]} />
+        <Switch size="sm" label="הצגת מבוטלות" checked={showVoid} onChange={(x) => setShowVoid(x.currentTarget.checked)} />
+      </Group>
+      {voiding && <VoidTxn e={voiding} onClose={() => setVoiding(null)} />}
       {!shown.length && <Text c="dimmed" size="sm">עוד אין תנועות. הן ייכנסו עם קליטת הדוחות מהמנהלים המקומיים.</Text>}
-      {shown.map((a) => {
+      {view === 'date' && !!shown.length && <ByDate accounts={shown} entries={entries} from={range === '2026' ? FROM : null} property={property} edit={edit} sources={showSrc ? sources.data : undefined} marks={marks} onVoid={setVoiding} />}
+      {showVoid && <Voided accountIds={accounts.map((a) => a.id)} />}
+      {marked.length > 0 && (
+        <Affix position={{ bottom: 16, left: 16, right: 16 }}>
+          <Paper withBorder shadow="md" p="xs" radius="md" maw={640} mx="auto">
+            <Group justify="space-between" wrap="nowrap" gap="sm">
+              <Text size="sm">נבחרו <b>{marked.length}</b> שורות · סה"כ {sums.map((x, i) => <b key={x.currency}>{i ? ' · ' : ''}<span dir="ltr">{money(x.total, x.currency as Currency)}</span></b>)}</Text>
+              <Button size="compact-xs" variant="subtle" onClick={marks.clear}>ניקוי</Button>
+            </Group>
+          </Paper>
+        </Affix>
+      )}
+      {view === 'account' && shown.map((a) => {
         const mine = entries.filter((e) => e.account_id === a.id);
         const before = range === '2026' ? mine.filter((e) => e.transaction.occurred_on < FROM) : [];
         const rows = range === '2026' ? mine.filter((e) => e.transaction.occurred_on >= FROM) : mine;
         let running = before.reduce((s, e) => s + Number(e.amount), 0);
+        // The running total follows the date; another order keeps each row's total as it was then.
+        const totals = new Map(rows.map((e) => [e.id, (running += Number(e.amount))]));
+        running = before.reduce((s, e) => s + Number(e.amount), 0);
+        const sorted = sortLedger(rows, sortA, (e) => ({ date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), unit: unitOf(e), amount: Number(e.amount), source: sources.data?.get(e.transaction.id)?.source ?? '' }));
         const label = property ? 'מהנכס' : amountLabel(a.kind);
+        const order = sorted.map((x) => x.id);
         return (
           <Paper key={a.id} withBorder p="sm">
             <Group justify="space-between" mb="xs">
@@ -33,26 +202,31 @@ export function AccountLedger({ accounts, entries, property = false }: { account
             <Table.ScrollContainer minWidth={600}>
               <Table verticalSpacing={4} striped>
                 <Table.Thead>
-                  <Table.Tr><Table.Th w={100}>תאריך</Table.Th><Table.Th w={110}>סוג</Table.Th><Table.Th>תיאור</Table.Th><Table.Th w={120}>סכום</Table.Th><Table.Th w={130}>{label} מצטבר</Table.Th></Table.Tr>
+                  <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sortA} set={setSortA} w={100}>תאריך</SortTh><SortTh k="type" sort={sortA} set={setSortA} w={110}>סוג</SortTh>{!property && <SortTh k="unit" sort={sortA} set={setSortA} w={150}>דירה</SortTh>}<SortTh k="desc" sort={sortA} set={setSortA}>תיאור</SortTh>{showSrc && <SortTh k="source" sort={sortA} set={setSortA} w={70}>מקור</SortTh>}<SortTh k="amount" sort={sortA} set={setSortA} w={120}>סכום</SortTh><Table.Th w={130}>{label} מצטבר</Table.Th><Table.Th w={110} /></Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {range === '2026' && (
                     <Table.Tr fw={600}>
+                      <Table.Td />
                       <Table.Td>01.01.2026</Table.Td>
-                      <Table.Td colSpan={2}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
+                      <Table.Td colSpan={(showSrc ? 3 : 2) + (property ? 0 : 1)}>{property ? 'עד 1.1.2026' : a.kind === 'client_bank' ? 'הופקד עד 1.1.2026' : 'יתרת פתיחה ב-1.1.2026'} ({before.length} תנועות קודמות)</Table.Td>
                       <Table.Td />
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
+                      <Table.Td />
                     </Table.Tr>
                   )}
-                  {rows.map((e) => {
-                    running += Number(e.amount);
+                  {sorted.map((e) => {
                     return (
-                      <Table.Tr key={e.id}>
+                      <Table.Tr key={e.id} onClick={rowClick(marks, order, e.id)} style={markStyle(marks.selected.has(e.id))}>
+                        <MarkBox m={marks} order={order} id={e.id} />
                         <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
-                        <Table.Td>{CATEGORY_HE[e.transaction.category] ?? e.transaction.category}</Table.Td>
-                        <Table.Td><Text size="sm" lineClamp={2}>{e.memo ?? e.transaction.description}</Text></Table.Td>
+                        <Table.Td>{typeOf(e)}</Table.Td>
+                        {!property && <Table.Td><Text size="xs">{unitOf(e)}</Text></Table.Td>}
+                        <Table.Td><Text size="sm" lineClamp={2}>{descOf(e)}</Text></Table.Td>
+                        {showSrc && <Table.Td>{sources.data?.get(e.transaction.id) && <SourceBadge src={sources.data.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
                         <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
-                        <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(running, a.currency)}</Table.Td>
+                        <Table.Td style={{ whiteSpace: 'nowrap' }}>{money(totals.get(e.id) ?? 0, a.currency)}</Table.Td>
+                        <Actions e={e} edit={edit} onVoid={setVoiding} />
                       </Table.Tr>
                     );
                   })}
@@ -63,5 +237,65 @@ export function AccountLedger({ accounts, entries, property = false }: { account
         );
       })}
     </Stack>
+  );
+}
+
+const accountName = (a: Account, property: boolean) =>
+  `${ACCOUNT_KIND_HE[a.kind] ?? a.kind} · ${a.holder.display_name}${property ? ` · של ${a.beneficiary.display_name}` : ''}`;
+
+function ByDate({ accounts, entries, from, property, edit, sources, marks, onVoid }: {
+  accounts: Account[]; entries: EntryRow[]; from: string | null; property: boolean; edit?: { can: (e: EntryRow) => boolean; open: (transactionId: string) => void };
+  sources?: Map<string, TxnSource>; marks: Marks; onVoid: (e: EntryRow) => void;
+}) {
+  const showSrc = !!sources;
+  const [account, setAccount] = useState<string | null>(null);
+  const [currency, setCurrency] = useState<string | null>(null);
+  const [sort, setSort] = useState<LedgerSort>({ key: 'date', desc: true });
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const picked = entries
+    .filter((e) => byId.has(e.account_id ?? '') && (!from || e.transaction.occurred_on >= from))
+    .filter((e) => (!account || e.account_id === account) && (!currency || e.currency === currency));
+  const rows = sortLedger(picked, sort, (e) => ({
+    date: e.transaction.occurred_on, type: typeOf(e), desc: descOf(e), unit: unitOf(e), account: byId.get(e.account_id ?? '') ? accountName(byId.get(e.account_id ?? '')!, property) : '',
+    currency: e.currency, amount: Number(e.amount), source: sources?.get(e.transaction.id)?.source ?? '',
+  }));
+  const currencies = [...new Set(accounts.map((a) => a.currency))].sort();
+  const order = rows.map((e) => e.id);
+  return (
+    <Paper withBorder p="sm">
+      <Group gap="sm" mb="xs">
+        <Select size="xs" placeholder="כל הקופות" clearable value={account} onChange={setAccount} w={280}
+          data={accounts.map((a) => ({ value: a.id, label: `${accountName(a, property)} · ${a.currency}` }))} />
+        {currencies.length > 1 && <Select size="xs" placeholder="כל המטבעות" clearable value={currency} onChange={setCurrency} w={130} data={currencies} />}
+        <Text size="xs" c="dimmed">{rows.length} תנועות</Text>
+      </Group>
+      <Table.ScrollContainer minWidth={700}>
+        <Table verticalSpacing={4} striped>
+          <Table.Thead>
+            <Table.Tr><MarkAll m={marks} ids={order} /><SortTh k="date" sort={sort} set={setSort} w={100}>תאריך</SortTh><SortTh k="type" sort={sort} set={setSort} w={110}>סוג</SortTh>{!property && <SortTh k="unit" sort={sort} set={setSort} w={150}>דירה</SortTh>}<SortTh k="desc" sort={sort} set={setSort}>תיאור</SortTh><SortTh k="account" sort={sort} set={setSort} w={200}>קופה</SortTh>{showSrc && <SortTh k="source" sort={sort} set={setSort} w={70}>מקור</SortTh>}<SortTh k="currency" sort={sort} set={setSort} w={70}>מטבע</SortTh><SortTh k="amount" sort={sort} set={setSort} w={120}>סכום</SortTh><Table.Th w={110} /></Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {rows.map((e) => {
+              const a = byId.get(e.account_id ?? '')!;
+              return (
+                <Table.Tr key={e.id} onClick={rowClick(marks, order, e.id)} style={markStyle(marks.selected.has(e.id))}>
+                  <MarkBox m={marks} order={order} id={e.id} />
+                  <Table.Td>{date(e.transaction.occurred_on)}</Table.Td>
+                  <Table.Td>{typeOf(e)}</Table.Td>
+                  {!property && <Table.Td><Text size="xs">{unitOf(e)}</Text></Table.Td>}
+                  <Table.Td><Text size="sm" lineClamp={2}>{descOf(e)}</Text></Table.Td>
+                  <Table.Td><Text size="xs">{accountName(a, property)}</Text></Table.Td>
+                  {showSrc && <Table.Td>{sources?.get(e.transaction.id) && <SourceBadge src={sources.get(e.transaction.id)!} importBatchId={e.transaction.import_batch_id} country={e.transaction.country_code} />}</Table.Td>}
+                  <Table.Td>{e.currency}</Table.Td>
+                  <Table.Td style={{ whiteSpace: 'nowrap' }} c={Number(e.amount) < 0 ? 'red.7' : undefined}>{money(Number(e.amount), e.currency as Currency)}</Table.Td>
+                  <Actions e={e} edit={edit} onVoid={onVoid} />
+                </Table.Tr>
+              );
+            })}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
+      {!rows.length && <Text c="dimmed" size="sm">אין תנועות בטווח הזה.</Text>}
+    </Paper>
   );
 }

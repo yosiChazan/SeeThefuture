@@ -1,9 +1,13 @@
-import { Anchor, Badge, Breadcrumbs, Button, Group, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
-import { IconTrash } from '@tabler/icons-react';
+import { Anchor, Badge, Breadcrumbs, Button, Group, Switch, Paper, SimpleGrid, Stack, Table, Text, Title } from '@mantine/core';
+import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { notifications } from '@mantine/notifications';
+import { must, supabase } from '../lib/supabase';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
-import { EntityDocuments, type DocType } from '../components/EntityDocuments';
+import { OwnershipChange, PropertyEdit } from '../components/PropertyEdit';
+import { PropertyFiles } from '../components/PropertyFiles';
 import { PropertyDeals } from '../components/PropertyDeals';
 import { Activities, PropertyContacts } from '../components/CardExtras';
 import { PropertyCharges, PropertyServices } from '../components/PropertyServices';
@@ -12,14 +16,22 @@ import { CountryBadge, QueryState, StatusBadge } from '../components/common';
 import { LeaseTable } from '../components/LeaseTable';
 import { COUNTRY_HE, date, isCurrentOwnership, propertyTitle } from '../lib/format';
 import { usePropertyEntries, useProperty } from '../lib/queries';
-import { AccountLedger } from '../components/AccountLedger';
+import { EditableLedger, PropertyEntries } from '../components/PropertyEntries';
 
-// Kinds of property documents (SPEC decision 70).
-const PROPERTY_DOC_TYPES: DocType[] = [
-  { value: 'purchase_contract', label: 'חוזה רכישה' }, { value: 'land_registry', label: 'נסח טאבו' }, { value: 'land_book', label: 'Land book' },
-  { value: 'poa', label: 'ייפוי כוח' }, { value: 'management_contract', label: 'חוזה ניהול' }, { value: 'caveat', label: 'הערת אזהרה' },
-  { value: 'payment_proof', label: 'הוכחת תשלום / קבלה' }, { value: 'bank_document', label: 'מסמך בנק' }, { value: 'attachment', label: 'מסמך אחר' },
-];
+
+// "Alliance special" (SPEC decision 197): shown to everyone; marked or unmarked by the admin only.
+function SpecialAlliance({ id }: { id: string }) {
+  const access = useAccess();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['special-alliance', id], queryFn: async () => (must(await supabase.from('properties').select('special_alliance').eq('id', id).single()) as { special_alliance: boolean }).special_alliance });
+  async function toggle(on: boolean) {
+    const r = await supabase.from('properties').update({ special_alliance: on }).eq('id', id);
+    if (r.error) notifications.show({ color: 'red', message: r.error.message });
+    await qc.invalidateQueries({ queryKey: ['special-alliance'] });
+  }
+  if (access.isAdmin) return <Switch size="xs" color="red" label="אליאנס מיוחד" checked={!!q.data} onChange={(e) => toggle(e.currentTarget.checked)} />;
+  return q.data ? <Badge color="red" variant="filled">אליאנס מיוחד</Badge> : null;
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -37,6 +49,8 @@ export function PropertyCard() {
   const access = useAccess();
   const navigate = useNavigate();
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [owning, setOwning] = useState(false);
   return (
     <QueryState q={q}>{(p) => {
       const leases = [...p.leases].sort((a, b) => (b.start_date ?? '9999').localeCompare(a.start_date ?? '9999'));
@@ -50,10 +64,14 @@ export function PropertyCard() {
           <Group justify="space-between">
             <Title order={2}>{propertyTitle(p)}</Title>
             <Group gap="xs">
+              <SpecialAlliance id={p.id} />
               <CountryBadge code={p.country_code} /><StatusBadge status={p.status} size="md" />
+              {access.canEdit(p.country_code) && <Button size="xs" variant="light" leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>עריכה</Button>}
               {access.isAdmin && <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />} onClick={() => setDeleting(true)}>מחיקת נכס</Button>}
             </Group>
           </Group>
+          {editing && <PropertyEdit p={p} onClose={() => setEditing(false)} />}
+          {owning && <OwnershipChange propertyId={p.id} current={ownerships.filter((o) => !o.valid_to)} onClose={() => setOwning(false)} />}
           {deleting && (
             <DeleteRecord kind="property" id={p.id} name={propertyTitle(p)} onClose={() => setDeleting(false)}
               onDeleted={() => navigate('/properties', { replace: true })} />
@@ -74,7 +92,10 @@ export function PropertyCard() {
           </Paper>
 
           <Paper withBorder p="md">
-            <Title order={4} mb="sm">בעלים</Title>
+            <Group justify="space-between" mb="sm">
+              <Title order={4}>בעלים</Title>
+              {access.canEdit(p.country_code) && <Button size="xs" variant="light" onClick={() => setOwning(true)}>שינוי בעלות</Button>}
+            </Group>
             <Table verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr><Table.Th>שם</Table.Th><Table.Th>חלק</Table.Th><Table.Th>מתאריך</Table.Th><Table.Th>עד</Table.Th><Table.Th>הערות</Table.Th></Table.Tr>
@@ -95,7 +116,7 @@ export function PropertyCard() {
 
           <PropertyContacts propertyId={p.id} buildingId={p.building.id} countryCode={p.country_code} />
           <Activities entityType="property" entityId={p.id} />
-          <PropertyDeals propertyId={p.id} />
+          <PropertyDeals propertyId={p.id} country={p.country_code} canEdit={access.canEdit(p.country_code)} ownerId={ownerships.find((o) => !o.valid_to)?.party.id ?? null} />
 
           <Paper withBorder p="md">
             <Title order={4} mb="sm">חוזי שכירות</Title>
@@ -105,13 +126,11 @@ export function PropertyCard() {
           <PropertyServices propertyId={p.id} />
           <PropertyCharges propertyId={p.id} />
 
-          <EntityDocuments entityType="property" entityId={p.id} country={p.country_code} types={PROPERTY_DOC_TYPES} title="מסמכי הנכס" />
+          <PropertyFiles propertyId={p.id} country={p.country_code} />
 
-          <Paper withBorder p="md">
-            <Title order={4} mb={4}>תנועות שכירות</Title>
-            <Text size="xs" c="dimmed" mb="sm">התנועות של הנכס הזה בכל חשבון, לפי הבעלים. רק תנועות שאושרו.</Text>
-            <QueryState q={ledger}>{(m) => <AccountLedger accounts={m.accounts} entries={m.entries} property />}</QueryState>
-          </Paper>
+          <PropertyEntries propertyId={p.id} country={p.country_code} accounts={ledger.data?.accounts ?? []}>
+            <QueryState q={ledger}>{(m) => <EditableLedger accounts={m.accounts} entries={m.entries} property />}</QueryState>
+          </PropertyEntries>
         </Stack>
       );
     }}</QueryState>

@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { CURRENCIES, CURRENCY_SIGN } from '../lib/format';
+import { useContacts } from '../lib/queries';
 import { supabase } from '../lib/supabase';
 import type { Currency, Lease } from '../lib/types';
 
@@ -16,7 +17,11 @@ const fromDate = (d: Date | string | null) => (d ? dayjs(d).format('YYYY-MM-DD')
 // ended gets an end date. Row-level security decides whether the save is allowed.
 export function LeaseForm({ lease, opened, onClose }: { lease: Lease; opened: boolean; onClose: () => void }) {
   const qc = useQueryClient();
+  const contacts = useContacts();
+  const tenantOptions = (contacts.data ?? []).map((p) => ({ value: p.id, label: p.display_name }));
+  if (lease.tenant && !tenantOptions.some((o) => o.value === lease.tenant!.id)) tenantOptions.unshift({ value: lease.tenant.id, label: lease.tenant.display_name });
   const [v, setV] = useState({
+    tenant_party_id: lease.tenant?.id ?? null as string | null,
     start_date: toDate(lease.start_date), end_date: toDate(lease.end_date),
     rent_amount: lease.rent_amount, rent_currency: lease.rent_currency,
     deposit_amount: lease.deposit_amount, collect_day: lease.collect_day, notes: lease.notes ?? '',
@@ -28,6 +33,7 @@ export function LeaseForm({ lease, opened, onClose }: { lease: Lease; opened: bo
   async function save() {
     setBusy(true);
     const { error } = await supabase.from('leases').update({
+      tenant_party_id: v.tenant_party_id,
       start_date: fromDate(v.start_date), end_date: fromDate(v.end_date),
       rent_amount: v.rent_amount, rent_currency: v.rent_currency,
       deposit_amount: v.deposit_amount,
@@ -44,6 +50,8 @@ export function LeaseForm({ lease, opened, onClose }: { lease: Lease; opened: bo
   const num = (x: string | number) => (x === '' ? null : Number(x));
   return (
     <Modal opened={opened} onClose={onClose} title={`עריכת חוזה${lease.tenant ? ` · ${lease.tenant.display_name}` : ''}`} size="lg">
+      <Select label="שוכר" data={tenantOptions} value={v.tenant_party_id} onChange={(x) => set('tenant_party_id', x)}
+        searchable clearable nothingFoundMessage="לא נמצא באנשי הקשר" placeholder="לא ידוע" mb="sm" />
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
         <DateInput label="תאריך התחלה" value={v.start_date} onChange={(d) => set('start_date', d ? dayjs(d).toDate() : null)} valueFormat="DD.MM.YYYY" clearable />
         <DateInput label="תאריך סיום" value={v.end_date} onChange={(d) => set('end_date', d ? dayjs(d).toDate() : null)} valueFormat="DD.MM.YYYY" clearable

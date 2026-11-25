@@ -704,6 +704,569 @@ reset role;
 select pg_temp.check(exists (select 1 from app.audit_log where table_name = 'activities'), 'activities are audited');
 delete from app.contact_assignments; delete from app.activities; delete from app.company_partners;
 
+-- Users screen (decision 86) --------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check((select count(*) from app.admin_users()) = 5, 'an admin lists who can sign in');
+insert into app.user_country_roles (user_id, country_code, level, can_view_sensitive) values ('00000000-0000-0000-0000-00000000000e', 'GE', 'viewer', true);
+update app.profiles set display_name = 'Management 2' where user_id = '00000000-0000-0000-0000-00000000000e';
+select pg_temp.check((select level from app.user_country_roles where user_id = '00000000-0000-0000-0000-00000000000e' and country_code = 'GE') = 'viewer',
+  'an admin gives a country role');
+delete from app.user_country_roles where user_id = '00000000-0000-0000-0000-00000000000e' and country_code = 'GE';
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'aal1');
+do $$ begin
+  perform app.admin_users();
+  raise exception 'FAILED: the user list without TOTP';
+exception when insufficient_privilege then raise notice 'ok - listing users needs TOTP';
+end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  perform app.admin_users();
+  raise exception 'FAILED: a non-admin listed users';
+exception when insufficient_privilege then raise notice 'ok - only an admin lists users';
+end $$;
+do $$ begin
+  insert into app.user_country_roles (user_id, country_code, level) values ('00000000-0000-0000-0000-00000000000b', 'UA', 'finance');
+  raise exception 'FAILED: a non-admin gave themself a role';
+exception when insufficient_privilege then raise notice 'ok - a non-admin cannot give themself a role';
+end $$;
+reset role;
+do $$ begin
+  update app.profiles set is_admin = false where user_id = '00000000-0000-0000-0000-00000000000a';
+  set constraints all immediate;
+  raise exception 'FAILED: the last admin was removed';
+exception when check_violation then raise notice 'ok - the last admin cannot be removed';
+end $$;
+select pg_temp.check((select is_admin from app.profiles where user_id = '00000000-0000-0000-0000-00000000000a'), 'the admin is still an admin');
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000f', 'new@example.test');
+set role service_role;
+insert into app.profiles (user_id, display_name) values ('00000000-0000-0000-0000-00000000000f', 'New');
+delete from app.profiles where user_id = '00000000-0000-0000-0000-00000000000f';
+reset role;
+select pg_temp.check(not exists (select 1 from app.profiles where user_id = '00000000-0000-0000-0000-00000000000f'), 'the admin-users function (service role) adds and removes a profile');
+delete from auth.users where id = '00000000-0000-0000-0000-00000000000f';
+
+-- Changing the first password (decision 87) -----------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+update app.profiles set must_change_password = true where user_id in ('00000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-00000000000c');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  update app.profiles set must_change_password = false where user_id = '00000000-0000-0000-0000-00000000000b';
+end $$;
+reset role;
+select pg_temp.check((select must_change_password from app.profiles where user_id = '00000000-0000-0000-0000-00000000000b'), 'a user cannot clear the flag by writing the profile');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select app.password_changed();
+reset role;
+select pg_temp.check(not (select must_change_password from app.profiles where user_id = '00000000-0000-0000-0000-00000000000b')
+  and (select must_change_password from app.profiles where user_id = '00000000-0000-0000-0000-00000000000c'), 'password_changed clears only the caller''s own flag');
+update app.profiles set must_change_password = false;
+
+-- Second factor by e-mail (decision 88) ---------------------------------
+
+create function pg_temp.as_session(u text, sid text) returns void language plpgsql as $$
+begin
+  perform set_config('request.jwt.claim.sub', u, false);
+  perform set_config('request.jwt.claims', json_build_object('sub', u, 'aal', 'aal1', 'session_id', sid)::text, false);
+  execute 'set role authenticated';
+end $$;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '50000000-0000-0000-0000-000000000001');
+select pg_temp.check(not app.mfa_verified() and (select count(*) from app.properties) = 0, 'after the password only, an editor sees nothing');
+reset role;
+set role service_role;
+insert into app.email_mfa_sessions (session_id, user_id) values
+  ('50000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-00000000000b'),
+  ('50000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-00000000000a');
+reset role;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '50000000-0000-0000-0000-000000000001');
+select pg_temp.check(app.mfa_verified() and (select count(*) from app.properties) > 0, 'with the e-mail code on this session, the editor sees their country');
+reset role;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '50000000-0000-0000-0000-000000000009');
+select pg_temp.check(not app.mfa_verified(), 'the code counts only for the session it was entered in');
+reset role;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000c', '50000000-0000-0000-0000-000000000001');
+select pg_temp.check(not app.mfa_verified(), 'another user cannot use someone else''s verified session');
+reset role;
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000a', '50000000-0000-0000-0000-000000000002');
+select pg_temp.check(not app.mfa_verified(), 'an admin is never verified by e-mail');
+reset role;
+update app.email_mfa_sessions set verified_at = now() - interval '13 hours' where session_id = '50000000-0000-0000-0000-000000000001';
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '50000000-0000-0000-0000-000000000001');
+select pg_temp.check(not app.mfa_verified(), 'an e-mail verification lasts 12 hours');
+do $$ begin
+  insert into app.email_mfa_sessions (session_id, user_id) values ('50000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-00000000000b');
+  raise exception 'FAILED: a user marked their own session verified';
+exception when insufficient_privilege then raise notice 'ok - only the function records a verified session';
+end $$;
+reset role;
+set role service_role;
+insert into app.email_mfa_sessions (session_id, user_id) values ('50000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-00000000000b')
+  on conflict (session_id) do update set verified_at = excluded.verified_at;
+reset role;
+select pg_temp.check((select verified_at > now() - interval '1 minute' from app.email_mfa_sessions where session_id = '50000000-0000-0000-0000-000000000001'),
+  'the email-code function renews a verified session (upsert)');
+delete from app.email_mfa_sessions;
+
+-- User activity (decision 90) -------------------------------------------
+
+select pg_temp.check(not exists (
+  select 1 from unnest(array['properties', 'documents', 'import_batches', 'party_roles', 'buildings']) t
+  where not exists (select 1 from pg_trigger g join pg_class c on c.oid = g.tgrelid where c.relname = t and g.tgname = 'audit')),
+  'properties, documents, report approvals and roles are audited');
+select pg_temp.as_session('00000000-0000-0000-0000-00000000000b', '60000000-0000-0000-0000-000000000001');
+select app.log_sign_in(); select app.log_sign_in();
+reset role;
+select pg_temp.check((select count(*) from app.audit_log where action = 'LOGIN' and user_id = '00000000-0000-0000-0000-00000000000b') = 1,
+  'a sign-in is recorded once per session');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.audit_log) = 0, 'only an admin reads the activity log');
+reset role;
+
+-- A shared fund (decision 91) -------------------------------------------
+
+-- Property ...01 belongs to Client One; its expense fund is Client Two's.
+insert into app.fund_owners (property_id, account_kind, party_id) values
+  ('30000000-0000-0000-0000-000000000001', 'expense_pool', '10000000-0000-0000-0000-000000000002');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('70000000-0000-0000-0000-000000000001', 'UA', '2026-01-31', '2026-01-01', 'building_fees', 'draft');
+select app.post_import_entry('70000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000003', 'UA', '2026-01-31', '{"amount": -100, "currency": "UAH", "account": {"kind": "expense_pool", "holder": "source"}}');
+select app.post_import_entry('70000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000003', 'UA', '2026-01-31', '{"amount": 100, "currency": "UAH", "account": {"kind": "rent_pool", "holder": "source"}}');
+select pg_temp.check(
+  (select a.beneficiary_party_id from app.entries e join app.accounts a on a.id = e.account_id
+   where e.transaction_id = '70000000-0000-0000-0000-000000000001' and a.kind = 'expense_pool') = '10000000-0000-0000-0000-000000000002'
+  and (select a.beneficiary_party_id from app.entries e join app.accounts a on a.id = e.account_id
+   where e.transaction_id = '70000000-0000-0000-0000-000000000001' and a.kind = 'rent_pool') = '10000000-0000-0000-0000-000000000001',
+  'an expense of a property with a fund owner goes to the fund owner; other accounts stay with the owners');
+delete from app.transactions where id = '70000000-0000-0000-0000-000000000001';
+delete from app.fund_owners;
+
+-- Manual topics (decision 92) -------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.staff_directory()) >= 3 and not exists (select 1 from app.staff_directory() where display_name = 'Client One'),
+  'every staff member sees the staff names, without clients');
+select pg_temp.check(not exists (select 1 from app.staff_directory() where email is null),
+  'the staff list carries each employee''s e-mail, for the topic e-mail draft');
+insert into app.tasks (title, notes, assignee_id) values ('לבדוק חוזה', 'שאלה', '00000000-0000-0000-0000-00000000000b');
+reset role;
+select pg_temp.check((select created_by from app.tasks where title = 'לבדוק חוזה') = '00000000-0000-0000-0000-00000000000e', 'a topic records who sent it');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+update app.tasks set reply = 'נבדק', status = 'done', done_at = now() where title = 'לבדוק חוזה';
+reset role;
+select pg_temp.check((select reply from app.tasks where title = 'לבדוק חוזה') = 'נבדק', 'the employee it was sent to answers and closes it');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin
+  perform app.staff_directory();
+  raise exception 'FAILED: a client read the staff names';
+exception when insufficient_privilege then raise notice 'ok - clients do not see staff names';
+end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+insert into app.task_links (task_id, entity_type, entity_id)
+  select id, 'party', '10000000-0000-0000-0000-000000000001'::uuid from app.tasks where title = 'לבדוק חוזה'
+  union all select id, 'party', '10000000-0000-0000-0000-000000000003'::uuid from app.tasks where title = 'לבדוק חוזה';
+update app.tasks set fix_url = '/clients/10000000-0000-0000-0000-000000000001' where title = 'לבדוק חוזה';
+select pg_temp.check((select count(*) from app.task_links) = 2, 'a topic links several clients and contacts');
+do $$ begin
+  update app.tasks set fix_url = 'javascript:alert(1)' where title = 'לבדוק חוזה';
+  raise exception 'FAILED: a fix link that is not a web address';
+exception when check_violation then raise notice 'ok - a fix link is a web address or a page of the app';
+end $$;
+update app.tasks set title = 'לבדוק את החוזה' where title = 'לבדוק חוזה';
+reset role;
+select pg_temp.check((select edited_at is not null from app.tasks where title = 'לבדוק את החוזה'), 'the author edits a topic, and the edit is marked');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  update app.tasks set notes = 'שיניתי' where title = 'לבדוק את החוזה';
+  raise exception 'FAILED: someone else edited the topic';
+exception when insufficient_privilege then raise notice 'ok - only the author edits a topic';
+end $$;
+do $$ begin
+  delete from app.task_links where entity_id = '10000000-0000-0000-0000-000000000003';
+  raise exception 'FAILED: someone else changed the topic links';
+exception when insufficient_privilege then raise notice 'ok - only the author changes what a topic is linked to';
+end $$;
+do $$ begin
+  delete from app.tasks where title = 'לבדוק את החוזה';
+  raise exception 'FAILED: someone else deleted the topic';
+exception when insufficient_privilege then raise notice 'ok - only the author deletes a topic';
+end $$;
+update app.tasks set reply = 'עודכן', status = 'open', assignee_id = null where title = 'לבדוק את החוזה';
+reset role;
+select pg_temp.check((select reply from app.tasks where title = 'לבדוק את החוזה') = 'עודכן', 'anyone on staff still answers, reassigns and reopens');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+delete from app.tasks where title = 'לבדוק את החוזה';
+reset role;
+select pg_temp.check(not exists (select 1 from app.task_links), 'the author deletes the topic, and its links go with it');
+
+-- A movement added from the property card (decision 103) -----------------
+
+insert into app.ownerships (property_id, party_id, share_pct, valid_from) values
+  ('30000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 100, '2023-01-01');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+insert into app.transactions (id, country_code, occurred_on, period, category, description, status)
+  values ('71000000-0000-0000-0000-000000000001', 'RO', '2026-03-05', '2026-03-01', 'repair', 'תיקון', 'draft');
+select app.post_import_entry('71000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', null, 'RO', '2026-03-05',
+  '{"amount": -120, "currency": "RON", "account": {"kind": "client_bank", "holder": "beneficiary"}}');
+reset role;
+select pg_temp.check((select count(*) from app.entries where transaction_id = '71000000-0000-0000-0000-000000000001') = 1,
+  'an editor adds a draft movement to a property, in the owner''s account');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  update app.transactions set status = 'posted' where id = '71000000-0000-0000-0000-000000000001';
+  raise exception 'FAILED: an editor posted a movement';
+exception when raise_exception then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - only finance posts a movement added on the property card';
+end $$;
+delete from app.transactions where id = '71000000-0000-0000-0000-000000000001';
+reset role;
+select pg_temp.check(not exists (select 1 from app.transactions where id = '71000000-0000-0000-0000-000000000001'), 'the editor deletes a draft');
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('71000000-0000-0000-0000-000000000002', 'UA', '2026-03-05', '2026-03-01', 'rent', 'draft');
+select app.post_import_entry('71000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000003', 'UA', '2026-03-05',
+  '{"amount": 1001, "currency": "UAH", "account": {"kind": "manager_cash", "holder": "source"}}');
+update app.transactions set status = 'posted' where id = '71000000-0000-0000-0000-000000000002';
+reset role;
+select pg_temp.check((select array_agg(amount order by amount) from app.entries where transaction_id = '71000000-0000-0000-0000-000000000002') = '{500.50,500.50}'::numeric[]
+  and (select status from app.transactions where id = '71000000-0000-0000-0000-000000000002') = 'posted',
+  'finance adds and posts a movement; it is split between the owners by their shares');
+delete from app.ownerships where property_id = '30000000-0000-0000-0000-000000000002';
+
+-- Deleting a receipt from the property card (decision 106) -----------------
+
+insert into app.documents (id, entity_type, entity_id, country_code, doc_type, storage_path, sensitive)
+  values ('72000000-0000-0000-0000-000000000001', 'property', '30000000-0000-0000-0000-000000000002', 'RO', 'receipt', 'RO/property/x/receipt.pdf', false);
+insert into app.charges (id, property_id, period, kind, amount, currency, document_id)
+  values ('72000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002', '2026-01-01', 'water', 10, 'RON', '72000000-0000-0000-0000-000000000001');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+delete from app.documents where id = '72000000-0000-0000-0000-000000000001';
+reset role;
+select pg_temp.check((select document_id from app.charges where id = '72000000-0000-0000-0000-000000000002') is null
+  and not exists (select 1 from app.documents where id = '72000000-0000-0000-0000-000000000001'),
+  'an editor deletes a receipt; the charge keeps its amount and loses only the link');
+delete from app.charges where id = '72000000-0000-0000-0000-000000000002';
+
+-- File categories added in Settings (decision 107) ------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+insert into app.file_categories (id, label, sensitive) values ('73000000-0000-0000-0000-000000000001', 'היתרי בנייה', true);
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.file_categories) = 1, 'staff see the file categories');
+do $$ begin
+  insert into app.file_categories (label) values ('x');
+  raise exception 'FAILED: an editor added a file category';
+exception when insufficient_privilege then raise notice 'ok - only an admin adds a file category';
+end $$;
+reset role;
+insert into app.documents (id, entity_type, entity_id, country_code, doc_type, storage_path)
+  values ('73000000-0000-0000-0000-000000000002', 'property', '30000000-0000-0000-0000-000000000002', 'RO', 'cat:73000000-0000-0000-0000-000000000001', 'RO/property/x/permit.pdf');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  delete from app.file_categories where id = '73000000-0000-0000-0000-000000000001';
+  raise exception 'FAILED: a category with files was removed';
+exception when foreign_key_violation then raise notice 'ok - a category with files is not removed';
+end $$;
+reset role;
+delete from app.documents where id = '73000000-0000-0000-0000-000000000002';
+delete from app.file_categories;
+
+-- Cash boxes (decision 112) ------------------------------------------------
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.check((select count(*) from app.cash_boxes) = 1 and (select name from app.cash_boxes) = 'קופת גרשון', 'UA finance sees Gershon''s box, not the office''s');
+insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, party_name)
+  select id, '2026-10-01', 50000, 'UAH', 'from_manager', 'ויטאלי' from app.cash_boxes;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check(not exists (select 1 from app.cash_boxes) and not exists (select 1 from app.cash_movements), 'a Romania editor sees no cash box');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.cash_boxes) = 2, 'management sees both boxes');
+do $$ begin
+  insert into app.cash_movements (box_id, occurred_on, amount, currency, kind)
+    select id, '2026-10-01', 10, 'ILS', 'income' from app.cash_boxes where country_code is null;
+  raise exception 'FAILED: management wrote to the office box';
+exception when insufficient_privilege then raise notice 'ok - only an admin writes to the office box';
+end $$;
+reset role;
+select pg_temp.check((select sum(amount) from app.cash_movements) = 50000, 'a movement is recorded in Gershon''s box');
+delete from app.cash_movements;
+
+-- Paying a client from Gershon's box posts the transfer (decision 113).
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.accounts (id, holder_party_id, beneficiary_party_id, country_code, currency, kind) values
+  ('74000000-0000-0000-0000-000000000001', 'a0000000-0000-4000-8000-000000000001', '10000000-0000-0000-0000-000000000001', 'UA', 'UAH', 'manager_cash');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('74000000-0000-0000-0000-000000000002', 'UA', '2026-09-05', '2026-09-01', 'rent', 'draft');
+insert into app.entries (transaction_id, account_id, property_id, amount, currency)
+  values ('74000000-0000-0000-0000-000000000002', '74000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 1000, 'UAH');
+update app.transactions set status = 'posted' where id = '74000000-0000-0000-0000-000000000002';
+select app.cash_pay_client((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 400, '2026-10-10', 'אוקטובר');
+reset role;
+select pg_temp.check(
+  (select sum(e.amount) from app.entries e join app.transactions t on t.id = e.transaction_id where e.account_id = '74000000-0000-0000-0000-000000000001' and t.status = 'posted') = 600
+  and (select sum(e.amount) from app.entries e join app.accounts a on a.id = e.account_id join app.transactions t on t.id = e.transaction_id
+       where a.kind = 'client_bank' and a.beneficiary_party_id = '10000000-0000-0000-0000-000000000001' and t.status = 'posted' and t.category = 'transfer') = 400
+  and (select amount from app.cash_movements where kind = 'to_client') = -400,
+  'paying a client from Gershon''s box: out of Vitaly''s cash, into the client''s own account, and in the box');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  perform app.cash_pay_client((select id from app.cash_boxes limit 1), '74000000-0000-0000-0000-000000000001', 1, '2026-10-10', null);
+  raise exception 'FAILED: a Romania editor paid from Gershon''s box';
+exception when insufficient_privilege then raise notice 'ok - only who writes to the box pays from it';
+end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement((select id from app.cash_movements where kind = 'to_client'));
+reset role;
+select pg_temp.check(not exists (select 1 from app.cash_movements)
+  and (select status from app.transactions where category = 'transfer' and description like 'העברה ללקוח%') = 'void',
+  'removing the payment voids its transfer');
+
+-- A sum Gershon sent to the office, divided between a client and the office's fees (decision 114).
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.cash_movements (id, box_id, occurred_on, amount, currency, kind, party_name)
+  select '74000000-0000-0000-0000-000000000003', id, '2026-10-20', -500, 'UAH', 'to_office', 'המשרד' from app.cash_boxes where country_code = 'UA';
+select app.cash_pay_client((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 300, '2026-10-20', null, '74000000-0000-0000-0000-000000000003');
+insert into app.cash_movements (box_id, occurred_on, amount, currency, kind, parent_id, party_name)
+  select id, '2026-10-20', -50, 'UAH', 'office_fee', '74000000-0000-0000-0000-000000000003', 'המשרד' from app.cash_boxes where country_code = 'UA';
+reset role;
+select pg_temp.check((select amount from app.cash_movements m join app.cash_boxes b on b.id = m.box_id where b.is_office and m.kind = 'income') = 50,
+  'an office fee is also income in the office''s box');
+select pg_temp.check((select count(*) from app.cash_movements where parent_id = '74000000-0000-0000-0000-000000000003') = 2
+  and (select status from app.transactions t join app.cash_movements m on m.transaction_id = t.id where m.parent_id is not null) = 'posted',
+  'a sum sent to the office is divided: a client paid (posted) and the office''s fees');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement('74000000-0000-0000-0000-000000000003');
+reset role;
+select pg_temp.check(not exists (select 1 from app.cash_movements)
+  and (select count(*) from app.transactions where description like 'העברה ללקוח%' and status = 'posted') = 0,
+  'removing the sum removes its parts and voids the client''s transfer');
+
+-- Editing what was entered by hand (decision 119) ---------------------------
+
+-- A client's part of a sum Gershon sent: editing its amount pays again from the same money.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.cash_movements (id, box_id, occurred_on, amount, currency, kind, party_name)
+  select '75000000-0000-0000-0000-000000000003', id, '2026-10-21', -500, 'UAH', 'to_office', 'המשרד' from app.cash_boxes where country_code = 'UA';
+select app.cash_edit_movement(
+  app.cash_pay_client((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 300, '2026-10-21', null, '75000000-0000-0000-0000-000000000003'),
+  '2026-10-22', 200, 'תוקן');
+select app.cash_edit_movement('75000000-0000-0000-0000-000000000003', '2026-10-21', 450, null);
+reset role;
+select pg_temp.check((select amount from app.cash_movements where parent_id = '75000000-0000-0000-0000-000000000003') = -200
+  and (select amount from app.cash_movements where id = '75000000-0000-0000-0000-000000000003') = -450
+  and (select count(*) from app.transactions where description like 'העברה ללקוח%תוקן' and status = 'posted') = 1,
+  'a cash box movement is edited; a client''s part is paid again with the new amount');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement('75000000-0000-0000-0000-000000000003');
+reset role;
+
+-- A sum in dollars at a rate (decision 123): a client's part is converted out of the client's
+-- hryvnia, then paid; what was converted beyond the part stays in dollars.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.cash_movements (id, box_id, occurred_on, amount, currency, kind, party_name, fx_rate)
+  select '76000000-0000-0000-0000-000000000001', id, '2026-10-25', -900, 'USD', 'to_office', 'המשרד', 44 from app.cash_boxes where country_code = 'UA';
+select app.cash_pay_client_fx((select id from app.cash_boxes where country_code = 'UA'), '74000000-0000-0000-0000-000000000001', 10, 462, '2026-10-25', null, '76000000-0000-0000-0000-000000000001');
+reset role;
+select pg_temp.check(
+  (select sum(e.amount) from app.entries e join app.transactions t on t.id = e.transaction_id where e.account_id = '74000000-0000-0000-0000-000000000001' and t.status = 'posted') = 538
+  and (select sum(e.amount) from app.entries e join app.accounts a on a.id = e.account_id join app.transactions t on t.id = e.transaction_id
+       where a.kind = 'manager_cash' and a.currency = 'USD' and a.beneficiary_party_id = '10000000-0000-0000-0000-000000000001' and t.status = 'posted') = 0.50
+  and (select sum(e.amount) from app.entries e join app.accounts a on a.id = e.account_id join app.transactions t on t.id = e.transaction_id
+       where a.kind = 'client_bank' and a.currency = 'USD' and t.status = 'posted') = 10
+  and (select fx_transaction_id is not null from app.cash_movements where parent_id = '76000000-0000-0000-0000-000000000001'),
+  'a part of a sum in dollars: hryvnia converted at the rate, the part paid, the rest stays in dollars');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_edit_movement((select id from app.cash_movements where parent_id = '76000000-0000-0000-0000-000000000001'), '2026-10-26', 20, null);
+reset role;
+select pg_temp.check(
+  (select sum(e.amount) from app.entries e join app.transactions t on t.id = e.transaction_id where e.account_id = '74000000-0000-0000-0000-000000000001' and t.status = 'posted') = 120
+  and (select count(*) from app.transactions where category = 'fx' and status = 'posted') = 1,
+  'editing a converted part converts again at the sum''s rate');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.cash_remove_movement('76000000-0000-0000-0000-000000000001');
+reset role;
+select pg_temp.check(not exists (select 1 from app.transactions where category in ('fx', 'transfer') and status = 'posted'),
+  'removing the sum voids its conversions and transfers');
+
+-- A draft by an editor: its author fixes it in place; another editor may not.
+insert into app.ownerships (property_id, party_id, share_pct, valid_from) values
+  ('30000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 100, '2023-01-01');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+insert into app.transactions (id, country_code, occurred_on, period, category, status)
+  values ('75000000-0000-0000-0000-000000000001', 'RO', '2026-04-05', '2026-04-01', 'repair', 'draft');
+select app.post_import_entry('75000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', null, 'RO', '2026-04-05',
+  '{"amount": -100, "currency": "RON", "account": {"kind": "client_bank", "holder": "beneficiary"}}');
+select app.edit_manual_entry('75000000-0000-0000-0000-000000000001', '2026-04-06', '2026-04-01', 'repair', 'תוקן', -150, 'RON', 'client_bank', null);
+reset role;
+select pg_temp.check((select amount from app.entries where transaction_id = '75000000-0000-0000-0000-000000000001') = -150
+  and (select description from app.transactions where id = '75000000-0000-0000-0000-000000000001') = 'תוקן',
+  'the author of a draft edits it in place');
+
+-- Posted: an admin's edit voids it and enters the corrected one.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+update app.transactions set status = 'posted' where id = '75000000-0000-0000-0000-000000000001';
+select app.edit_manual_entry('75000000-0000-0000-0000-000000000001', '2026-04-06', '2026-04-01', 'repair', 'תוקן שוב', -170, 'RON', 'client_bank', null);
+reset role;
+select pg_temp.check((select status from app.transactions where id = '75000000-0000-0000-0000-000000000001') = 'void'
+  and (select count(*) from app.transactions where description = 'תוקן שוב' and status = 'posted') = 1,
+  'editing a posted movement voids it and posts the corrected one');
+
+-- A report's movement is not edited here.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  perform app.edit_manual_entry((select id from app.transactions where import_batch_id is not null limit 1), '2026-01-01', '2026-01-01', 'rent', null, 1, 'UAH', 'manager_cash', null);
+  raise exception 'FAILED: a report''s movement was edited by hand';
+exception when raise_exception then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - a movement from a report is not edited by hand';
+end $$;
+reset role;
+delete from app.ownerships where property_id = '30000000-0000-0000-0000-000000000002';
+
+-- Tasks (decision 128): only the author, who it is with, management and admins see it.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select app.create_office_task((select id from app.task_triggers where label = 'לקוח'), 'לבדוק חוזה', 'פרטים', 'high',
+  array['00000000-0000-0000-0000-00000000000b']::uuid[], array['10000000-0000-0000-0000-000000000001']::uuid[],
+  '[{"kind":"property","entity_id":"30000000-0000-0000-0000-000000000001"},{"kind":"country","country_code":"UA"}]');
+select pg_temp.check((select count(*) from app.office_task_links) = 2 and (select count(*) from app.office_task_assignees) = 2
+  and (select count(*) from app.office_task_events) = 1, 'a task is created with its links and assignees, as one "created" event');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select pg_temp.check((select count(*) from app.office_tasks) = 1 and (select count(*) from app.task_people()) >= 1, 'a client the task is with sees it, and the names on it');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.office_tasks) = 1, 'the employee it is with sees the task');
+insert into app.office_task_events (task_id, kind, body) select id, 'reply', 'בטיפול' from app.office_tasks;
+update app.office_tasks set status = 'in_progress', priority = 'low', category_id = (select id from app.task_categories where label = 'ייעול');
+delete from app.office_task_assignees where party_id is not null;
+reset role;
+select pg_temp.check((select string_agg(kind, ',' order by created_at, kind) from app.office_task_events) like 'created,%'
+  and (select count(*) from app.office_task_events where kind in ('reply', 'status', 'change', 'unassign')) = 4,
+  'a reply, the state, a change of a detail and passing it on are all in the history');
+select pg_temp.check((select data->'category'->>1 from app.office_task_events where kind = 'change') = 'ייעול', 'a change of category is in the history by name');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select pg_temp.check(not exists (select 1 from app.office_tasks), 'a client no longer on the task does not see it');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select pg_temp.check((select count(*) from app.office_tasks) = 1, 'management sees every task');
+reset role;
+-- Another employee, not on the task: sees nothing and cannot answer.
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000f', 'ro.other@example.test');
+insert into app.profiles (user_id, display_name) values ('00000000-0000-0000-0000-00000000000f', 'RO other');
+insert into app.user_country_roles (user_id, country_code, level) values ('00000000-0000-0000-0000-00000000000f', 'RO', 'editor');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000f');
+select pg_temp.check(not exists (select 1 from app.office_tasks), 'an employee the task is not with does not see it');
+do $$ begin
+  insert into app.office_task_events (task_id, kind, body) select id, 'reply', 'x' from app.office_tasks;
+  insert into app.office_task_events (task_id, kind, body) values ((select id from app.office_task_links limit 1), 'reply', 'x');
+  raise exception 'FAILED: an outsider answered a task';
+exception when others then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - an employee the task is not with cannot answer it';
+end $$;
+reset role;
+
+-- Deleting a task (decision 134): only once done, by its author, management or an admin.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+delete from app.office_tasks where subject = 'לבדוק חוזה';
+reset role;
+select pg_temp.check(exists (select 1 from app.office_tasks where subject = 'לבדוק חוזה'), 'the employee a task is with does not delete it');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+delete from app.office_tasks where subject = 'לבדוק חוזה';
+reset role;
+select pg_temp.check(exists (select 1 from app.office_tasks where subject = 'לבדוק חוזה'), 'an open task is not deleted, even by its author');
+update app.office_tasks set status = 'done' where subject = 'לבדוק חוזה';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+delete from app.office_tasks where subject = 'לבדוק חוזה';
+reset role;
+select pg_temp.check(not exists (select 1 from app.office_tasks where subject = 'לבדוק חוזה')
+  and not exists (select 1 from app.office_task_events e where not exists (select 1 from app.office_tasks t where t.id = e.task_id)),
+  'its author deletes a task once done, with its history');
+
+-- Recurring tasks (decision 130): a monthly one on the 31st opens on the last day of a short
+-- month, once per date however often it runs; the tasks are seen like any task.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.office_task_series (subject, frequency, month_days, start_on, users, links)
+values ('דוח גרשון', 'monthly', array[31], '2026-01-01', array['00000000-0000-0000-0000-00000000000b']::uuid[], '[{"kind":"country","country_code":"UA"}]');
+insert into app.office_task_series (subject, frequency, workdays_only, start_on, end_on) values ('וואטסאפ', 'daily', true, '2026-03-01', '2026-03-07');
+insert into app.office_task_series (subject, frequency, year_dates, lead_days, start_on) values ('ביטוח', 'yearly', array['02-29'], 7, '2026-01-01');
+insert into app.office_task_series (subject, frequency, month_days, last_day, start_on, end_on) values ('גבייה', 'monthly', array[1, 15], true, '2026-04-01', '2026-04-30');
+insert into app.office_task_series (subject, frequency, year_dates, start_on) values ('מיסים', 'yearly', array['03-31', '09-30'], '2026-01-01');
+select app.spawn_recurring_tasks('2026-04-30');
+select app.spawn_recurring_tasks('2026-04-30');
+reset role;
+select pg_temp.check(
+  (select string_agg(occurrence_on::text, ',' order by occurrence_on) from app.office_tasks where subject = 'דוח גרשון') = '2026-01-31,2026-02-28,2026-03-31,2026-04-30'
+  and (select count(*) from app.office_tasks where subject = 'וואטסאפ') = 5
+  and (select string_agg(occurrence_on::text, ',') from app.office_tasks where subject = 'ביטוח') = '2026-02-28'
+  and (select string_agg(occurrence_on::text, ',' order by occurrence_on) from app.office_tasks where subject = 'גבייה') = '2026-04-01,2026-04-15,2026-04-30'
+  and (select string_agg(occurrence_on::text, ',') from app.office_tasks where subject = 'מיסים') = '2026-03-31'
+  and (select count(*) from app.office_task_assignees a join app.office_tasks t on t.id = a.task_id where t.subject = 'דוח גרשון') = 4
+  and (select count(*) from app.office_task_events e join app.office_tasks t on t.id = e.task_id where t.subject = 'דוח גרשון') = 4,
+  'recurring tasks open on their days (several days a month or a year, last day of a short month, workdays only, ahead by lead days), once each');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check((select count(*) from app.office_tasks where subject = 'דוח גרשון') = 4
+  and (select count(*) from app.office_tasks where subject = 'וואטסאפ') = 0, 'a recurring task''s tasks are seen by whom they are with');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000f');
+select pg_temp.check(not exists (select 1 from app.office_task_series), 'an employee not on a recurring task does not see it');
+reset role;
+
+-- Where a transaction came from (decision 136): set on its own, filled in once, never changed.
+select pg_temp.check((select count(*) from app.transactions where source is null) = 0
+  and exists (select 1 from app.transactions where source like 'report:%') and exists (select 1 from app.transactions where source = 'manual'),
+  'every transaction has a source: its report, or manual');
+do $$ declare t uuid; begin
+  select id into t from app.transactions where status = 'posted' and source = 'manual' limit 1;
+  update app.transactions set source = 'excel:test' where id = t;
+  raise exception 'FAILED: the source of a transaction changed';
+exception when raise_exception then
+  if sqlerrm like 'FAILED%' then raise; end if;
+  raise notice 'ok - the source of a transaction does not change';
+end $$;
+
+-- The spreadsheet a transaction came from (decision 137): finance of its country links it.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into app.source_files (source, country_code, storage_path, file_name) values ('excel:גרשון', 'UA', 'UA/sources/x.xlsx', 'x.xlsx');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.check(not exists (select 1 from app.source_files), 'a Romania editor does not see Ukraine''s source files');
+do $$ begin
+  insert into app.source_files (source, country_code, storage_path) values ('excel:y', 'RO', 'RO/sources/y.xlsx');
+  raise exception 'FAILED: an editor linked a source file';
+exception when insufficient_privilege then raise notice 'ok - only finance links a source file';
+end $$;
+reset role;
+
+-- The source is seen only by who recorded the transaction and an admin (decision 138).
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  perform source from app.transactions limit 1;
+  raise exception 'FAILED: the source column was read directly';
+exception when insufficient_privilege then raise notice 'ok - the source is not read directly';
+end $$;
+select pg_temp.check(
+  (select count(*) from app.transaction_sources(array(select id from app.transactions))) = (select count(*) from app.transactions where created_by = '00000000-0000-0000-0000-00000000000c')
+  and (select count(*) from app.transaction_sources(array(select id from app.transactions))) > 0,
+  'who recorded a transaction sees its source; not the others''');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check((select count(*) from app.transaction_sources(array(select id from app.transactions))) = (select count(*) from app.transactions),
+  'an admin sees every source');
+reset role;
+
 -- Audit -----------------------------------------------------------------
 
 select pg_temp.check(

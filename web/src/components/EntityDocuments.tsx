@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useAccess } from '../lib/access';
 import { date } from '../lib/format';
 import { must, supabase } from '../lib/supabase';
+import { documentLink } from '../lib/viewer';
 import type { Country } from '../lib/types';
 import { QueryState } from './common';
 
@@ -40,8 +41,8 @@ export function EntityDocuments({ entityType, entityId, country, types, title = 
   async function open(d: Doc) {
     const log = await supabase.rpc('log_document_access', { doc: d.id });
     if (log.error) { notifications.show({ color: 'red', message: log.error.message }); return; }
-    const { data, error: e } = await supabase.storage.from('documents').createSignedUrl(d.storage_path, 60);
-    if (e) notifications.show({ color: 'red', message: e.message }); else window.open(data.signedUrl, '_blank');
+    const link = await documentLink(d.storage_path, d.file_name);
+    if (link.error) notifications.show({ color: 'red', message: link.error }); else window.open(link.url, '_blank');
   }
 
   // Re-marking a document's type (SPEC decision 69).

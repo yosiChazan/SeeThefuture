@@ -5,6 +5,11 @@ import { ClientCard } from './pages/ClientCard';
 import { Clients } from './pages/Clients';
 import { Contacts } from './pages/Contacts';
 import { Completeness } from './pages/Completeness';
+import { Stats } from './pages/Stats';
+import { CashBoxes } from './pages/CashBoxes';
+import { Tasks } from './pages/Tasks';
+import { Messages } from './pages/Messages';
+import { DriveZipImport } from './pages/DriveZipImport';
 import { Dashboard } from './pages/Dashboard';
 import { Intake } from './pages/Intake';
 import { IntakeBatch } from './pages/IntakeBatch';
@@ -14,8 +19,12 @@ import { Properties } from './pages/Properties';
 import { PropertyCard } from './pages/PropertyCard';
 import { DropboxCallback } from './pages/DropboxCallback';
 import { Settings } from './pages/Settings';
+import { Users } from './pages/Users';
+import { Privacy } from './pages/Privacy';
 
 export function App() {
+  // The privacy policy is public (decision 180): Meta's reviewers open it without signing in.
+  if (window.location.pathname.replace(/\/$/, '') === '/privacy') return <Privacy />;
   return (
     <AuthGate>
       <BrowserRouter>
@@ -29,11 +38,17 @@ export function App() {
             <Route path="contacts" element={<Contacts />} />
             <Route path="contacts/:id" element={<ClientCard />} />
             <Route path="completeness" element={<Completeness />} />
+            <Route path="stats" element={<Stats />} />
+            <Route path="cash" element={<CashBoxes />} />
+            <Route path="tasks" element={<Tasks />} />
+            <Route path="messages" element={<Messages />} />
+            <Route path="documents-zip" element={<DriveZipImport />} />
             <Route path="leases" element={<Leases />} />
             <Route path="leases/:id" element={<LeaseCard />} />
             <Route path="intake" element={<Intake />} />
             <Route path="intake/:id" element={<IntakeBatch />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="users" element={<Users />} />
             <Route path="dropbox" element={<DropboxCallback />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

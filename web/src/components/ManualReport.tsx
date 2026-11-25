@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Badge, Button, Checkbox, Collapse, FileInput, Group, List, Modal, NumberInput, Paper, Stack, Table, Text, Title } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Button, Checkbox, Collapse, FileInput, Group, List, Modal, NumberInput, Paper, SegmentedControl, Stack, Table, Text, Title } from '@mantine/core';
 import { DateInput, MonthPickerInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
 import { IconPhoto, IconPlus, IconTrash } from '@tabler/icons-react';
@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { buildLiana, buildYarach, type LianaForm, type Transfer, type YarachForm } from '../intake/manual';
 import type { ParseResult } from '../intake/types';
 import { createBatch, latestForm, type Source } from '../lib/intake';
+import { YarachMonth } from './YarachMonth';
 import { gershonId, loadUnits, MANUAL, pendingVersion, saveUnit, type AreaUnit, type UnitChange } from '../lib/manual';
 import { monthLabel } from '../pages/Intake';
 
@@ -18,17 +19,17 @@ const numOrNull = (v: string | number) => (v === '' || v === null ? null : Numbe
 
 // Which apartments the manager handles, with the expected rent (Yarach) or the fee
 // (Liana). Saved to management_agreements and rent_schedule from the form's month.
-function Units({ source, period, units, onSaved }: { source: Source; period: string; units: AreaUnit[]; onSaved: () => Promise<unknown> }) {
+export function Units({ source, period, units, onSaved }: { source: Source; period: string; units: AreaUnit[]; onSaved: () => Promise<unknown> }) {
   const cfg = MANUAL[source.adapter];
-  const init = () => new Map(units.map((u) => [u.id, { managed: !!u.agreement, expected: u.expected ?? null, feePct: u.feePct ?? null } as UnitChange]));
+  const init = () => new Map(units.map((u) => [u.id, { managed: !!u.agreement, expected: u.expected ?? null, feePct: u.feePct ?? null, currency: u.currency ?? 'UAH' } as UnitChange]));
   const [draft, setDraft] = useState(init);
   const [busy, setBusy] = useState(false);
   useEffect(() => setDraft(init()), [units]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (id: string, patch: Partial<UnitChange>) => setDraft((d) => new Map(d).set(id, { ...d.get(id)!, ...patch }));
   const changed = units.filter((u) => {
     const c = draft.get(u.id)!;
-    return c.managed !== !!u.agreement || (cfg.kind === 'yarach' && (c.expected ?? 0) !== (u.expected ?? 0))
-      || (cfg.kind === 'liana' && c.managed && !!u.agreement && c.feePct !== u.feePct);
+    return c.managed !== !!u.agreement || (cfg.kind === 'yarach' && ((c.expected ?? 0) !== (u.expected ?? 0) || (c.currency ?? 'UAH') !== (u.currency ?? 'UAH')))
+      || (c.managed && !!u.agreement && (c.feePct ?? 0) !== (u.feePct ?? 0));
   });
 
   async function save() {
@@ -45,14 +46,14 @@ function Units({ source, period, units, onSaved }: { source: Source; period: str
   return (
     <Stack gap="xs">
       <Text size="xs" c="dimmed">
-        סמנו את הדירות ש{cfg.manager} מנהל{cfg.kind === 'liana' ? 'ת' : ''}{cfg.kind === 'yarach' ? ' ואת השכירות הצפויה של כל אחת בגריבנה. ההעברות מתחלקות לפי השכירות הצפויה' : ' ואת העמלה שלה'}.
+        סמנו את הדירות ש{cfg.manager} מנהל{cfg.kind === 'liana' ? 'ת' : ''}{cfg.kind === 'yarach' ? ' ואת השכירות של כל אחת: בגריבנה, סכום קבוע בחלוקה (פרנקל, מרכז העיר); בדולר, חלק מהיתרה (ארקדיה). דמי ניהול STF נקבעים בהגדרות' : ' ואת העמלה שלה'}.
         {' '}שינוי חל מ{monthLabel(period)} והלאה, וההיסטוריה נשמרת.
       </Text>
       <Table.ScrollContainer minWidth={520}>
         <Table verticalSpacing={4}>
           <Table.Thead>
             <Table.Tr><Table.Th>בניהול</Table.Th><Table.Th>דירה</Table.Th><Table.Th>בעלים</Table.Th>
-              <Table.Th>{cfg.kind === 'yarach' ? 'שכירות צפויה (₴)' : 'עמלה (%)'}</Table.Th></Table.Tr>
+              {cfg.kind === 'yarach' ? <Table.Th>שכירות לחודש</Table.Th> : <Table.Th>עמלה (%)</Table.Th>}</Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {units.map((u) => {
@@ -62,11 +63,19 @@ function Units({ source, period, units, onSaved }: { source: Source; period: str
                   <Table.Td><Checkbox checked={c.managed} onChange={(e) => set(u.id, { managed: e.currentTarget.checked })} /></Table.Td>
                   <Table.Td><Text size="sm">{u.title}</Text>{u.otherManager && <Badge size="xs" variant="light" color="gray">מנוהלת גם ע"י {u.otherManager}</Badge>}</Table.Td>
                   <Table.Td><Text size="xs" c="dimmed">{u.owner ?? 'ללא בעלים'}</Text></Table.Td>
-                  <Table.Td w={160}>
-                    {cfg.kind === 'yarach'
-                      ? <NumberInput size="xs" min={0} thousandSeparator="," disabled={!c.managed} value={c.expected ?? ''} onChange={(v) => set(u.id, { expected: numOrNull(v) })} />
-                      : <NumberInput size="xs" min={0} max={100} disabled={!c.managed} value={c.feePct ?? ''} onChange={(v) => set(u.id, { feePct: numOrNull(v) })} />}
-                  </Table.Td>
+                  {cfg.kind === 'yarach' && (
+                    <Table.Td w={200}>
+                      <Group gap={4} wrap="nowrap">
+                        <NumberInput size="xs" min={0} thousandSeparator="," disabled={!c.managed} value={c.expected ?? ''} onChange={(v) => set(u.id, { expected: numOrNull(v) })} w={110} />
+                        <SegmentedControl size="xs" disabled={!c.managed} value={c.currency ?? 'UAH'} onChange={(v) => set(u.id, { currency: v })} data={[{ value: 'UAH', label: '₴' }, { value: 'USD', label: '$' }]} />
+                      </Group>
+                    </Table.Td>
+                  )}
+                  {cfg.kind !== 'yarach' && (
+                    <Table.Td w={110}>
+                      <NumberInput size="xs" min={0} max={100} disabled={!c.managed} value={c.feePct ?? ''} onChange={(v) => set(u.id, { feePct: numOrNull(v) })} />
+                    </Table.Td>
+                  )}
                 </Table.Tr>
               );
             })}
@@ -81,6 +90,11 @@ function Units({ source, period, units, onSaved }: { source: Source; period: str
 }
 
 export function ManualReport({ source, onClose }: { source: Source; onClose: () => void }) {
+  if (MANUAL[source.adapter].kind === 'yarach') return <YarachMonth source={source} onClose={onClose} />;
+  return <MonthlyReport source={source} onClose={onClose} />;
+}
+
+function MonthlyReport({ source, onClose }: { source: Source; onClose: () => void }) {
   const cfg = MANUAL[source.adapter];
   const navigate = useNavigate();
   const qc = useQueryClient();

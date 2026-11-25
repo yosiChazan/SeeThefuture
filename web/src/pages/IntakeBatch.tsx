@@ -1,10 +1,10 @@
-import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Menu, Modal, Paper, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Badge, Breadcrumbs, Button, Group, List, Menu, Modal, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text, Textarea, Title, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle, IconArrowBackUp, IconCheck, IconDownload, IconEyeOff } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CountryBadge, QueryState } from '../components/common';
 import { useAccess } from '../lib/access';
 import { CATEGORY_HE, date, money, owners, propertyTitle } from '../lib/format';
@@ -35,7 +35,10 @@ const rowKind = (r: ImportRow) => `${r.raw.kind ?? ''} ${r.proposed ? CATEGORY_H
 // The money in the client's accounts (as shown in the amount column); minus is a debit.
 const rowAmount = (r: ImportRow) => (r.proposed?.entries ?? []).filter((e) => e.account).reduce((s, e) => s + e.amount, 0);
 
-function sortRows(rows: ImportRow[], key: SortKey, desc: boolean): ImportRow[] {
+// `then`: the sort before this one, kept for rows equal by this one (decision 157). Array.sort
+// keeps the order of equal rows, so sorting by the earlier one first does it.
+function sortRows(rows: ImportRow[], key: SortKey, desc: boolean, then?: { key: SortKey; desc: boolean }): ImportRow[] {
+  if (then && then.key !== key && then.key !== 'file') rows = sortRows(rows, then.key, then.desc);
   if (key === 'file') return rows;
   const by = (a: ImportRow, b: ImportRow): number => {
     if (key === 'date') {
@@ -54,7 +57,7 @@ function sortRows(rows: ImportRow[], key: SortKey, desc: boolean): ImportRow[] {
   });
 }
 
-function loadSort(): { key: SortKey; desc: boolean } {
+function loadSort(): { key: SortKey; desc: boolean; then?: { key: SortKey; desc: boolean } } {
   try { return { key: 'file', desc: false, ...JSON.parse(localStorage.getItem(SORT_KEY) ?? '{}') }; } catch { return { key: 'file', desc: false }; }
 }
 
@@ -84,7 +87,7 @@ export function IntakeBatch() {
   const [showPosted, setShowPosted] = useState(false);
   const [reason, setReason] = useState('');
   const [sort, setSortState] = useState(loadSort);
-  const setSort = (v: { key: SortKey; desc: boolean }) => {
+  const setSort = (v: { key: SortKey; desc: boolean; then?: { key: SortKey; desc: boolean } }) => {
     setSortState(v);
     try { localStorage.setItem(SORT_KEY, JSON.stringify(v)); } catch { /* not saved */ }
   };
@@ -163,6 +166,14 @@ export function IntakeBatch() {
         labels: { confirm: 'אישור ורישום', cancel: 'ביטול' },
         onConfirm: async () => {
           setBusy(true);
+          // Yarach's division is posted on the day it is approved (decision 161).
+          if (batch.source.adapter === 'yarach_accrual') {
+            const today = dayjs().format('YYYY-MM-DD');
+            for (const r of rows.filter((x) => x.proposed && x.proposed.occurred_on !== today)) {
+              const up = await supabase.from('import_rows').update({ proposed: { ...r.proposed!, occurred_on: today } }).eq('id', r.id);
+              if (up.error) { setBusy(false); notifications.show({ color: 'red', message: up.error.message }); return; }
+            }
+          }
           const { data, error } = await supabase.rpc('commit_import_batch', { p_batch: batch.id });
           setBusy(false);
           if (error) { notifications.show({ color: 'red', title: 'הרישום נכשל, שום דבר לא נרשם', message: error.message }); return; }
@@ -230,6 +241,8 @@ export function IntakeBatch() {
             </Alert>
           )}
 
+          {notes?.accrual && <AccrualRate batchStatus={batch.status} period={notes.period} rate={notes.accrual.rate} rateDate={notes.accrual.rate_date} />}
+
           {!!notes?.warnings.length && (
             <Alert color="orange" title="בדיקות על הקובץ כולו">
               <List size="sm">{notes.warnings.map((w) => <List.Item key={w}>{w}</List.Item>)}</List>
@@ -264,7 +277,7 @@ export function IntakeBatch() {
 
           <Group gap="sm">
             <Text size="sm" c="dimmed">סדר השורות:</Text>
-            <SegmentedControl size="xs" value={sort.key} onChange={(v) => setSort({ key: v as SortKey, desc: false })}
+            <SegmentedControl size="xs" value={sort.key} onChange={(v) => setSort({ key: v as SortKey, desc: false, then: sort.key !== v ? { key: sort.key, desc: sort.desc } : sort.then })}
               data={[{ value: 'file', label: 'כמו בקובץ' }, { value: 'date', label: 'תאריך' }, { value: 'kind', label: 'סוג תנועה' }, { value: 'amount', label: 'סכום' }]} />
             {sort.key !== 'file' && (
               <SegmentedControl size="xs" value={sort.desc ? 'desc' : 'asc'} onChange={(v) => setSort({ ...sort, desc: v === 'desc' })}
@@ -274,7 +287,7 @@ export function IntakeBatch() {
 
           {groups.map(([ref, all]) => {
             // In an updated report most rows were posted before; they are hidden by default.
-            const rs = sortRows(showPosted ? all : all.filter((r) => r.match_status !== 'duplicate'), sort.key, sort.desc);
+            const rs = sortRows(showPosted ? all : all.filter((r) => r.match_status !== 'duplicate'), sort.key, sort.desc, sort.then);
             if (!rs.length) return null;
             const first = rs[0];
             const prop = first.property_id ? byProperty.get(first.property_id) : undefined;
@@ -389,5 +402,40 @@ export function IntakeBatch() {
         </Stack>
       );
     }}</QueryState>
+  );
+}
+
+// Yarach's monthly charge (SPEC decision 141): the dollar rate it used, and redrafting the
+// month with another one. The open draft is replaced; an approved month stays as it is.
+function AccrualRate({ batchStatus, period, rate, rateDate }: { batchStatus: string; period: string; rate: number | null; rateDate: string | null }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [v, setV] = useState<number | ''>(rate ?? '');
+  const [busy, setBusy] = useState(false);
+  const open = batchStatus === 'in_review' || batchStatus === 'parsed';
+  async function redraft() {
+    if (!v || v <= 0) return;
+    setBusy(true);
+    const { data, error } = await supabase.rpc('yarach_accrual', { p_period: period, p_rate: v });
+    setBusy(false);
+    if (error) { notifications.show({ color: 'red', title: 'הבנייה מחדש נכשלה', message: error.message }); return; }
+    await qc.invalidateQueries();
+    notifications.show({ color: 'teal', message: 'החודש נבנה מחדש עם השער החדש' });
+    navigate(`/intake/${data as string}`);
+  }
+  return (
+    <Paper withBorder p="sm">
+      <Group gap="sm" align="flex-end">
+        <Text size="sm">
+          שער הדולר: <b>{rate ?? 'אין'}</b>{rateDate ? ` ₴ (מ-${dayjs(rateDate).format('DD.MM.YYYY')})` : ''}
+        </Text>
+        {open && (
+          <>
+            <NumberInput size="xs" label="שער אחר" value={v} onChange={(x) => setV(x === '' ? '' : Number(x))} min={0} decimalScale={4} w={120} />
+            <Button size="xs" variant="light" onClick={redraft} loading={busy} disabled={!v || v === rate}>בנייה מחדש עם השער</Button>
+          </>
+        )}
+      </Group>
+    </Paper>
   );
 }

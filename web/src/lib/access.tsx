@@ -17,6 +17,8 @@ export interface Access {
   canApprove: (c: Country) => boolean;
   // Sensitive documents and ID numbers in some country (SPEC decisions 64, 66).
   canViewSensitive: boolean;
+  // Set by an admin with a new password: replace it before anything else (SPEC decision 87).
+  mustChangePassword: boolean;
 }
 
 const AccessContext = createContext<Access | null>(null);
@@ -27,8 +29,8 @@ export function useAccessQuery(userId: string) {
   return useQuery({
     queryKey: ['access', userId],
     queryFn: async (): Promise<Access | null> => {
-      const profile = must(await supabase.from('profiles').select('display_name, is_admin, is_management, client_party_id').eq('user_id', userId).maybeSingle()) as
-        { display_name: string; is_admin: boolean; is_management: boolean; client_party_id: string | null } | null;
+      const profile = must(await supabase.from('profiles').select('display_name, is_admin, is_management, client_party_id, must_change_password').eq('user_id', userId).maybeSingle()) as
+        { display_name: string; is_admin: boolean; is_management: boolean; client_party_id: string | null; must_change_password: boolean } | null;
       if (!profile) return null;
       const roles = must(await supabase.from('user_country_roles').select('country_code, level, can_view_sensitive').eq('user_id', userId)) as { country_code: Country; level: Level; can_view_sensitive: boolean }[];
       const level = new Map(roles.map((r) => [r.country_code, RANK[r.level]]));
@@ -46,6 +48,7 @@ export function useAccessQuery(userId: string) {
         canEdit,
         canApprove,
         canViewSensitive: profile.is_admin || roles.some((r) => r.can_view_sensitive),
+        mustChangePassword: profile.must_change_password,
       };
     },
   });

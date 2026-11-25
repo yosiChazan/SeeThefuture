@@ -1,5 +1,6 @@
-import { Button, Group, Modal, Select, SimpleGrid, Text, TextInput, Textarea } from '@mantine/core';
+import { ActionIcon, Button, Group, Modal, Select, SimpleGrid, Text, TextInput, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -12,7 +13,17 @@ import { supabase } from '../lib/supabase';
 // Adds a client, or edits one (SPEC decisions 62, 65). Managers' reports name owners in
 // Latin letters, and the intake matches them by name: when the display name changes and
 // no name as in the reports is set yet, the old name is kept there, so matching goes on.
-export function ClientForm({ client, idNumber = null, opened, onClose }: { client?: ClientRow; idNumber?: string | null; opened: boolean; onClose: () => void }) {
+// `contact`: a new contact rather than a client (SPEC decision 133): with a role (tenant,
+// lawyer, supplier…) instead of the client role, listed with the contacts.
+const CONTACT_ROLES = [
+  { value: 'contact', label: 'איש קשר' }, { value: 'tenant', label: 'שוכר' }, { value: 'manager', label: 'מנהל נכסים' }, { value: 'lawyer', label: 'עו"ד' },
+  { value: 'hotel', label: 'מלון' }, { value: 'developer', label: 'יזם' }, { value: 'supplier', label: 'ספק' }, { value: 'marketer', label: 'משווק' },
+];
+// `initial`: a new person's name and number to start from (a contact card sent in WhatsApp, decision 203);
+// `onAdded`: called with the new id instead of going to its card.
+export function ClientForm({ client, idNumber = null, opened, onClose, contact = false, initial, onAdded }: { client?: ClientRow; idNumber?: string | null; opened: boolean; onClose: () => void; contact?: boolean;
+  initial?: { first_name?: string; last_name?: string; phone?: string; phone_label?: string }; onAdded?: (id: string) => void }) {
+  const [role, setRole] = useState('contact');
   useAccess();
   // The ID number is a regular detail, open to all staff (SPEC decision 72).
   const canId = true;
@@ -22,9 +33,11 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [v, setV] = useState({
-    display_name: client?.display_name ?? '', first_name: client?.first_name ?? split?.first ?? '', last_name: client?.last_name ?? split?.last ?? '', legal_name: client?.legal_name ?? '', kind: client?.kind ?? ('person' as ClientRow['kind']),
-    phone: client?.phone ?? '', email: client?.email ?? '', tax_id: client?.tax_id ?? '', address: client?.address ?? '', notes: client?.notes ?? '',
+    display_name: client?.display_name ?? '', first_name: client?.first_name ?? split?.first ?? initial?.first_name ?? '', last_name: client?.last_name ?? split?.last ?? initial?.last_name ?? '', legal_name: client?.legal_name ?? '', kind: client?.kind ?? ('person' as ClientRow['kind']),
+    phone: client?.phone ?? initial?.phone ?? '', phone_label: client?.phone_label ?? initial?.phone_label ?? '', email: client?.email ?? '', tax_id: client?.tax_id ?? '', address: client?.address ?? '', notes: client?.notes ?? '',
   });
+  // More numbers, each with what it is (decision 154).
+  const [extra, setExtra] = useState<{ phone: string; label: string }[]>((client?.extra_phones ?? []).map((x) => ({ phone: x.phone, label: x.label ?? '' })));
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof typeof v>(k: K, x: (typeof v)[K]) => setV((p) => ({ ...p, [k]: x }));
   const person = v.kind === 'person';
@@ -37,7 +50,8 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
     setBusy(true);
     const fields = {
       display_name: name, first_name: person ? blank(v.first_name) : null, last_name: person ? blank(v.last_name) : null, legal_name: keepOld ? client!.display_name : blank(v.legal_name), kind: v.kind,
-      phone: blank(v.phone), email: blank(v.email), tax_id: blank(v.tax_id), address: blank(v.address), notes: blank(v.notes),
+      phone: blank(v.phone), phone_label: blank(v.phone_label),
+      extra_phones: extra.filter((x) => x.phone.trim()).map((x) => ({ phone: x.phone.trim(), label: x.label.trim() || null })), email: blank(v.email), tax_id: blank(v.tax_id), address: blank(v.address), notes: blank(v.notes),
     };
     const idClean = idNo.replace(/\s/g, '');
     const saveId = async (partyId: string) => {
@@ -57,18 +71,20 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
     // A new client: the party, and its client role so it is listed with the clients.
     const id = crypto.randomUUID();
     const add = await supabase.from('parties').insert({ id, ...fields });
-    const role = add.error ? add : await supabase.from('party_roles').insert({ party_id: id, role: 'client' });
-    if (!role.error) try { await saveId(id); } catch (e) { notifications.show({ color: 'orange', title: 'הלקוח נוסף, מספר הזהות לא נשמר', message: (e as Error).message }); }
+    const who = contact ? 'איש הקשר' : 'הלקוח';
+    const added = add.error ? add : await supabase.from('party_roles').insert({ party_id: id, role: contact ? role : 'client' });
+    if (!added.error) try { await saveId(id); } catch (e) { notifications.show({ color: 'orange', title: `${who} נוסף, מספר הזהות לא נשמר`, message: (e as Error).message }); }
     setBusy(false);
-    if (role.error) { notifications.show({ color: 'red', title: 'הלקוח לא נוסף', message: role.error.message }); return; }
-    notifications.show({ color: 'teal', message: 'הלקוח נוסף' });
+    if (added.error) { notifications.show({ color: 'red', title: `${who} לא נוסף`, message: added.error.message }); return; }
+    notifications.show({ color: 'teal', message: `${who} נוסף` });
     await qc.invalidateQueries();
     onClose();
-    navigate(`/clients/${id}`);
+    if (onAdded) onAdded(id); else navigate(contact ? `/contacts/${id}` : `/clients/${id}`);
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title={client ? 'עריכת פרטי לקוח' : 'לקוח חדש'} size="lg">
+    <Modal opened={opened} onClose={onClose} title={client ? 'עריכת פרטי לקוח' : contact ? 'איש קשר חדש' : 'לקוח חדש'} size="lg">
+      {contact && !client && <Select label="תפקיד" mb="sm" w={220} allowDeselect={false} data={CONTACT_ROLES} value={role} onChange={(x) => x && setRole(x)} />}
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
         {person ? (
           <>
@@ -82,7 +98,18 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
           value={v.legal_name} onChange={(e) => set('legal_name', e.currentTarget.value)} placeholder={keepOld ? client.display_name : undefined} />
         <Select label="סוג" value={v.kind} allowDeselect={false} onChange={(x) => x && set('kind', x as ClientRow['kind'])}
           data={[{ value: 'person', label: 'לקוח' }, { value: 'company', label: 'חברה' }]} />
-        <TextInput label="טלפון" dir="ltr" value={v.phone} onChange={(e) => set('phone', e.currentTarget.value)} />
+        <Group grow gap="xs" align="flex-end">
+          <TextInput label="טלפון" dir="ltr" value={v.phone} onChange={(e) => set('phone', e.currentTarget.value)} />
+          <TextInput label="תיאור" placeholder="למשל: נייד, וואטסאפ" value={v.phone_label} onChange={(e) => set('phone_label', e.currentTarget.value)} />
+        </Group>
+        {extra.map((x, i) => (
+          <Group key={i} grow gap="xs" align="flex-end" wrap="nowrap">
+            <TextInput label={`טלפון נוסף ${i + 1}`} dir="ltr" value={x.phone} onChange={(e) => { const val = e.currentTarget.value; setExtra((l) => l.map((y, j) => (j === i ? { ...y, phone: val } : y))); }} />
+            <TextInput label="תיאור" placeholder="למשל: אשתו, משרד" value={x.label} onChange={(e) => { const val = e.currentTarget.value; setExtra((l) => l.map((y, j) => (j === i ? { ...y, label: val } : y))); }} />
+            <ActionIcon variant="subtle" color="red" mb={4} style={{ flexGrow: 0 }} onClick={() => setExtra((l) => l.filter((_, j) => j !== i))} aria-label="הסרה"><IconTrash size={16} /></ActionIcon>
+          </Group>
+        ))}
+        <Button size="compact-xs" variant="subtle" leftSection={<IconPlus size={14} />} onClick={() => setExtra((l) => [...l, { phone: '', label: '' }])} w="fit-content">טלפון נוסף</Button>
         <TextInput label="מייל" dir="ltr" type="email" value={v.email} onChange={(e) => set('email', e.currentTarget.value)} />
         {canId && (
           <TextInput label="תעודת זהות" dir="ltr" value={idNo} onChange={(e) => setIdNo(e.currentTarget.value)}
@@ -96,7 +123,7 @@ export function ClientForm({ client, idNumber = null, opened, onClose }: { clien
       {keepOld && <Text size="xs" c="dimmed" mt="xs">השם הקודם, "{client!.display_name}", יישמר כשם בדוחות, כדי שהדוחות ימשיכו לזהות את הלקוח.</Text>}
       <Group justify="flex-end" mt="md">
         <Button variant="default" onClick={onClose}>ביטול</Button>
-        <Button onClick={save} loading={busy} disabled={!name || (person && !v.last_name.trim()) || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : 'הוספת לקוח'}</Button>
+        <Button onClick={save} loading={busy} disabled={!name || (person && !v.last_name.trim()) || (!!idNo.trim() && !/^[0-9A-Za-z-]{5,20}$/.test(idNo.replace(/\s/g, '')))}>{client ? 'שמירה' : contact ? 'הוספת איש קשר' : 'הוספת לקוח'}</Button>
       </Group>
     </Modal>
   );

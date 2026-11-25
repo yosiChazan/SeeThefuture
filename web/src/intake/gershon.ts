@@ -14,6 +14,11 @@
 // decision 43). The first report of an apartment therefore also proposes the
 // "before" amount as the fund's opening balance; its fingerprint has no month, so
 // once posted it is never proposed again.
+//
+// Some apartments share one dollar fund (SPEC decision 91): Gershon then writes them one
+// under the other, each starting from the previous one's balance ("47 024,34 - 87,95 =
+// 46 936,39", next "46 936,39 - 107,39 = ..."). Such an apartment continues the fund
+// above it, so it proposes no opening balance of its own: the money is counted once.
 
 import { round2, expectHeader, findPeriod, lastDay, num, text } from './util.ts';
 import { FormatError, type Book, type ParseResult, type ParsedRow, type PropertyHint } from './types.ts';
@@ -56,6 +61,7 @@ export function parseGershon(book: Book, fileName = ''): ParseResult {
   const rows: ParsedRow[] = [];
   const warnings: string[] = [];
   let sumUtilities = 0; let sumLegal = 0;
+  let previous: { ref: string; after: number } | null = null;
 
   for (let r = 2; r <= g.rows; r++) {
     const hint = gershonHint(text(g, r, 2), text(g, r, 3));
@@ -82,7 +88,9 @@ export function parseGershon(book: Book, fileName = ''): ParseResult {
       errors.push(`לא זוהתה יתרה דולרית בעמודה K ("${balanceText || 'ריק'}")`);
     } else if ('usd' in balance) {
       if (Math.abs(round2(balance.before - balance.usd) - balance.after) > 0.01) errors.push(`חישוב היתרה בקובץ לא מסתדר: ${balanceText}`);
-      add('יתרת פתיחה', {
+      const continues = previous && Math.abs(balance.before - previous.after) <= 0.01 ? previous.ref : null;
+      previous = { ref: hint.ref, after: balance.after };
+      if (!continues) add('יתרת פתיחה', {
         occurred_on: period, period, category: 'opening_balance',
         description: `יתרת פתיחה של קופת ההוצאות ${hint.ref}: כסף שנשאר מהרכישה (לא שכירות)`,
         entries: [{ amount: balance.before, currency: 'USD', account: { kind: 'expense_pool', holder: 'source' } }],
@@ -95,10 +103,12 @@ export function parseGershon(book: Book, fileName = ''): ParseResult {
           { amount: -balance.usd, currency: 'USD', fx_rate: rate, account: { kind: 'expense_pool', holder: 'source' } },
           { amount: total, currency: 'UAH', fx_rate: rate, account: { kind: 'expense_pool', holder: 'source' } },
         ],
-      }, balance.usd, [`יתרה דולרית לפי גרשון: $${balance.before} → $${balance.after}`]);
+      }, balance.usd, [`יתרה דולרית לפי גרשון: $${balance.before} → $${balance.after}`,
+        ...(continues ? [`קופה משותפת: ממשיכה את היתרה של ${continues}, ולכן בלי יתרת פתיחה משלה`] : [])]);
     } else if (Math.abs(balance.owes - total) > 0.01) {
       errors.push(`גרשון כותב "צריך לשלם ${balance.owes}", אבל סך ההוצאות ${total}`);
     }
+    if (!balance || !('usd' in balance)) previous = null;
     const owes = balance && 'owes' in balance ? [`אין יתרה דולרית: הלקוח צריך לשלם ${balance.owes} ₴`] : [];
 
     if (utilities) add('הוצאות בניין', {

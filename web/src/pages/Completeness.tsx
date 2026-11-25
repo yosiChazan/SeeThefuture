@@ -1,25 +1,27 @@
 import { Alert, Anchor, Badge, Button, Group, Loader, Modal, Paper, Select, Stack, Switch, Text, TextInput, Textarea, Title } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { IconEyeOff, IconSearch } from '@tabler/icons-react';
+import { IconEyeOff, IconPlus, IconSearch } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { IdFromScans } from '../components/IdFromScans';
+import { ManualTopics, NewTopic, useTopics } from '../components/ManualTopics';
 import { linkPartners } from '../components/Partners';
 import { useAccess } from '../lib/access';
 import { findItems, GROUP_HE, type Doc, type Fix, type Group as G, type Item } from '../lib/completeness';
 import { propertyTitle } from '../lib/format';
 import { useBatches } from '../lib/intake';
-import { idNumberOf, setClientRole, useClients, usePartyLinks, useProperties } from '../lib/queries';
+import { idNumberOf, setClientRole, useClients, useContacts, usePartyLinks, useProperties } from '../lib/queries';
 import { must, supabase } from '../lib/supabase';
+import { documentLink } from '../lib/viewer';
 
 const DOC_TYPES = [
   { value: 'passport', label: 'דרכון' }, { value: 'id_card', label: 'תעודת זהות וספח' }, { value: 'poa', label: 'ייפוי כוח' },
   { value: 'purchase_contract', label: 'חוזה רכישה' }, { value: 'land_registry', label: 'נסח טאבו' }, { value: 'land_book', label: 'Land book' },
   { value: 'lease_contract', label: 'חוזה שכירות חתום' }, { value: 'lease_appendix', label: 'נספח / הארכה' }, { value: 'payment_proof', label: 'הוכחת תשלום / קבלה' },
-  { value: 'bank_document', label: 'מסמך בנק' }, { value: 'management_contract', label: 'חוזה ניהול' }, { value: 'caveat', label: 'הערת אזהרה' },
+  { value: 'bank_document', label: 'מסמך בנק' }, { value: 'e9', label: 'E9 (יוון)' }, { value: 'photo', label: 'תמונה' }, { value: 'floor_plan', label: 'שרטוט' }, { value: 'management_contract', label: 'חוזה ניהול' }, { value: 'caveat', label: 'הערת אזהרה' },
   { value: 'attachment', label: 'מסמך אחר' },
 ];
 const PAGE = 60;
@@ -55,8 +57,8 @@ function useExtra() {
 function DocLink({ d }: { d: Doc }) {
   async function open() {
     await supabase.rpc('log_document_access', { doc: d.id });
-    const { data, error } = await supabase.storage.from('documents').createSignedUrl(d.storage_path, 60);
-    if (error) notifications.show({ color: 'red', message: error.message }); else window.open(data.signedUrl, '_blank');
+    const link = await documentLink(d.storage_path, d.file_name);
+    if (link.error) notifications.show({ color: 'red', message: link.error }); else window.open(link.url, '_blank');
   }
   return <Anchor size="sm" dir="ltr" onClick={open}>{d.file_name ?? d.storage_path.split('/').pop()}</Anchor>;
 }
@@ -80,10 +82,18 @@ export function Completeness() {
   const clients = useClients();
   const links = usePartyLinks();
   const properties = useProperties();
+  const contacts = useContacts();
+  const lists = useMemo(() => ({
+    clients: (clients.data ?? []).map((c) => ({ value: c.id, label: c.display_name })),
+    contacts: (contacts.data ?? []).map((c) => ({ value: c.id, label: c.display_name })),
+    properties: (properties.data ?? []).map((p) => ({ value: p.id, label: propertyTitle(p) })),
+  }), [clients.data, contacts.data, properties.data]);
   const batches = useBatches();
   const extra = useExtra();
   const [params, setParams] = useSearchParams();
-  const group = (params.get('g') ?? 'all') as G | 'all';
+  const group = (params.get('g') ?? 'all') as G | 'all' | 'manual';
+  const topics = useTopics();
+  const [adding, setAdding] = useState(false);
   const check = params.get('check');
   const search = params.get('q') ?? '';
   const [showIgnored, setShowIgnored] = useState(false);
@@ -165,7 +175,13 @@ export function Completeness() {
   const counts = (g: G | 'all') => open.filter((i) => g === 'all' || i.group === g).length;
   return (
     <Stack>
-      <Title order={2}>השלמת פרטים</Title>
+      <Group justify="space-between">
+        <Title order={2}>השלמת פרטים</Title>
+        <Button leftSection={<IconPlus size={16} />} onClick={() => setAdding(true)}>נושא חדש</Button>
+      </Group>
+      {adding && (
+        <NewTopic onClose={() => { setAdding(false); setMany({ g: 'manual', check: null }); }} lists={lists} />
+      )}
       <Text size="sm" c="dimmed">מה חסר אצל לקוחות, נכסים וחוזים, ומה כבר יש במערכת שיכול לעזור להשלים. "להתעלם" מסתיר פריט עם סיבה, ואפשר להחזיר אותו. דירות שנמכרו לא נבדקות.</Text>
       {!ready ? <Group><Loader size="sm" /><Text size="sm">בודק…</Text></Group> : (
         <>
@@ -175,7 +191,16 @@ export function Completeness() {
                 {g === 'all' ? 'הכול' : GROUP_HE[g]} · {counts(g)}
               </Badge>
             ))}
+            <Badge size="lg" color="violet" variant={group === 'manual' ? 'filled' : 'light'} style={{ cursor: 'pointer' }} onClick={() => setMany({ g: 'manual', check: null })}>
+              ידני · {(topics.data ?? []).filter((t) => t.status !== 'done').length}
+            </Badge>
           </Group>
+          {group === 'manual' ? (
+            <>
+              <TextInput placeholder="חיפוש בנושאים" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => set('q', e.currentTarget.value)} w={240} />
+              <ManualTopics search={search} lists={lists} />
+            </>
+          ) : <>
           <Group>
             <Select placeholder="כל הבדיקות" data={checks.map(([value, label]) => ({ value, label: `${label} (${open.filter((i) => i.key === value).length})` }))} value={check} onChange={(v) => set('check', v)} clearable w={320} />
             <TextInput placeholder="חיפוש לקוח או נכס" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => set('q', e.currentTarget.value)} w={240} />
@@ -214,6 +239,7 @@ export function Completeness() {
             </Paper>
           ))}
           {shown.length > limit && <Button variant="default" onClick={() => setLimit((l) => l + PAGE)}>עוד {Math.min(PAGE, shown.length - limit)} פריטים</Button>}
+          </>}
         </>
       )}
       {ignoring && (

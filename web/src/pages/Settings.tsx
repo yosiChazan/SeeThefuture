@@ -6,7 +6,12 @@ import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { QueryState } from '../components/common';
 import { ResetItai } from '../components/ResetItai';
+import { FileCategoriesSettings } from '../components/FileCategoriesSettings';
+import { FeeRatesSettings } from '../components/FeeRatesSettings';
+import { TaskCategoriesSettings } from '../components/TaskCategoriesSettings';
 import { SplitNames } from '../components/SplitNames';
+import { WhatsAppSettings } from '../components/WhatsAppSettings';
+import { AiGuidesSettings } from '../components/AiGuidesSettings';
 import { useAccess } from '../lib/access';
 import { listSharedFiles, loadDropbox, saveSettings, startConnect } from '../lib/dropbox';
 
@@ -44,6 +49,8 @@ export function Settings() {
   return (
     <Stack>
       <Title order={2}>הגדרות</Title>
+      <WhatsAppSettings />
+      <AiGuidesSettings />
       <QueryState q={q}>{(d) => (
         <Paper withBorder p="md">
           <Group justify="space-between" mb="sm">
@@ -63,6 +70,10 @@ export function Settings() {
           </Stack>
         </Paper>
       )}</QueryState>
+      <FeeRatesSettings />
+      <FileCategoriesSettings />
+      <TaskCategoriesSettings />
+      <TaskCategoriesSettings table="task_triggers" />
       <SplitNames />
       <ResetItai />
     </Stack>

@@ -1,11 +1,12 @@
-import { AppShell, Badge, Burger, Group, Image, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
+import { AppShell, Badge, Burger, Button, Group, Image, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconAddressBook, IconBuildingCommunity, IconChecklist, IconCrane, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUsers,
-} from '@tabler/icons-react';
-import { NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
+  IconAddressBook, IconBuildingCommunity, IconChecklist, IconFileImport, IconFileText, IconHome, IconLogout, IconMessages, IconSettings, IconSignature, IconUserShield, IconUsers, IconChartBar, IconCash, IconListCheck } from '@tabler/icons-react';
+import { useState } from 'react';
+import { Navigate, NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { useAccess } from '../lib/access';
 import { COUNTRY_HE } from '../lib/format';
+import { WhatsAppHeartbeat } from './WhatsAppHeartbeat';
 import { supabase } from '../lib/supabase';
 
 const NAV = [
@@ -16,19 +17,30 @@ const NAV = [
   { to: '/leases', label: 'חוזי שכירות', icon: IconSignature },
   { to: '/intake', label: 'קליטת דוחות', icon: IconFileImport },
   { to: '/completeness', label: 'השלמת פרטים', icon: IconChecklist },
+  { to: '/stats', label: 'סטטיסטיקות', icon: IconChartBar },
+  { to: '/cash', label: 'קופות', icon: IconCash },
+  { to: '/tasks', label: 'משימות/שאלות', icon: IconListCheck },
+  { to: '/messages', label: 'הודעות', icon: IconMessages },
 ];
 
 // Screens from SPEC §6.1 that wait for later stages (§9).
 const LATER = [
-  { label: 'רכישה ובנייה', icon: IconCrane },
-  { label: 'הודעות', icon: IconMessages },
   { label: 'דוחות חודשיים', icon: IconFileText },
 ];
+
+// Management sees only the statistics page, with a switch to the whole office site at
+// their own (read) access, and back (SPEC decision 98). The choice is kept per browser.
+const VIEW_KEY = 'management-view';
+const readView = () => { try { return localStorage.getItem(VIEW_KEY) === 'full' ? 'full' : 'stats'; } catch { return 'stats'; } };
 
 export function Layout() {
   const [opened, { toggle, close }] = useDisclosure();
   const access = useAccess();
   const { pathname } = useLocation();
+  const [view, setView] = useState<'stats' | 'full'>(readView);
+  const statsOnly = access.isManagement && !access.isAdmin && view === 'stats';
+  const switchView = (v: 'stats' | 'full') => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ } };
+  if (statsOnly && pathname !== '/stats' && pathname !== '/tasks') return <Navigate to="/stats" replace />;
   const role = access.isAdmin ? 'מנהל מערכת' : access.isManagement ? 'הנהלה' : access.countries.map((c) => COUNTRY_HE[c]).join(', ');
 
   return (
@@ -40,8 +52,14 @@ export function Layout() {
             <Image src="/logo-mark.png" w={32} h={32} alt="" />
             <Text fw={700}>See the Future</Text>
             <Text c="dimmed" size="sm" visibleFrom="xs">משרד</Text>
+            <Tooltip label={`נבנתה ${new Date(__APP_VERSION__.built).toLocaleString('he-IL')}${__APP_VERSION__.sha ? ` · ${__APP_VERSION__.sha}` : ''}`}>
+              <Badge size="sm" variant="light" color="gray">{__APP_VERSION__.pr ? `גרסה ${__APP_VERSION__.pr}` : 'גרסה מקומית'}</Badge>
+            </Tooltip>
           </Group>
           <Group gap="xs">
+            {access.isManagement && !access.isAdmin && (statsOnly
+              ? <Button size="xs" variant="light" onClick={() => switchView('full')}>לאתר המלא</Button>
+              : <Button size="xs" variant="light" component={RouterLink} to="/stats" onClick={() => switchView('stats')}>לסטטיסטיקות בלבד</Button>)}
             <Text size="sm">{access.displayName}</Text>
             <Badge variant="light" visibleFrom="xs">{role}</Badge>
           </Group>
@@ -50,12 +68,12 @@ export function Layout() {
       <AppShell.Navbar p="xs">
         <AppShell.Section grow component={ScrollArea}>
           <Stack gap={2}>
-            {NAV.map((n) => (
+            {(statsOnly ? NAV.filter((n) => n.to === '/stats' || n.to === '/tasks') : NAV).map((n) => (
               <NavLink key={n.to} component={RouterLink} to={n.to} label={n.label} onClick={close}
                 leftSection={<n.icon size={18} />} active={n.to === '/' ? pathname === '/' : pathname.startsWith(n.to)} />
             ))}
-            <Text size="xs" c="dimmed" mt="md" mb={4} px="sm">בשלבים הבאים</Text>
-            {LATER.map((n) => (
+            {!statsOnly && <Text size="xs" c="dimmed" mt="md" mb={4} px="sm">בשלבים הבאים</Text>}
+            {!statsOnly && LATER.map((n) => (
               <Tooltip key={n.label} label="ייבנה בשלב הבא" position="left">
                 <NavLink label={n.label} leftSection={<n.icon size={18} />} disabled />
               </Tooltip>
@@ -64,12 +82,16 @@ export function Layout() {
         </AppShell.Section>
         <AppShell.Section>
           {access.isAdmin && (
+            <NavLink component={RouterLink} to="/users" label="משתמשים" leftSection={<IconUserShield size={18} />} onClick={close} active={pathname.startsWith('/users')} />
+          )}
+          {access.isAdmin && (
             <NavLink component={RouterLink} to="/settings" label="הגדרות" leftSection={<IconSettings size={18} />} onClick={close} active={pathname.startsWith('/settings')} />
           )}
           <NavLink label="יציאה" leftSection={<IconLogout size={18} />} onClick={() => supabase.auth.signOut()} />
         </AppShell.Section>
       </AppShell.Navbar>
       <AppShell.Main bg="gray.0">
+        <WhatsAppHeartbeat />
         <Outlet />
       </AppShell.Main>
     </AppShell>
