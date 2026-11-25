@@ -320,7 +320,7 @@ export function PropertyEntries({ propertyId, country, accounts, children }: { p
   return (
     <Paper withBorder p="md">
       <Group justify="space-between" mb={4}>
-        <Title order={4}>תנועות</Title>
+        <Title order={4}>תנועות שכירות</Title>
         {access.canEdit(country) && <Button size="xs" variant="light" leftSection={<IconPlus size={14} />} onClick={() => setAdding(true)}>תנועה חדשה</Button>}
       </Group>
       <Text size="xs" c="dimmed" mb="sm">התנועות של הנכס הזה בכל חשבון, לפי הבעלים. תנועה חדשה נכנסת לחשבון אחרי אישור כספים.</Text>
