@@ -19,7 +19,10 @@ const CONTACT_ROLES = [
   { value: 'contact', label: 'איש קשר' }, { value: 'tenant', label: 'שוכר' }, { value: 'manager', label: 'מנהל נכסים' }, { value: 'lawyer', label: 'עו"ד' },
   { value: 'hotel', label: 'מלון' }, { value: 'developer', label: 'יזם' }, { value: 'supplier', label: 'ספק' }, { value: 'marketer', label: 'משווק' },
 ];
-export function ClientForm({ client, idNumber = null, opened, onClose, contact = false }: { client?: ClientRow; idNumber?: string | null; opened: boolean; onClose: () => void; contact?: boolean }) {
+// `initial`: a new person's name and number to start from (a contact card sent in WhatsApp, decision 203);
+// `onAdded`: called with the new id instead of going to its card.
+export function ClientForm({ client, idNumber = null, opened, onClose, contact = false, initial, onAdded }: { client?: ClientRow; idNumber?: string | null; opened: boolean; onClose: () => void; contact?: boolean;
+  initial?: { first_name?: string; last_name?: string; phone?: string; phone_label?: string }; onAdded?: (id: string) => void }) {
   const [role, setRole] = useState('contact');
   useAccess();
   // The ID number is a regular detail, open to all staff (SPEC decision 72).
@@ -30,8 +33,8 @@ export function ClientForm({ client, idNumber = null, opened, onClose, contact =
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [v, setV] = useState({
-    display_name: client?.display_name ?? '', first_name: client?.first_name ?? split?.first ?? '', last_name: client?.last_name ?? split?.last ?? '', legal_name: client?.legal_name ?? '', kind: client?.kind ?? ('person' as ClientRow['kind']),
-    phone: client?.phone ?? '', phone_label: client?.phone_label ?? '', email: client?.email ?? '', tax_id: client?.tax_id ?? '', address: client?.address ?? '', notes: client?.notes ?? '',
+    display_name: client?.display_name ?? '', first_name: client?.first_name ?? split?.first ?? initial?.first_name ?? '', last_name: client?.last_name ?? split?.last ?? initial?.last_name ?? '', legal_name: client?.legal_name ?? '', kind: client?.kind ?? ('person' as ClientRow['kind']),
+    phone: client?.phone ?? initial?.phone ?? '', phone_label: client?.phone_label ?? initial?.phone_label ?? '', email: client?.email ?? '', tax_id: client?.tax_id ?? '', address: client?.address ?? '', notes: client?.notes ?? '',
   });
   // More numbers, each with what it is (decision 154).
   const [extra, setExtra] = useState<{ phone: string; label: string }[]>((client?.extra_phones ?? []).map((x) => ({ phone: x.phone, label: x.label ?? '' })));
@@ -76,7 +79,7 @@ export function ClientForm({ client, idNumber = null, opened, onClose, contact =
     notifications.show({ color: 'teal', message: `${who} נוסף` });
     await qc.invalidateQueries();
     onClose();
-    navigate(contact ? `/contacts/${id}` : `/clients/${id}`);
+    if (onAdded) onAdded(id); else navigate(contact ? `/contacts/${id}` : `/clients/${id}`);
   }
 
   return (

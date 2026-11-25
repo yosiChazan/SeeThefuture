@@ -9,6 +9,8 @@ import { waLink } from '../components/Phone';
 import { useClients, useContacts } from '../lib/queries';
 import { useAccess } from '../lib/access';
 import { WaSaveDoc, type WaFile } from '../components/WaSaveDoc';
+import { ClientForm } from '../components/ClientForm';
+import { toE164 } from '../lib/phone';
 import { useAiGuides } from '../components/AiGuidesSettings';
 import { ChatSummary } from '../components/ChatSummary';
 import { must, supabase } from '../lib/supabase';
@@ -125,6 +127,26 @@ export function Messages() {
     }
     return out;
   }, [recent.data, conversations, demo, demoData]);
+  // What the person's card says about this number (decision 203): "נייד", "עבודה"… to tell two numbers of one person apart.
+  const digitsOf = (x: string | null | undefined) => (x ?? '').replace(/\D/g, '');
+  const phoneLabel = (c: Conversation) => {
+    const p = [...(clients.data ?? []), ...(contacts.data ?? [])].find((x) => x.id === c.client_party_id);
+    if (!p) return null;
+    const d = digitsOf(c.wa_phone);
+    if (digitsOf(p.phone) === d) return p.phone_label || null;
+    return (p.extra_phones ?? []).find((x) => digitsOf(x.phone) === d)?.label || null;
+  };
+  // A number someone sent as a contact card: who has it in the system, and its chat.
+  const partyByPhone = (e164: string) => [...(clients.data ?? []), ...(contacts.data ?? [])].find((x) => digitsOf(x.phone) === digitsOf(e164) || (x.extra_phones ?? []).some((y) => digitsOf(y.phone) === digitsOf(e164)));
+  const [addingContact, setAddingContact] = useState<{ name: string; phone: string } | null>(null);
+  async function openChat(e164: string) {
+    const found = conversations.find((c) => digitsOf(c.wa_phone) === digitsOf(e164));
+    if (found) { setParams({ c: found.id }); return; }
+    const r = await supabase.from('conversations').insert({ wa_phone: e164, client_party_id: partyByPhone(e164)?.id ?? null }).select('id').single();
+    if (r.error) { notifications.show({ color: 'red', message: r.error.message }); return; }
+    await qc.invalidateQueries({ queryKey: ['conversations'] });
+    setParams({ c: r.data.id });
+  }
   const who = (c: Conversation) => (c.client_party_id ? names.get(c.client_party_id) : null) ?? c.contact_name ?? c.wa_phone;
   // The AI summary is written again by itself only on the first visit to this page after an hour
   // away (decision 189); otherwise only with its refresh button.
@@ -263,6 +285,7 @@ export function Messages() {
                         <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
                           {c.ai_guide_id && <Tooltip label="ה-AI עונה בשיחה הזו"><IconRobot size={16} color="#7048e8" style={{ flexShrink: 0 }} /></Tooltip>}
                           <Text size="md" c={WA.text} lineClamp={1}>{who(c)}</Text>
+                          {phoneLabel(c) && <Text size="xs" c={WA.muted} style={{ flexShrink: 0 }}>({phoneLabel(c)})</Text>}
                           {roleOf(c.client_party_id) && <Badge size="xs" variant="light" color={roleOf(c.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(c.client_party_id)!.label}</Badge>}
                           {isSpecial(c) && <Badge size="xs" variant="filled" color="red" style={{ flexShrink: 0 }}>אליאנס מיוחד</Badge>}
                         </Group>
@@ -299,6 +322,7 @@ export function Messages() {
                   <Avatar radius="xl" size={40} color="teal">{initials(who(current))}</Avatar>
                   <Box style={{ minWidth: 0 }}>
                     <Group gap={6} wrap="nowrap"><Text c={WA.text} lineClamp={1}>{who(current)}</Text>
+                      {phoneLabel(current) && <Text size="sm" c={WA.muted} style={{ flexShrink: 0 }}>({phoneLabel(current)})</Text>}
                       {roleOf(current.client_party_id) && <Badge size="xs" variant="light" color={roleOf(current.client_party_id)!.color} style={{ flexShrink: 0 }}>{roleOf(current.client_party_id)!.label}</Badge>}
                       {/* The client's or contact's card, in a new tab (decision 195). */}
                       {roleOf(current.client_party_id) && !demo && <Tooltip label={`פתיחת הכרטיס של ${roleOf(current.client_party_id)!.label === 'לקוח' ? 'הלקוח' : 'איש הקשר'} בדף חדש`}>
@@ -381,7 +405,9 @@ export function Messages() {
                               <Group gap={4} mt={4}>{saved.data?.has(m.id)
                                 ? <Badge size="xs" variant="light" color="teal" leftSection={<IconCheck size={10} />} style={{ cursor: 'pointer' }} onClick={() => setSaving(m as WaFile)}>נשמר במערכת</Badge>
                                 : <Button size="compact-xs" variant="light" leftSection={<IconFileText size={12} />} onClick={() => setSaving(m as WaFile)}>שמירה במערכת</Button>}</Group>)}
-                            {(m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
+                            {m.kind === 'contacts' && m.body ? <SharedContacts body={m.body} known={(e) => partyByPhone(e)?.display_name ?? null}
+                                onChat={openChat} onAdd={(name, phone) => setAddingContact({ name, phone })} />
+                              : (m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
                             <Group gap={3} justify="flex-end" mt={2} wrap="nowrap">
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
                               {out && !(m.origin === 'history' && !m.status) && <Ticks status={m.status} error={m.error} />}
@@ -419,9 +445,46 @@ export function Messages() {
           </Stack>
         </Modal>
       )}
+      {addingContact && (() => {
+        const parts = addingContact.name.trim().split(/\s+/);
+        return <ClientForm opened contact initial={{ first_name: parts.length > 1 ? parts[0] : '', last_name: parts.length > 1 ? parts.slice(1).join(' ') : parts[0], phone: addingContact.phone }}
+          onClose={() => setAddingContact(null)} onAdded={() => { qc.invalidateQueries({ queryKey: ['conversations'] }); }} />;
+      })()}
       {saving && current && <WaSaveDoc file={saving} partyId={roleOf(current.client_party_id)?.label === 'לקוח' ? current.client_party_id : null} onClose={() => setSaving(null)} />}
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
+    </Stack>
+  );
+}
+
+// A contact card sent in a chat (decision 203). The webhook writes each as "👤 name phone, phone";
+// each number can be opened as a chat, and a number not in the system added as a contact.
+function SharedContacts({ body, known, onChat, onAdd }: { body: string; known: (e164: string) => string | null; onChat: (e164: string) => void; onAdd: (name: string, phone: string) => void }) {
+  const cards = body.split('\n').map((line) => {
+    const t = line.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').replace(/^👤\s*/, '');
+    const m = /^(.*?)\s*((?:\+?[\d][\d\s().-]{5,}\d)(?:,\s*\+?[\d][\d\s().-]{5,}\d)*)\s*$/.exec(t);
+    return m ? { name: m[1].trim() || 'בלי שם', phones: m[2].split(/,\s*/).map((p) => p.trim()) } : { name: t.trim(), phones: [] as string[] };
+  });
+  return (
+    <Stack gap={6} my={2}>
+      {cards.map((c, i) => (
+        <Box key={i} p={8} style={{ background: '#ffffff99', borderRadius: 6, border: `1px solid ${WA.line}` }}>
+          <Group gap={6} mb={4} wrap="nowrap"><Avatar size={28} radius="xl" color="gray">{initials(c.name)}</Avatar><Text size="sm" fw={600}>{c.name}</Text></Group>
+          {!c.phones.length && <Text size="xs" c={WA.muted}>אין מספר בכרטיס</Text>}
+          {c.phones.map((p) => {
+            const e = toE164(p);
+            const who = e ? known(e) : null;
+            return (
+              <Group key={p} gap={4} wrap="wrap">
+                <Text size="xs" dir="ltr">{p}</Text>
+                {who && <Badge size="xs" variant="light" color="teal">{who}</Badge>}
+                {e && <Button size="compact-xs" variant="light" leftSection={<IconBrandWhatsapp size={12} />} onClick={() => onChat(e)}>פתיחת צ'אט</Button>}
+                {e && !who && <Button size="compact-xs" variant="light" color="grape" onClick={() => onAdd(c.name, p)}>הוספה כאיש קשר</Button>}
+              </Group>
+            );
+          })}
+        </Box>
+      ))}
     </Stack>
   );
 }
