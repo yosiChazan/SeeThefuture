@@ -111,7 +111,7 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
       const feeCash = num(g.value(r, col.feeCash));
       if (feeCash) {
         sums.fees += feeCash;
-        add(r, `דמי ניהול ${feePct}%`, 'mgmt_fee', feeCash, date(r, col.feeCash), 'דמי ניהול לויטאלי (מזומן)', [ // the description is how a report already imported is recognized again: kept as it was
+        add(r, `דמי ניהול ${feePct}%`, 'mgmt_fee', feeCash, date(r, col.feeCash), 'דמי ניהול לויטאלי', [
           { amount: -feeCash, currency: 'UAH', account: { kind: 'manager_cash', holder: 'source' } },
           { amount: feeCash, currency: 'UAH', external: 'source' },
         ], [], cash && Math.abs(feeCash - round2(cash * feePct / 100)) > 1 ? [`דמי הניהול (${feeCash}) אינם ${feePct}% מהשכירות (${cash})`] : []);
