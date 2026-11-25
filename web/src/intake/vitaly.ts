@@ -99,7 +99,7 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
       const cash = num(g.value(r, col.cash));
       if (cash) {
         sums.cash += cash;
-        add(r, 'שכירות במזומן', 'rent', cash, date(r, col.cash), `שכירות ${hint.ref}`,
+        add(r, 'שכירות', 'rent', cash, date(r, col.cash), `שכירות ${hint.ref}`,
           [{ amount: cash, currency: 'UAH', account: { kind: 'manager_cash', holder: 'source' } }], [], stale(date(r, col.cash)));
       }
       const card = num(g.value(r, col.card));
@@ -111,7 +111,7 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
       const feeCash = num(g.value(r, col.feeCash));
       if (feeCash) {
         sums.fees += feeCash;
-        add(r, `דמי ניהול ${feePct}%`, 'mgmt_fee', feeCash, date(r, col.feeCash), 'דמי ניהול לויטאלי (מזומן)', [
+        add(r, `דמי ניהול ${feePct}%`, 'mgmt_fee', feeCash, date(r, col.feeCash), 'דמי ניהול לויטאלי (מזומן)', [ // the description is how a report already imported is recognized again: kept as it was
           { amount: -feeCash, currency: 'UAH', account: { kind: 'manager_cash', holder: 'source' } },
           { amount: feeCash, currency: 'UAH', external: 'source' },
         ], [], cash && Math.abs(feeCash - round2(cash * feePct / 100)) > 1 ? [`דמי הניהול (${feeCash}) אינם ${feePct}% מהשכירות (${cash})`] : []);
@@ -143,7 +143,7 @@ export function parseVitaly(book: Book, fileName = ''): ParseResult {
   const check = (label: string, fileTotal: number | null, read: number) => {
     if (fileTotal !== null && Math.abs(fileTotal - read) > 0.5) warnings.push(`${label}: בקובץ ${fileTotal}, נקרא מהשורות ${round2(read)}`);
   };
-  check('סה"כ שכירות במזומן', total(col.cash), sums.cash);
+  check('סה"כ שכירות', total(col.cash), sums.cash);
   check('סה"כ שכירות לכרטיס', total(col.card), sums.card);
   check('סה"כ הוצאות אחרות', total(col.other), sums.other);
   const fileFees = (total(col.feeCash) ?? 0) + (total(col.feeCard) ?? 0);
