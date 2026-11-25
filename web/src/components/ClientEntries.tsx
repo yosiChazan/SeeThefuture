@@ -60,7 +60,7 @@ function NewClientEntry({ clientId, clientName, accounts, properties, countries,
   });
   const holders = useMemo(() => {
     const m = new Map<string, string>();
-    for (const b of local.data?.boxes ?? []) if (b.holder_party_id) m.set(`manager_cash|${b.holder_party_id}`, `מזומן אצל גרשון (${b.name})`);
+    for (const b of local.data?.boxes ?? []) if (b.holder_party_id) m.set(`manager_cash|${b.holder_party_id}`, `קופה אצל גרשון (${b.name})`);
     for (const a of accounts.filter((x) => x.country_code === country && x.active)) {
       const h = a.kind === 'client_bank' ? 'client' : a.holder.id;
       if (!m.has(`${a.kind}|${h}`)) m.set(`${a.kind}|${h}`, a.kind === 'client_bank' ? 'חשבון הבנק של הלקוח' : `${ACCOUNT_KIND_HE[a.kind] ?? a.kind} · ${a.holder.display_name}`);

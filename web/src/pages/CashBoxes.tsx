@@ -65,7 +65,7 @@ function useAuto(box: Box | null, names: Map<string, string>) {
       for (const r of rows) {
         const fx = r.transactions.category === 'fx';
         const who = fx ? 'המרות' : r.accounts.holder_party_id === box!.holder_party_id
-          ? (r.accounts.kind === 'rent_pool' ? 'שכירות מירח אצל גרשון' : 'מזומן אצל גרשון: מהדוחות ומכרטיסי הנכסים')
+          ? (r.accounts.kind === 'rent_pool' ? 'שכירות מירח אצל גרשון' : 'קופה אצל גרשון: מהדוחות ומכרטיסי הנכסים')
           : `${names.get(r.accounts.holder_party_id) ?? 'מנהל'}, מהדוחות`;
         const k = `${who}|${r.currency}`;
         const a = m.get(k) ?? m.set(k, { who, currency: r.currency, amount: 0, fx }).get(k)!;
@@ -202,7 +202,7 @@ function Divide({ box, sum, left, onClose }: { box: Box; sum: CashMovement; left
         .in('beneficiary_party_id', clientIds).in('kind', rate ? ['manager_cash'] : ['manager_cash', 'rent_pool']).eq('currency', from)) as unknown as
         { id: string; kind: string; beneficiary_party_id: string; holder_party_id: string; holder: { display_name: string }; entries: { amount: number; transactions: { status: string } }[] }[];
       return rows.filter((a) => (a.kind === 'manager_cash' && (box.linked_manager_ids.includes(a.holder_party_id) || a.holder_party_id === box.holder_party_id)) || (a.kind === 'rent_pool' && a.holder_party_id === box.holder_party_id))
-        .map((a) => ({ id: a.id, client: a.beneficiary_party_id, label: a.holder_party_id === box.holder_party_id ? (a.kind === 'rent_pool' ? 'שכירות מירח אצל גרשון' : 'מזומן אצל גרשון') : `מזומן אצל ${a.holder.display_name}`,
+        .map((a) => ({ id: a.id, client: a.beneficiary_party_id, label: a.holder_party_id === box.holder_party_id ? (a.kind === 'rent_pool' ? 'שכירות מירח אצל גרשון' : 'קופה אצל גרשון') : `קופה אצל ${a.holder.display_name}`,
           balance: Math.round(a.entries.filter((e) => e.transactions.status === 'posted').reduce((x, e) => x + Number(e.amount), 0) * 100) / 100 }))
         .sort((a, b) => b.balance - a.balance);
     },
@@ -367,7 +367,7 @@ export function CashBoxes() {
                 <Paper withBorder p="sm"><Text size="sm" c="dimmed">אחרי הוצאות ותנועות אחרות</Text><Text fw={700} fz={22}>{money(s.balance, cur(s.currency))}</Text>
                   <Text size="xs" c="dimmed">{s.others ? `כולל ${money(s.others, cur(s.currency))}` : 'אין הוצאות שנרשמו'}</Text></Paper>
               </SimpleGrid>
-              {(auto.data ?? []).some((x) => x.currency === s.currency) && <Text size="xs" c="dimmed" mt="sm">"מהדוחות": מתעדכן לבד עם כל דוח שמאושר בקליטה (קופת ויטאלי: גבייה במזומן פחות דמי ניהול והוצאות).</Text>}
+              {(auto.data ?? []).some((x) => x.currency === s.currency) && <Text size="xs" c="dimmed" mt="sm">"מהדוחות": מתעדכן לבד עם כל דוח שמאושר בקליטה (קופת ויטאלי: גבייה פחות דמי ניהול והוצאות).</Text>}
               {linked && <ByClient box={box} currency={s.currency} names={names} />}
             </Paper>
           ))}
