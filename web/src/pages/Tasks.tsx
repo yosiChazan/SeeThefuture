@@ -3,7 +3,7 @@ import { DateInput } from '@mantine/dates';
 import { modals } from '@mantine/modals';
 import dayjs from 'dayjs';
 import { notifications } from '@mantine/notifications';
-import { IconCheck, IconFileTypePdf, IconMail, IconPencil, IconPhoto, IconPlus, IconRepeat, IconTrash, IconX } from '@tabler/icons-react';
+import { IconCheck, IconFile, IconFileTypePdf, IconMail, IconPencil, IconPhoto, IconPlus, IconRepeat, IconTrash, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -157,10 +157,13 @@ function TaskForm({ dir, task, question = task?.kind === 'question', onClose, on
     trigger: (task?.trigger_id ?? null) as string | null, subject: task?.subject ?? '', body: task?.body ?? '',
     priority: (task?.priority ?? 'medium') as Priority, category: (task?.category_id ?? null) as string | null,
     links: (task?.office_task_links ?? []).map(linkValue), assignees: (task?.office_task_assignees ?? []).map(assigneeKey),
+    kept: task?.files ?? [] as string[],
   });
+  // Pictures and files on the task or question itself (decision 201).
+  const [newFiles, setNewFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const close = useGuardedClose(v, onClose);
+  const close = useGuardedClose({ ...v, newFiles: newFiles.map((f) => f.name) }, onClose);
   async function save() {
     setBusy(true); setError(null);
     try {
@@ -172,11 +175,14 @@ function TaskForm({ dir, task, question = task?.kind === 'question', onClose, on
           p_users: assignees.filter((a) => a.user_id).map((a) => a.user_id), p_parties: assignees.filter((a) => a.party_id).map((a) => a.party_id),
           p_links: v.links.map(toLink), p_category: v.category, p_kind: question ? 'question' : 'task',
         })) as string;
+        if (newFiles.length) must(await supabase.from('office_tasks').update({ files: await uploadTaskFiles(id, newFiles) }).eq('id', id));
       } else {
         const fields = { trigger_id: v.trigger, subject: v.subject.trim(), body: v.body.trim() || null, priority: v.priority, category_id: v.category };
         if (fields.trigger_id !== (task.trigger_id ?? null) || fields.subject !== task.subject || fields.body !== (task.body ?? null) || fields.priority !== task.priority || fields.category_id !== (task.category_id ?? null)) {
           must(await supabase.from('office_tasks').update(fields).eq('id', task.id));
         }
+        const files = [...v.kept, ...(newFiles.length ? await uploadTaskFiles(task.id, newFiles) : [])];
+        if (JSON.stringify(files) !== JSON.stringify(task.files ?? [])) must(await supabase.from('office_tasks').update({ files }).eq('id', task.id));
         const oldA = new Map(task.office_task_assignees.map((a) => [assigneeKey(a), a]));
         for (const k of v.assignees.filter((k) => !oldA.has(k))) must(await supabase.from('office_task_assignees').insert({ task_id: task.id, ...toAssignee(k) }));
         for (const [k, a] of oldA) if (!v.assignees.includes(k)) must(await supabase.from('office_task_assignees').delete().eq('id', a.id!));
@@ -202,7 +208,11 @@ function TaskForm({ dir, task, question = task?.kind === 'question', onClose, on
         <TextInput label={question ? 'השאלה' : 'נושא'} required value={v.subject} onChange={(e) => setV({ ...v, subject: e.currentTarget.value })} />
         <div>
           <Textarea label={question ? 'פירוט (לא חובה)' : 'תוכן'} autosize minRows={3} value={v.body} onChange={(e) => setV({ ...v, body: e.currentTarget.value })} />
-          <AddLink onAdd={(l) => setV({ ...v, body: append(v.body, l) })} />
+          <Group gap="xs" align="center">
+            <AddLink onAdd={(l) => setV({ ...v, body: append(v.body, l) })} />
+            <AddImages files={newFiles} onChange={setNewFiles} />
+          </Group>
+          <TaskFiles files={v.kept} onRemove={(f) => setV({ ...v, kept: v.kept.filter((x) => x !== f) })} />
         </div>
         <MultiSelect label="קשור ל" placeholder="לקוחות, נכסים, אנשי קשר, מדינות" searchable clearable data={dir.linkOptions} value={v.links}
           onChange={(x) => setV({ ...v, links: x })} nothingFoundMessage="לא נמצא" limit={60} />
@@ -307,7 +317,7 @@ function TaskView({ task, dir, onClose }: { task: OfficeTask; dir: Directory; on
           {dir.catLabel(task.category_id) && <Badge variant="light" color="cyan">{dir.catLabel(task.category_id)}</Badge>}
           <Text size="xs" c="dimmed">נפתחה ע"י {author}, {new Date(task.created_at).toLocaleString('he-IL')}</Text>
         </Group>
-        {task.body && <Paper withBorder p="sm"><LinkedText text={task.body} /></Paper>}
+        {(task.body || (task.files ?? []).length > 0) && <Paper withBorder p="sm">{task.body && <LinkedText text={task.body} />}<TaskFiles files={task.files ?? []} /></Paper>}
         <Group gap="xs" align="flex-start">
           <Text size="sm" fw={600} w={80}>קשור ל:</Text>
           <Group gap={6}>{task.office_task_links.length ? task.office_task_links.map((l) => {
@@ -815,7 +825,10 @@ function TaskFiles({ files, onRemove }: { files: string[]; onRemove?: (f: string
       {files.map((f) => (
         <Box key={f} pos="relative">
           <Anchor href={urls.data?.get(f)} target="_blank" rel="noopener noreferrer">
-            <Image src={urls.data?.get(f)} w={96} h={72} fit="cover" radius="sm" alt={f.split('/').pop()} fallbackSrc="data:image/gif;base64,R0lGODlhAQABAAAAACw=" />
+            {/\.(jpe?g|png|webp|gif|heic)$/i.test(f)
+              ? <Image src={urls.data?.get(f)} w={96} h={72} fit="cover" radius="sm" alt={f.split('/').pop()} fallbackSrc="data:image/gif;base64,R0lGODlhAQABAAAAACw=" />
+              : <Group gap={4} w={150} h={72} px={6} wrap="nowrap" style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 4 }}>
+                  <IconFile size={20} style={{ flexShrink: 0 }} /><Text size="xs" lineClamp={3} style={{ wordBreak: 'break-all' }}>{f.split('/').pop()!.replace(/^[0-9a-f-]{36}-/, '')}</Text></Group>}
           </Anchor>
           {onRemove && <ActionIcon size="xs" color="red" variant="filled" pos="absolute" top={2} left={2} onClick={() => onRemove(f)} aria-label="הסרה"><IconX size={10} /></ActionIcon>}
         </Box>
@@ -827,8 +840,8 @@ function TaskFiles({ files, onRemove }: { files: string[]; onRemove?: (f: string
 function AddImages({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
   return (
     <Group gap={4}>
-      <FileButton multiple accept="image/*" onChange={(f) => onChange([...files, ...f])}>
-        {(props) => <Button {...props} size="compact-xs" variant="subtle" leftSection={<IconPhoto size={14} />}>הוספת תמונה</Button>}
+      <FileButton multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip" onChange={(f) => onChange([...files, ...f])}>
+        {(props) => <Button {...props} size="compact-xs" variant="subtle" leftSection={<IconPhoto size={14} />}>הוספת תמונה או קובץ</Button>}
       </FileButton>
       {files.map((f, i) => (
         <Badge key={i} size="sm" variant="light" rightSection={<IconX size={10} style={{ cursor: 'pointer' }} onClick={() => onChange(files.filter((_, j) => j !== i))} />}>{f.name}</Badge>
