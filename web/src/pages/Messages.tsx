@@ -1,6 +1,6 @@
 import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Checkbox, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileText, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileText, IconMicrophone, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -28,7 +28,7 @@ interface Conversation { id: string; client_party_id: string | null; wa_phone: s
   ai_summary?: string | null; ai_summary_at?: string | null; ai_waiting_on?: 'us' | 'client' | 'none' | null; staff_read_at?: string | null }
 interface Message { id: string; conversation_id: string; direction: 'in' | 'out'; body: string | null; media_path: string | null; sent_by: string | null; created_at: string;
   kind?: string; origin?: 'api' | 'app' | 'history' | 'ai'; status?: string | null; error?: string | null; file_name?: string | null;
-  wa_message_id?: string | null; reply_to?: string | null }
+  wa_message_id?: string | null; reply_to?: string | null; played_at?: string | null }
 
 const WA = {
   green: '#00a884', header: '#f0f2f5', panel: '#ffffff', chatBg: '#efeae2', out: '#d9fdd3', in: '#ffffff',
@@ -417,7 +417,9 @@ export function Messages() {
                               return <Group gap={3} mb={2} wrap="nowrap" style={{ color: s.c }}>{s.i}<Text size="xs" fw={700} c={s.c}>{s.t}</Text></Group>;
                             })()}
                             {m.reply_to && <Quote q={byWa.get(m.reply_to)} name={(q) => quoteName(q)} out={out} onClick={(q) => jumpTo(q.id)} />}
-                            {m.media_path && <Media path={m.media_path} kind={m.kind} name={m.file_name} />}
+                            {m.media_path && (m.kind === 'audio'
+                              ? <VoiceNote id={m.id} path={m.media_path} incoming={!out} played={!!m.played_at} onPlayed={() => qc.invalidateQueries({ queryKey: ['messages', current.id] })} />
+                              : <Media path={m.media_path} kind={m.kind} name={m.file_name} />)}
                             {m.media_path && !/\.zip$/i.test(m.file_name ?? m.media_path) && ['image', 'document', 'video'].includes(m.kind ?? '') && (
                               <Group gap={4} mt={4}>{saved.data?.has(m.id)
                                 ? <Badge size="xs" variant="light" color="teal" leftSection={<IconCheck size={10} />} style={{ cursor: 'pointer' }} onClick={() => setSaving(m as WaFile)}>נשמר במערכת</Badge>
@@ -537,6 +539,34 @@ function Ticks({ status, error }: { status?: string | null; error?: string | nul
 }
 
 // A picture or file of a message, from the private bucket (a link that works for an hour).
+// A voice message (decision 206): its microphone green until the office first plays a client's
+// one, blue after (kept on the message, for everyone); and 1, 1.5 or 2 times the speed.
+const SPEEDS = [1, 1.5, 2];
+function VoiceNote({ id, path, incoming, played, onPlayed }: { id: string; path: string; incoming: boolean; played: boolean; onPlayed: () => void }) {
+  const url = useQuery({ queryKey: ['wa-media', path], staleTime: 50 * 60_000, queryFn: async () => (await supabase.storage.from('whatsapp').createSignedUrl(path, 3600)).data?.signedUrl ?? null });
+  const audio = useRef<HTMLAudioElement>(null);
+  const [speed, setSpeed] = useState(1);
+  const [heard, setHeard] = useState(played);
+  useEffect(() => setHeard(played), [played]);
+  useEffect(() => { if (audio.current) audio.current.playbackRate = speed; }, [speed, url.data]);
+  async function first() {
+    if (!incoming || heard) return;
+    setHeard(true);
+    const { data: u } = await supabase.auth.getUser();
+    await supabase.from('messages').update({ played_at: new Date().toISOString(), played_by: u.user?.id ?? null }).eq('id', id).is('played_at', null);
+    onPlayed();
+  }
+  if (!url.data) return <Text size="xs" c={WA.muted}>טוען הקלטה…</Text>;
+  const color = !incoming ? WA.muted : heard ? '#53bdeb' : WA.green;
+  return (
+    <Group gap={6} wrap="nowrap" mb={2}>
+      <Tooltip label={!incoming ? 'הקלטה' : heard ? 'הושמעה' : 'עוד לא הושמעה'}><IconMicrophone size={22} color={color} style={{ flexShrink: 0 }} /></Tooltip>
+      <audio ref={audio} controls src={url.data} style={{ maxWidth: 240, height: 36 }} onPlay={first} />
+      <Button size="compact-xs" radius="xl" variant="light" color="gray" w={42} onClick={() => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length])} aria-label="מהירות">{speed}×</Button>
+    </Group>
+  );
+}
+
 function Media({ path, kind, name }: { path: string; kind?: string; name?: string | null }) {
   const url = useQuery({ queryKey: ['wa-media', path], staleTime: 50 * 60_000, queryFn: async () => (await supabase.storage.from('whatsapp').createSignedUrl(path, 3600)).data?.signedUrl ?? null });
   if (!url.data) return <Text size="xs" c={WA.muted}>טוען קובץ…</Text>;
