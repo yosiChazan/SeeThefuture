@@ -210,6 +210,22 @@ export function Messages() {
   const [specialOk, setSpecialOk] = useState(false);
   // Quoted replies (decision 196): the message quoted, and the one being answered with a quote.
   const byWa = useMemo(() => new Map(messages.filter((m) => m.wa_message_id).map((m) => [m.wa_message_id!, m])), [messages]);
+  // Reactions (decision 205) sit on the message they react to, as in WhatsApp, not as messages of
+  // their own. A reaction saved before its target was kept goes on the last message before it
+  // from the other side; a later reaction from the same side replaces it, an empty one removes it.
+  const { bubbles, reactions } = useMemo(() => {
+    const on = new Map<string, Map<'in' | 'out', string>>();
+    let lastIn: Message | null = null, lastOut: Message | null = null;
+    for (const m of messages) {
+      if (m.kind !== 'reaction') { if (m.direction === 'in') lastIn = m; else lastOut = m; continue; }
+      const target = (m.reply_to && byWa.get(m.reply_to)) || (m.direction === 'in' ? lastOut : lastIn);
+      if (!target) continue;
+      const emoji = (m.body ?? '').replace(/\s*\(תגובה להודעה\)\s*$/, '').trim();
+      const r = on.get(target.id) ?? on.set(target.id, new Map()).get(target.id)!;
+      if (emoji) r.set(m.direction, emoji); else r.delete(m.direction);
+    }
+    return { bubbles: messages.filter((m) => m.kind !== 'reaction'), reactions: on };
+  }, [messages, byWa]);
   const [quoting, setQuoting] = useState<Message | null>(null);
   useEffect(() => setQuoting(null), [current?.id]);
   const jumpTo = (id: string) => { const el = viewport.current?.querySelector<HTMLElement>(`[data-msg="${id}"]`); if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.animate([{ background: '#fff3bf' }, { background: 'transparent' }], { duration: 1500 }); } };
@@ -379,15 +395,16 @@ export function Messages() {
               <ScrollArea className="wa-chat" viewportRef={viewport} onScrollPositionChange={() => { const v = viewport.current; if (v) atEnd.current = v.scrollHeight - v.scrollTop - v.clientHeight < 80; }}
                 style={{ flex: 1, backgroundColor: WA.chatBg, backgroundImage: DOODLE }}>
                 <Stack gap={2} px={{ base: 'sm', sm: 60 }} py="md">
-                  {messages.map((m, i) => {
-                    const newDay = i === 0 || new Date(messages[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
-                    const first = i === 0 || messages[i - 1].direction !== m.direction || newDay;
+                  {bubbles.map((m, i) => {
+                    const newDay = i === 0 || new Date(bubbles[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
+                    const first = i === 0 || bubbles[i - 1].direction !== m.direction || newDay;
+                    const reacted = [...(reactions.get(m.id)?.values() ?? [])];
                     const out = m.direction === 'out';
                     return (
                       <Box key={m.id} data-msg={m.id} className="wa-row">
                         {m === firstUnread && <Group justify="center" my={8} data-unread-line><Text size="xs" c={WA.muted} px={12} py={4} style={{ background: '#ffffffe6', borderRadius: 8 }}>{unreadHere === 1 ? 'הודעה אחת שלא נקראה' : `${unreadHere} הודעות שלא נקראו`}</Text></Group>}
                         {newDay && <Group justify="center" my={8}><Text size="xs" c={WA.muted} px={10} py={4} style={{ background: '#ffffffe6', borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)' }}>{dayLabel(m.created_at)}</Text></Group>}
-                        <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0} gap={4} wrap="nowrap">
+                        <Group justify={out ? 'flex-end' : 'flex-start'} mt={first ? 8 : 0} mb={reacted.length ? 14 : 0} gap={4} wrap="nowrap">
                           <Box maw="65%" px={9} pt={6} pb={8} style={{
                             position: 'relative', background: out ? WA.out : WA.in, borderRadius: 8, boxShadow: '0 1px 0.5px rgba(11,20,26,.13)',
                             ...(first ? (out ? { borderStartEndRadius: 0 } : { borderStartStartRadius: 0 }) : {}),
@@ -412,6 +429,9 @@ export function Messages() {
                               <Text size="10px" c={WA.muted}>{hhmm(m.created_at)}</Text>
                               {out && !(m.origin === 'history' && !m.status) && <Ticks status={m.status} error={m.error} />}
                             </Group>
+                            {reacted.length > 0 && (
+                              <Box pos="absolute" bottom={-12} style={{ insetInlineStart: 8, background: '#fff', borderRadius: 12, padding: '0 5px', boxShadow: '0 1px 2px rgba(11,20,26,.2)', fontSize: 14, lineHeight: '20px' }}>{reacted.join(' ')}</Box>
+                            )}
                           </Box>
                           {connected && windowOpen && m.wa_message_id && !m.wa_message_id.startsWith('import:') && (
                             <Tooltip label="תשובה עם ציטוט"><ActionIcon className="wa-reply" style={{ order: out ? -1 : 1 }} size="sm" radius="xl" variant="white" color="gray" onClick={() => setQuoting(m)} aria-label="תשובה עם ציטוט">
