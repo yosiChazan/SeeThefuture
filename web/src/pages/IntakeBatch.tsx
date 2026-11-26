@@ -13,6 +13,7 @@ import { useProperties } from '../lib/queries';
 import { supabase } from '../lib/supabase';
 import type { Currency } from '../lib/types';
 import dayjs from 'dayjs';
+import { DateInput } from '@mantine/dates';
 import { batchStatus, monthLabel } from './Intake';
 
 const ROW_STATUS: Record<RowStatus, { label: string; color: string }> = {
@@ -138,6 +139,12 @@ export function IntakeBatch() {
         const { error } = await supabase.from('import_rows')
           .update({ property_id: propertyId, match_status: propertyId ? 'matched' : 'unmatched' })
           .eq('batch_id', batch.id).eq('raw->>property_ref', ref).in('match_status', ['matched', 'unmatched']);
+        if (error) notifications.show({ color: 'red', message: error.message });
+        await refresh();
+      }
+
+      async function setDate(r: ImportRow, on: string) {
+        const { error } = await supabase.from('import_rows').update({ proposed: { ...r.proposed!, occurred_on: on, period: `${on.slice(0, 7)}-01` } }).eq('id', r.id);
         if (error) notifications.show({ color: 'red', message: error.message });
         await refresh();
       }
@@ -318,7 +325,12 @@ export function IntakeBatch() {
                             <Text size="sm">{r.raw.kind}</Text>
                             <Text size="xs" c="dimmed">{r.proposed ? CATEGORY_HE[r.proposed.category] ?? r.proposed.category : r.raw.lease ? 'חוזה' : r.raw.voids ? 'ביטול' : 'לידיעה'}</Text>
                           </Table.Td>
-                          <Table.Td w={100}>{date(r.proposed?.occurred_on)}</Table.Td>
+                          <Table.Td w={editable && r.raw.date_guess && r.proposed ? 150 : 100}>
+                            {/* A line without a date of its own (Ofir, decision 207): the date is chosen here. */}
+                            {editable && r.raw.date_guess && r.proposed
+                              ? <DateInput size="xs" valueFormat="DD.MM.YYYY" value={r.proposed.occurred_on} aria-label="תאריך" onChange={(d) => d && setDate(r, dayjs(d).format('YYYY-MM-DD'))} />
+                              : date(r.proposed?.occurred_on)}
+                          </Table.Td>
                           <Table.Td>
                             <Text size="sm">{r.proposed?.description ?? String(r.raw.description ?? '')}</Text>
                             {r.issues?.map((i) => <Text key={i} size="xs" c="dimmed">{i}</Text>)}
