@@ -5,22 +5,24 @@ import { PropertyForm } from '../components/PropertyForm';
 import { useAccess } from '../lib/access';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CountryBadge, CountryFilter, QueryState, SortHeader, StatusBadge } from '../components/common';
-import { buildingLabel, COUNTRY_HE, currentLease, money, owners, STATUS_HE } from '../lib/format';
+import { buildingLabel, COUNTRY_HE, currentLease, currentManager, money, owners, projectOf, STATUS_HE } from '../lib/format';
 import type { Property } from '../lib/types';
 import { useProperties } from '../lib/queries';
 
 // Sorting by a column (like the clients list, SPEC decision 73): a click sorts A–Z / 1–∞,
 // a second click reverses. Empty values stay at the bottom either way. Rent is sorted by
 // currency and then by amount: amounts in different currencies are never compared.
-type SortKey = 'country' | 'city' | 'building' | 'unit' | 'owners' | 'status' | 'rent';
-const SORT_KEYS: SortKey[] = ['country', 'city', 'building', 'unit', 'owners', 'status', 'rent'];
-const COLUMNS: [SortKey, string][] = [['country', 'מדינה'], ['city', 'עיר'], ['building', 'בניין'], ['unit', 'דירה'], ['owners', 'בעלים'], ['status', 'סטטוס'], ['rent', 'שכירות נוכחית']];
+type SortKey = 'country' | 'city' | 'project' | 'building' | 'unit' | 'owners' | 'manager' | 'status' | 'rent';
+const SORT_KEYS: SortKey[] = ['country', 'city', 'project', 'building', 'unit', 'owners', 'manager', 'status', 'rent'];
+const COLUMNS: [SortKey, string][] = [['country', 'מדינה'], ['city', 'עיר'], ['project', 'פרויקט'], ['building', 'בניין'], ['unit', 'דירה'], ['owners', 'בעלים'], ['manager', 'מנהל נכס'], ['status', 'סטטוס'], ['rent', 'שכירות נוכחית']];
 const he = (a: string, b: string) => a.localeCompare(b, 'he', { numeric: true });
 const natural = (a: Property, b: Property) => he(COUNTRY_HE[a.country_code], COUNTRY_HE[b.country_code])
   || he(buildingLabel(a.building), buildingLabel(b.building)) || he(a.unit_no, b.unit_no);
 const SORT_VALUE: Record<SortKey, (p: Property) => string | [string, number] | null> = {
   country: (p) => COUNTRY_HE[p.country_code],
   city: (p) => p.building.city.name_he || null,
+  project: (p) => projectOf(p),
+  manager: (p) => currentManager(p)?.display_name ?? null,
   building: (p) => buildingLabel(p.building) || null,
   unit: (p) => p.unit_no || null,
   owners: (p) => owners(p) || null,
@@ -43,6 +45,8 @@ export function Properties() {
   const country = params.get('country') ?? 'all';
   const status = params.get('status');
   const city = params.get('city');
+  const project = params.get('project');   // decision 211; '-' for none
+  const manager = params.get('manager');
   const search = params.get('q') ?? '';
   const sort = (SORT_KEYS.includes(params.get('sort') as SortKey) ? params.get('sort') : 'country') as SortKey;
   const desc = params.get('dir') === 'desc';
@@ -68,9 +72,14 @@ export function Properties() {
       .filter((p) => country === 'all' || p.country_code === country)
       .filter((p) => !status || p.status === status)
       .filter((p) => !city || p.building.city.name_he === city)
+      .filter((p) => !project || (project === '-' ? !projectOf(p) : projectOf(p) === project))
+      .filter((p) => !manager || (manager === '-' ? !currentManager(p) : currentManager(p)?.id === manager))
       .filter((p) => !s || [p.building.name, p.building.address, p.unit_no, owners(p), p.building.project?.name].some((x) => x?.toLowerCase().includes(s)))
       .sort(compare(sort, desc, then, thenDesc));
-  }, [q.data, country, status, city, search, sort, desc, then, thenDesc]);
+  }, [q.data, country, status, city, project, manager, search, sort, desc, then, thenDesc]);
+  const inCountry = (q.data ?? []).filter((p) => (country === 'all' || p.country_code === country) && (!city || p.building.city.name_he === city));
+  const projects = [...new Set(inCountry.map(projectOf).filter((x): x is string => !!x))].sort((a, b) => he(a, b));
+  const managers = [...new Map(inCountry.map(currentManager).filter((x): x is { id: string; display_name: string } => !!x).map((m) => [m.id, m.display_name]))].sort((a, b) => he(a[1], b[1]));
   const onSort = (k: SortKey) => update(k === sort ? { sort: k, dir: desc ? 'asc' : 'desc' } : { sort: k, dir: 'asc', then: sort, thenDir: desc ? 'desc' : 'asc' });
 
   return (
@@ -86,15 +95,17 @@ export function Properties() {
       </Group>
       {adding && <PropertyForm onClose={() => setAdding(false)} />}
       <Group>
-        <CountryFilter value={country} onChange={(v) => update({ country: v, city: null })} />
-        <Select placeholder="עיר" data={cities} value={city} onChange={(v) => update({ city: v })} clearable w={150} />
+        <CountryFilter value={country} onChange={(v) => update({ country: v, city: null, project: null, manager: null })} />
+        <Select placeholder="עיר" data={cities} value={city} onChange={(v) => update({ city: v, project: null })} clearable w={150} />
+        <Select placeholder="פרויקט" data={[...projects, { value: '-', label: 'בלי פרויקט' }]} value={project} onChange={(v) => update({ project: v })} clearable searchable w={170} />
+        <Select placeholder="מנהל נכס" data={[...managers.map(([value, label]) => ({ value, label })), { value: '-', label: 'בלי מנהל' }]} value={manager} onChange={(v) => update({ manager: v })} clearable searchable w={170} />
         <Select placeholder="סטטוס" data={Object.entries(STATUS_HE).map(([value, label]) => ({ value, label }))} value={status} onChange={(v) => update({ status: v })} clearable w={170} />
         <TextInput placeholder="חיפוש בניין, דירה או בעלים" leftSection={<IconSearch size={16} />} value={search} onChange={(e) => update({ q: e.currentTarget.value })} w={260} />
       </Group>
       <QueryState q={q}>{() => (
         <Paper withBorder p="sm">
           <Text size="sm" c="dimmed" mb="xs">{rows.length} נכסים</Text>
-          <Table.ScrollContainer minWidth={800}>
+          <Table.ScrollContainer minWidth={1000}>
             <Table striped highlightOnHover verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr>
@@ -108,9 +119,11 @@ export function Properties() {
                     <Table.Tr key={p.id}>
                       <Table.Td><CountryBadge code={p.country_code} /></Table.Td>
                       <Table.Td>{p.building.city.name_he}</Table.Td>
+                      <Table.Td>{projectOf(p) ?? '—'}</Table.Td>
                       <Table.Td>{buildingLabel(p.building)}</Table.Td>
                       <Table.Td><Anchor component={Link} to={`/properties/${p.id}`} fw={500}>{p.unit_no}</Anchor></Table.Td>
                       <Table.Td><Text size="sm" lineClamp={2}>{owners(p) || '—'}</Text></Table.Td>
+                      <Table.Td>{currentManager(p)?.display_name ?? '—'}</Table.Td>
                       <Table.Td><StatusBadge status={p.status} /></Table.Td>
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>{l ? money(l.rent_amount, l.rent_currency) : '—'}</Table.Td>
                     </Table.Tr>

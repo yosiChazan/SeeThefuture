@@ -49,6 +49,8 @@ export interface Property {
   building: Building;
   ownerships: Ownership[];
   leases: Lease[];
+  // Who manages it (decision 211): the open agreement.
+  management_agreements?: { id: string; valid_to: string | null; manager: { id: string; display_name: string } | null }[];
 }
 
 export interface Account {

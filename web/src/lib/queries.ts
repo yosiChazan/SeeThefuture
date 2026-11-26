@@ -9,6 +9,7 @@ const LEASE_COLS = `id, property_id, start_date, end_date, rent_amount, rent_cur
 const PROPERTY_COLS = `id, unit_no, floor, sqm, status, country_code, notes,
   building:buildings(id, name, address, city:cities(name_he, name_en), project:projects(name)),
   ownerships(id, share_pct, valid_from, valid_to, notes, party:parties(id, display_name)),
+  management_agreements(id, valid_to, manager:parties!management_agreements_manager_party_id_fkey(id, display_name)),
   leases(${LEASE_COLS})`;
 
 // The office works with a few hundred properties, so lists load everything

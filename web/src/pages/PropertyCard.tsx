@@ -8,6 +8,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DeleteRecord } from '../components/DeleteRecord';
 import { OwnershipChange, PropertyEdit } from '../components/PropertyEdit';
 import { PropertyFiles } from '../components/PropertyFiles';
+import { PropertyCategories } from '../components/PropertyCategories';
 import { PropertyDeals } from '../components/PropertyDeals';
 import { Activities, PropertyContacts } from '../components/CardExtras';
 import { PropertyCharges, PropertyServices } from '../components/PropertyServices';
@@ -81,7 +82,7 @@ export function PropertyCard() {
             <SimpleGrid cols={{ base: 2, sm: 4 }}>
               <Field label="מדינה">{COUNTRY_HE[p.country_code]}</Field>
               <Field label="עיר">{p.building.city.name_he}</Field>
-              <Field label="פרויקט">{p.building.project?.name}</Field>
+              <div><Text size="xs" c="dimmed">פרויקט · מנהל נכס</Text><PropertyCategories p={p} canEdit={access.canEdit(p.country_code)} /></div>
               <Field label="בניין">{p.building.name}</Field>
               <Field label="כתובת">{p.building.address}</Field>
               <Field label="קומה">{p.floor}</Field>

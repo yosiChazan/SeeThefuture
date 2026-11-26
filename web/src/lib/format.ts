@@ -76,6 +76,11 @@ export function currentLease(p: Property): Lease | undefined {
 const iso = (s: string) => `\u2068${s}\u2069`;
 
 // Ukrainian buildings are numbered inside a project ("Lake city", building 2.4).
+// The property's manager and project (decision 211).
+export const currentManager = (p: { management_agreements?: { valid_to: string | null; manager: { id: string; display_name: string } | null }[] }) =>
+  p.management_agreements?.find((m) => !m.valid_to)?.manager ?? null;
+export const projectOf = (p: { building: { project?: { name: string } | null } }) => p.building.project?.name ?? null;
+
 export function buildingLabel(b: { name: string; project?: { name: string } | null }): string {
   if (!/^[\d.]+$/.test(b.name)) return iso(b.name);
   return b.project ? `${iso(b.project.name)} · בניין ${iso(b.name)}` : `בניין ${iso(b.name)}`;

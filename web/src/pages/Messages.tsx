@@ -106,15 +106,23 @@ export function Messages() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showClosed, setShowClosed] = useState(false);
-  // Filter by city (decision 210): a chat's cities are those of its person's apartments now.
-  const [cities, setCities] = useState<string[]>([]);
-  const partyCities = useQuery({
-    queryKey: ['party-cities'], staleTime: 10 * 60_000,
+  // Filters by city (decision 210), project and property manager (decision 211): a chat has those
+  // of its person's apartments now.
+  type Facet = 'city' | 'project' | 'manager';
+  const [filter, setFilter] = useState<Record<Facet, string[]>>({ city: [], project: [], manager: [] });
+  const partyFacets = useQuery({
+    queryKey: ['party-facets'], staleTime: 10 * 60_000,
     queryFn: async () => {
-      const rows = must(await supabase.from('ownerships').select('party_id, valid_to, property:properties(building:buildings(city:cities(name_he)))').is('valid_to', null)) as unknown as
-        { party_id: string; property: { building: { city: { name_he: string } | null } | null } | null }[];
-      const m = new Map<string, Set<string>>();
-      for (const r of rows) { const c = r.property?.building?.city?.name_he; if (c) (m.get(r.party_id) ?? m.set(r.party_id, new Set()).get(r.party_id)!).add(c); }
+      const rows = must(await supabase.from('ownerships').select('party_id, valid_to, property:properties(building:buildings(city:cities(name_he), project:projects(name)), management_agreements(valid_to, manager:parties!management_agreements_manager_party_id_fkey(display_name)))').is('valid_to', null)) as unknown as
+        { party_id: string; property: { building: { city: { name_he: string } | null; project: { name: string } | null } | null; management_agreements: { valid_to: string | null; manager: { display_name: string } | null }[] } | null }[];
+      const m = new Map<string, Record<Facet, Set<string>>>();
+      for (const r of rows) {
+        const f = m.get(r.party_id) ?? m.set(r.party_id, { city: new Set(), project: new Set(), manager: new Set() }).get(r.party_id)!;
+        const b = r.property?.building;
+        if (b?.city?.name_he) f.city.add(b.city.name_he);
+        if (b?.project?.name) f.project.add(b.project.name);
+        for (const a of r.property?.management_agreements ?? []) if (!a.valid_to && a.manager) f.manager.add(a.manager.display_name);
+      }
       return m;
     },
   });
@@ -180,10 +188,11 @@ export function Messages() {
   }, []);
   const account = useQuery({ queryKey: ['whatsapp-account'], queryFn: async () => (must(await supabase.from('whatsapp_account').select('phone_number_id, connected_at, display_phone').eq('id', 1).maybeSingle()) as { phone_number_id: string | null; connected_at: string | null; display_phone: string | null } | null) });
   const connected = !demo && !!account.data?.phone_number_id && !!account.data.connected_at;
-  const citiesOf = (c: Conversation) => (c.client_party_id ? [...(partyCities.data?.get(c.client_party_id) ?? [])] : []);
-  const cityOptions = [...new Set([...(partyCities.data?.values() ?? [])].flatMap((x) => [...x]))].sort((a, b) => a.localeCompare(b, 'he'));
+  const facetOf = (c: Conversation, k: Facet) => (c.client_party_id ? [...(partyFacets.data?.get(c.client_party_id)?.[k] ?? [])] : []);
+  const options = (k: Facet) => [...new Set([...(partyFacets.data?.values() ?? [])].flatMap((x) => [...x[k]]))].sort((a, b) => a.localeCompare(b, 'he'));
+  const passes = (c: Conversation, k: Facet) => !filter[k].length || facetOf(c, k).some((x) => filter[k].includes(x)) || (filter[k].includes('—') && !facetOf(c, k).length);
   const list = conversations.filter((c) => (showClosed || c.status !== 'closed')
-    && (!cities.length || citiesOf(c).some((x) => cities.includes(x)) || (cities.includes('—') && !citiesOf(c).length))
+    && passes(c, 'city') && passes(c, 'project') && passes(c, 'manager')
     && (!search.trim() || `${who(c)} ${c.wa_phone}`.includes(search.trim())));
   const current = conversations.find((c) => c.id === params.get('c')) ?? null;
   const thread = useMessages(current?.id ?? null);
@@ -330,8 +339,12 @@ export function Messages() {
           <Box p={8} bg={WA.panel}>
             <TextInput size="sm" radius="md" placeholder="חיפוש או התחלת צ'אט חדש" leftSection={<IconSearch size={16} />}
               styles={{ input: { background: WA.header, border: 'none' } }} value={search} onChange={(e) => setSearch(e.currentTarget.value)} />
-            {!demo && <MultiSelect size="xs" mt={6} radius="md" placeholder={cities.length ? undefined : 'כל הערים'} clearable value={cities} onChange={setCities}
-              data={[...cityOptions.map((c) => ({ value: c, label: c })), { value: '—', label: 'בלי עיר (לא לקוח / בלי דירה)' }]} />}
+            {!demo && <Group gap={4} mt={6} grow wrap="nowrap">
+              {([['city', 'כל הערים', 'בלי עיר'], ['project', 'כל הפרויקטים', 'בלי פרויקט'], ['manager', 'כל המנהלים', 'בלי מנהל']] as [Facet, string, string][]).map(([k, all, none]) => (
+                <MultiSelect key={k} size="xs" radius="md" placeholder={filter[k].length ? undefined : all} clearable value={filter[k]} onChange={(v) => setFilter((f) => ({ ...f, [k]: v }))}
+                  data={[...options(k).map((c) => ({ value: c, label: c })), { value: '—', label: none }]} comboboxProps={{ width: 240 }} />
+              ))}
+            </Group>}
           </Box>
           <ScrollArea style={{ flex: 1 }} h={!demo ? 'calc(100% - 150px)' : 'calc(100% - 115px)'}>
             {!list.length && <Text size="sm" c={WA.muted} ta="center" p="lg">אין צ'אטים</Text>}
