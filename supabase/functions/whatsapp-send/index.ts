@@ -4,6 +4,8 @@
 //   { conversation_id, template, language, params? }  → an approved template (outside the 24 hours);
 //                                                       params fill {{1}}, {{2}}… of its body
 //   { action: 'templates' }                            → the approved templates, for the picker
+//   { conversation_id, document: { base64, file_name, caption? } } → a file (a client's statement, decision 208),
+//                                                       kept in the chat's storage and sent within the 24 hours
 // Staff who completed their second step only. The message is written to app.messages with who
 // sent it; its delivery (sent, delivered, read, failed) arrives later at whatsapp-webhook.
 // Secrets: directly, none of its own (the token is in app.whatsapp_secret); through Dualhook
@@ -100,8 +102,29 @@ Deno.serve(async (req) => {
   if (!conv) return reply(404, { error: 'no such chat' });
   const to = conv.wa_phone.replace(/\D/g, '');
 
-  let payload: Record<string, unknown>, body: string, kind: string;
-  if (b.template) {
+  let payload: Record<string, unknown>, body: string | null, kind: string;
+  let mediaPath: string | null = null, fileName: string | null = null;
+  if (b.document) {
+    // The file: kept with the chat's files, uploaded to WhatsApp, and sent as a document.
+    fileName = String(b.document.file_name ?? 'document.pdf').replace(/[\\/]/g, '_').slice(0, 120);
+    const bytes = Uint8Array.from(atob(String(b.document.base64 ?? '')), (c) => c.charCodeAt(0));
+    if (!bytes.length || bytes.length > 15_000_000) return reply(400, { error: 'הקובץ ריק או גדול מדי' });
+    const type = fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
+    mediaPath = `${conv.id}/out-${crypto.randomUUID()}-${fileName.replace(/[^\w.-]+/g, '_')}`;
+    const kept = await admin.storage.from('whatsapp').upload(mediaPath, bytes, { contentType: type });
+    if (kept.error) return reply(500, { error: kept.error.message });
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', type);
+    form.append('file', new Blob([bytes], { type }), fileName);
+    const up = await fetch(`${GRAPH()}/${acct.phone_number_id}/media`, { method: 'POST', headers: { Authorization: auth.Authorization }, body: form });
+    const uj = await up.json().catch(() => ({}));
+    if (!up.ok || !uj.id) return reply(422, { error: uj.error?.message ?? 'העלאת הקובץ לוואטסאפ נכשלה' });
+    const caption = b.document.caption ? String(b.document.caption).slice(0, 1000) : undefined;
+    payload = { type: 'document', document: { id: uj.id, filename: fileName, ...(caption ? { caption } : {}) } };
+    body = caption ?? null;
+    kind = 'document';
+  } else if (b.template) {
     const params: string[] = Array.isArray(b.params) ? b.params.map(String) : [];
     payload = { type: 'template', template: { name: String(b.template), language: { code: String(b.language ?? 'he') },
       ...(params.length ? { components: [{ type: 'body', parameters: params.map((text) => ({ type: 'text', text })) }] } : {}) } };
@@ -117,7 +140,7 @@ Deno.serve(async (req) => {
   }
 
   // A quoted reply (decision 196).
-  const replyTo = !b.template && b.reply_to ? String(b.reply_to) : null;
+  const replyTo = !b.template && !b.document && b.reply_to ? String(b.reply_to) : null;
   const r = await fetch(`${GRAPH()}/${acct.phone_number_id}/messages`, {
     method: 'POST', headers: auth, body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, ...payload, ...(replyTo ? { context: { message_id: replyTo } } : {}) }),
   });
@@ -128,7 +151,7 @@ Deno.serve(async (req) => {
   }
   const now = new Date().toISOString();
   const { data: msg, error } = await admin.from('messages').insert({
-    conversation_id: conv.id, direction: 'out', body, kind, origin: 'api', status: 'sent', wa_message_id: j.messages[0].id,
+    conversation_id: conv.id, direction: 'out', body, kind, origin: 'api', status: 'sent', wa_message_id: j.messages[0].id, media_path: mediaPath, file_name: fileName,
     sent_by: me.user.id, created_at: now, wa_timestamp: now, reply_to: replyTo,
   }).select('id').single();
   // A person answered from the inbox: the chat is theirs again, not the AI's (decision 183).
