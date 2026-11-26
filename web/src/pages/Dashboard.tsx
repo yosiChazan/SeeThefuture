@@ -8,6 +8,7 @@ import { COUNTRY_HE, currentLease, date, isIncompleteLease, money, propertyTitle
 import { useLeases, useProperties } from '../lib/queries';
 import { supabase } from '../lib/supabase';
 import { filterLeases } from './Leases';
+import { TransferConfirmations } from '../components/TransferConfirmations';
 
 // Counts for modules whose data arrives in later stages (intake, WhatsApp).
 function useCount(table: string, column: string, values: string[]) {
@@ -74,6 +75,8 @@ export function Dashboard() {
         <Tile icon={IconAlertTriangle} color="red" label="חוזים שחסרים בהם פרטים" value={leases.data ? incomplete : '…'} to="/leases?view=incomplete" />
         <Tile icon={IconMessages} color="teal" label="הודעות שלא נענו" value={openConversations.data ?? '…'} to="/messages" hint="שיחות שההודעה האחרונה בהן היא של הלקוח" />
       </SimpleGrid>
+
+      <TransferConfirmations />
 
       <Paper withBorder p="md">
         <Title order={4} mb="sm">לפי מדינה</Title>
