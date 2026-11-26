@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ADAPTERS } from '../intake/adapters';
 import { bookFromXlsx } from '../intake/grid';
+import { docFromDocx } from '../intake/docx';
 import { matchProperty, sameTenant, type PropertyForMatch } from '../intake/match';
 import type { ParseResult, ParsedLease, ParsedRow, ProposedTransaction } from '../intake/types';
 import { must, supabase } from './supabase';
@@ -143,7 +144,8 @@ const amountOf = (p: ProposedTransaction) => p.entries.map((e) => `${e.amount} $
 export async function readReport(source: Source, file: File): Promise<ParseResult> {
   const adapter = ADAPTERS[source.adapter];
   if (!adapter) throw new Error('למקור הזה עוד אין קורא קבצים');
-  return adapter.parse(await bookFromXlsx(await file.arrayBuffer()), file.name);
+  if (adapter.parseDoc) return adapter.parseDoc(await docFromDocx(await file.arrayBuffer()), file.name);
+  return adapter.parse!(await bookFromXlsx(await file.arrayBuffer()), file.name);
 }
 
 const safeName = (name: string) => name.normalize('NFKD').replace(/[^\w.-]+/g, '_');

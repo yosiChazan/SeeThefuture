@@ -3,10 +3,12 @@ import { notifications } from '@mantine/notifications';
 import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileText, IconMicrophone, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useStaff } from '../components/ManualTopics';
 import { waLink } from '../components/Phone';
 import { useClients, useContacts } from '../lib/queries';
+import { createBatch, readReport, useSources, type Source } from '../lib/intake';
+import { ADAPTERS } from '../intake/adapters';
 import { useAccess } from '../lib/access';
 import { WaSaveDoc, type WaFile } from '../components/WaSaveDoc';
 import { ClientForm } from '../components/ClientForm';
@@ -100,6 +102,7 @@ export function Messages() {
   const contacts = useContacts();
   const staff = useStaff();
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showClosed, setShowClosed] = useState(false);
   const [demo, setDemo] = useState(false);
@@ -232,6 +235,27 @@ export function Messages() {
   const quoteName = (m: Message) => (m.direction === 'out' ? 'המשרד' : current ? who(current) : '');
   // Files of this chat already kept in the system (decision 195).
   const [saving, setSaving] = useState<WaFile | null>(null);
+  // A manager's report sent in the chat (decision 207): read into the intake straight from the message.
+  // Offered on a file of the kind the manager's source reads, in the chat of the source's holder, named
+  // like his reports ("… ניהול דירה.docx", "… Apt 31 …").
+  const sources = useSources();
+  const reportSource = (m: Message): Source | null => {
+    const name = m.file_name ?? '';
+    if (!current?.client_party_id || !/\.docx$/i.test(name) || !/ניהול (דירה|חשבונות)|\b(ap|apt)\.?\s*\d+/i.test(name)) return null;
+    return (sources.data ?? []).find((s) => s.holder_party_id === current.client_party_id && ADAPTERS[s.adapter]?.accept.includes('.docx')) ?? null;
+  };
+  const [reading, setReading] = useState<string | null>(null);
+  async function intake(m: Message, source: Source) {
+    setReading(m.id);
+    try {
+      const { data, error } = await supabase.storage.from('whatsapp').download(m.media_path!);
+      if (error || !data) throw new Error(error?.message ?? 'הקובץ לא נמצא');
+      const file = new File([data], m.file_name ?? 'report.docx', { type: data.type });
+      const result = await readReport(source, file);
+      const id = await createBatch(source, file, result);
+      navigate(`/intake/${id}`);
+    } catch (e) { notifications.show({ color: 'red', title: 'קליטת הדוח נכשלה', message: (e as Error).message }); } finally { setReading(null); }
+  }
   const mediaIds = messages.filter((m) => m.media_path).map((m) => m.id);
   const saved = useQuery({
     queryKey: ['wa-saved', current?.id, mediaIds.length], enabled: !demo && mediaIds.length > 0,
@@ -423,7 +447,8 @@ export function Messages() {
                             {m.media_path && !/\.zip$/i.test(m.file_name ?? m.media_path) && ['image', 'document', 'video'].includes(m.kind ?? '') && (
                               <Group gap={4} mt={4}>{saved.data?.has(m.id)
                                 ? <Badge size="xs" variant="light" color="teal" leftSection={<IconCheck size={10} />} style={{ cursor: 'pointer' }} onClick={() => setSaving(m as WaFile)}>נשמר במערכת</Badge>
-                                : <Button size="compact-xs" variant="light" leftSection={<IconFileText size={12} />} onClick={() => setSaving(m as WaFile)}>שמירה במערכת</Button>}</Group>)}
+                                : <Button size="compact-xs" variant="light" leftSection={<IconFileText size={12} />} onClick={() => setSaving(m as WaFile)}>שמירה במערכת</Button>}
+                                {reportSource(m) && <Button size="compact-xs" variant="light" color="grape" loading={reading === m.id} onClick={() => intake(m, reportSource(m)!)}>קליטת דוח</Button>}</Group>)}
                             {m.kind === 'contacts' && m.body ? <SharedContacts body={m.body} known={(e) => partyByPhone(e)?.display_name ?? null}
                                 onChat={openChat} onAdd={(name, phone) => setAddingContact({ name, phone })} />
                               : (m.body || !m.media_path) && <Text size="sm" c={WA.text} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} dir="auto">{m.body ?? kindLabel(m)}</Text>}
