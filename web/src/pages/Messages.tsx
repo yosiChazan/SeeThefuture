@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Checkbox, Group, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Checkbox, Group, MultiSelect, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileText, IconMicrophone, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -106,6 +106,18 @@ export function Messages() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showClosed, setShowClosed] = useState(false);
+  // Filter by city (decision 210): a chat's cities are those of its person's apartments now.
+  const [cities, setCities] = useState<string[]>([]);
+  const partyCities = useQuery({
+    queryKey: ['party-cities'], staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const rows = must(await supabase.from('ownerships').select('party_id, valid_to, property:properties(building:buildings(city:cities(name_he)))').is('valid_to', null)) as unknown as
+        { party_id: string; property: { building: { city: { name_he: string } | null } | null } | null }[];
+      const m = new Map<string, Set<string>>();
+      for (const r of rows) { const c = r.property?.building?.city?.name_he; if (c) (m.get(r.party_id) ?? m.set(r.party_id, new Set()).get(r.party_id)!).add(c); }
+      return m;
+    },
+  });
   const [demo, setDemo] = useState(false);
   const demoData = useMemo(sample, []);
   const names = useMemo(() => demo ? demoData.names : new Map([...(contacts.data ?? []), ...(clients.data ?? [])].map((c) => [c.id, c.display_name])), [clients.data, contacts.data, demo, demoData]);
@@ -168,7 +180,10 @@ export function Messages() {
   }, []);
   const account = useQuery({ queryKey: ['whatsapp-account'], queryFn: async () => (must(await supabase.from('whatsapp_account').select('phone_number_id, connected_at, display_phone').eq('id', 1).maybeSingle()) as { phone_number_id: string | null; connected_at: string | null; display_phone: string | null } | null) });
   const connected = !demo && !!account.data?.phone_number_id && !!account.data.connected_at;
+  const citiesOf = (c: Conversation) => (c.client_party_id ? [...(partyCities.data?.get(c.client_party_id) ?? [])] : []);
+  const cityOptions = [...new Set([...(partyCities.data?.values() ?? [])].flatMap((x) => [...x]))].sort((a, b) => a.localeCompare(b, 'he'));
   const list = conversations.filter((c) => (showClosed || c.status !== 'closed')
+    && (!cities.length || citiesOf(c).some((x) => cities.includes(x)) || (cities.includes('—') && !citiesOf(c).length))
     && (!search.trim() || `${who(c)} ${c.wa_phone}`.includes(search.trim())));
   const current = conversations.find((c) => c.id === params.get('c')) ?? null;
   const thread = useMessages(current?.id ?? null);
@@ -315,8 +330,10 @@ export function Messages() {
           <Box p={8} bg={WA.panel}>
             <TextInput size="sm" radius="md" placeholder="חיפוש או התחלת צ'אט חדש" leftSection={<IconSearch size={16} />}
               styles={{ input: { background: WA.header, border: 'none' } }} value={search} onChange={(e) => setSearch(e.currentTarget.value)} />
+            {!demo && <MultiSelect size="xs" mt={6} radius="md" placeholder={cities.length ? undefined : 'כל הערים'} clearable value={cities} onChange={setCities}
+              data={[...cityOptions.map((c) => ({ value: c, label: c })), { value: '—', label: 'בלי עיר (לא לקוח / בלי דירה)' }]} />}
           </Box>
-          <ScrollArea style={{ flex: 1 }} h="calc(100% - 115px)">
+          <ScrollArea style={{ flex: 1 }} h={!demo ? 'calc(100% - 150px)' : 'calc(100% - 115px)'}>
             {!list.length && <Text size="sm" c={WA.muted} ta="center" p="lg">אין צ'אטים</Text>}
             {list.map((c) => {
               const last = lastOf.get(c.id);
