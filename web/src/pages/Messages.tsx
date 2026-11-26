@@ -166,7 +166,7 @@ export function Messages() {
     const t = setInterval(mark, 60_000);
     return () => { clearInterval(t); mark(); };
   }, []);
-  const account = useQuery({ queryKey: ['whatsapp-account'], queryFn: async () => (must(await supabase.from('whatsapp_account').select('phone_number_id, connected_at').eq('id', 1).maybeSingle()) as { phone_number_id: string | null; connected_at: string | null } | null) });
+  const account = useQuery({ queryKey: ['whatsapp-account'], queryFn: async () => (must(await supabase.from('whatsapp_account').select('phone_number_id, connected_at, display_phone').eq('id', 1).maybeSingle()) as { phone_number_id: string | null; connected_at: string | null; display_phone: string | null } | null) });
   const connected = !demo && !!account.data?.phone_number_id && !!account.data.connected_at;
   const list = conversations.filter((c) => (showClosed || c.status !== 'closed')
     && (!search.trim() || `${who(c)} ${c.wa_phone}`.includes(search.trim())));
@@ -243,8 +243,11 @@ export function Messages() {
   const sources = useSources();
   const reportSource = (m: Message): Source | null => {
     const name = m.file_name ?? '';
-    if (!current?.client_party_id || !/\.docx$/i.test(name) || !/ניהול (דירה|חשבונות)|\b(ap|apt)\.?\s*\d+/i.test(name)) return null;
-    return (sources.data ?? []).find((s) => s.holder_party_id === current.client_party_id && ADAPTERS[s.adapter]?.accept.includes('.docx')) ?? null;
+    if (!current || !/\.docx$/i.test(name) || !/ניהול (דירה|חשבונות)|\b(ap|apt)\.?\s*\d+/i.test(name)) return null;
+    const docx = (sources.data ?? []).filter((s) => ADAPTERS[s.adapter]?.accept.includes('.docx'));
+    // The company's own chat ("(אתה)"): reports forwarded to it are read like the manager's.
+    const self = !!account.data?.display_phone && digitsOf(current.wa_phone) === digitsOf(account.data.display_phone);
+    return docx.find((s) => s.holder_party_id && s.holder_party_id === current.client_party_id) ?? (self ? docx[0] ?? null : null);
   };
   const [reading, setReading] = useState<string | null>(null);
   async function intake(m: Message, source: Source) {
