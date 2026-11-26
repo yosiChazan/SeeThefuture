@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "See the Future · קבוצות וואטסאפ (קריאה בלבד)",
+  "version": "1.0.0",
+  "description": "קורא את הקבוצות שמוצגות ב-WhatsApp Web ושולח אותן למערכת. לא לוחץ ולא כותב.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://oqvanprfxsdonzldgtnq.supabase.co/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["https://web.whatsapp.com/*"], "js": ["content.js"], "run_at": "document_idle" }],
+  "options_page": "options.html",
+  "action": { "default_title": "קבוצות וואטסאפ · See the Future", "default_popup": "options.html" }
+}
