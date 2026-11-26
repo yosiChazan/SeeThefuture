@@ -10,6 +10,7 @@ import { useClients, useContacts } from '../lib/queries';
 import { useAccess } from '../lib/access';
 import { WaSaveDoc, type WaFile } from '../components/WaSaveDoc';
 import { ClientForm } from '../components/ClientForm';
+import { ClientReport } from '../components/ClientReport';
 import { toE164 } from '../lib/phone';
 import { useAiGuides } from '../components/AiGuidesSettings';
 import { ChatSummary } from '../components/ChatSummary';
@@ -203,6 +204,7 @@ export function Messages() {
   const guides = useAiGuides();
   const guideTitle = (id: string) => guides.data?.find((g) => g.id === id)?.title ?? 'מדריך';
   const [aiPick, setAiPick] = useState(false);
+  const [reporting, setReporting] = useState(false);   // a statement for the client (decision 208)
   // "Alliance special" (decision 197): clients of those apartments; no AI without the admin's approval.
   const access = useAccess();
   const specialQ = useQuery({ queryKey: ['special-alliance'], enabled: !demo, queryFn: async () => new Set((must(await supabase.rpc('special_alliance_parties')) as { party_id: string }[]).map((r) => r.party_id)) });
@@ -354,6 +356,7 @@ export function Messages() {
                     <Menu.Target><ActionIcon variant="subtle" color="gray" aria-label="אפשרויות"><IconDotsVertical size={20} /></ActionIcon></Menu.Target>
                     <Menu.Dropdown>
                       {current.client_party_id && !demo && <Menu.Item component={Link} to={`/clients/${current.client_party_id}`}>לכרטיס הלקוח</Menu.Item>}
+                      {roleOf(current.client_party_id)?.label === 'לקוח' && !demo && <Menu.Item leftSection={<IconFileText size={16} />} onClick={() => setReporting(true)}>דוח ללקוח…</Menu.Item>}
                       {waLink(current.wa_phone) && <Menu.Item component="a" href={waLink(current.wa_phone)!} target="_blank" rel="noopener noreferrer">פתיחה באפליקציה</Menu.Item>}
                       {!demo && connected && (current.ai_guide_id
                         ? <Menu.Item color="violet" leftSection={<IconRobot size={16} />} onClick={() => aiStop(current.id)}>עצירת ה-AI</Menu.Item>
@@ -472,6 +475,10 @@ export function Messages() {
         return <ClientForm opened contact initial={{ first_name: parts.length > 1 ? parts[0] : '', last_name: parts.length > 1 ? parts.slice(1).join(' ') : parts[0], phone: addingContact.phone }}
           onClose={() => setAddingContact(null)} onAdded={() => { qc.invalidateQueries({ queryKey: ['conversations'] }); }} />;
       })()}
+      {reporting && current?.client_party_id && (
+        <ClientReport partyId={current.client_party_id} name={who(current)} conversationId={current.id} canSend={connected && windowOpen}
+          onClose={() => setReporting(false)} onSent={() => { qc.invalidateQueries({ queryKey: ['messages', current.id] }); qc.invalidateQueries({ queryKey: ['messages-recent'] }); }} />
+      )}
       {saving && current && <WaSaveDoc file={saving} partyId={roleOf(current.client_party_id)?.label === 'לקוח' ? current.client_party_id : null} onClose={() => setSaving(null)} />}
       {demo && <Text size="xs" c="dimmed">תצוגה לדוגמה: שמות והודעות מומצאים, לא נשמר כלום.</Text>}
       {!demo && conversations.length > 0 && <Anchor size="xs" c="dimmed" onClick={() => qc.invalidateQueries({ queryKey: ['conversations'] })}>רענון</Anchor>}
