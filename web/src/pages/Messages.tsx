@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Checkbox, Group, MultiSelect, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Alert, SegmentedControl, Anchor, Avatar, Badge, Box, Button, Checkbox, Group, MultiSelect, Image, Menu, Modal, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconAlertCircle, IconArrowBackUp, IconArrowRight, IconRobot, IconBrandWhatsapp, IconCheck, IconChecks, IconDeviceMobile, IconDotsVertical, IconExternalLink, IconFileText, IconMicrophone, IconSearch, IconSend, IconTemplate, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,7 @@ import { useAccess } from '../lib/access';
 import { WaSaveDoc, type WaFile } from '../components/WaSaveDoc';
 import { ClientForm } from '../components/ClientForm';
 import { ClientReport } from '../components/ClientReport';
+import { WaGroups } from '../components/WaGroups';
 import { toE164 } from '../lib/phone';
 import { useAiGuides } from '../components/AiGuidesSettings';
 import { ChatSummary } from '../components/ChatSummary';
@@ -106,6 +107,7 @@ export function Messages() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showClosed, setShowClosed] = useState(false);
+  const [view, setView] = useState<'chats' | 'groups'>('chats');
   // Filters by city (decision 210), project and property manager (decision 211): a chat has those
   // of its person's apartments now.
   type Facet = 'city' | 'project' | 'manager';
@@ -315,11 +317,20 @@ export function Messages() {
     await qc.invalidateQueries({ queryKey: ['conversations'] });
   }
 
+  // Chats, or the groups read by the WhatsApp Web extension (decision 212).
+  const viewSwitch = <SegmentedControl size="xs" value={view} onChange={(x) => setView(x as typeof view)} data={[{ value: 'chats', label: 'שיחות' }, { value: 'groups', label: 'קבוצות (קריאה בלבד)' }]} />;
+  if (view === 'groups') return (
+    <Stack gap="sm">
+      <Group justify="space-between"><Title order={2}>הודעות</Title>{viewSwitch}</Group>
+      <WaGroups />
+    </Stack>
+  );
   return (
     <Stack gap="sm">
       <Group justify="space-between">
         <Title order={2}>הודעות</Title>
         <Group gap="sm">
+          {!demo && viewSwitch}
           <Switch label="תצוגה לדוגמה" checked={demo} onChange={(e) => { setDemo(e.currentTarget.checked); setParams({}); }} />
         </Group>
       </Group>
