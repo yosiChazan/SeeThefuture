@@ -391,7 +391,7 @@ export function Messages() {
             </Stack>
           ) : (
             <>
-              <Group h={59} px="md" bg={WA.header} justify="space-between" wrap="nowrap" style={{ borderBottom: `1px solid ${WA.line}` }}>
+              <Group mih={59} py={4} px="md" bg={WA.header} justify="space-between" wrap="nowrap" style={{ borderBottom: `1px solid ${WA.line}` }}>
                 <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
                   <ActionIcon variant="subtle" color="gray" hiddenFrom="sm" onClick={() => setParams({})} aria-label="חזרה"><IconArrowRight size={20} /></ActionIcon>
                   <Avatar radius="xl" size={40} color="teal">{initials(who(current))}</Avatar>
@@ -405,6 +405,14 @@ export function Messages() {
                           href={`/${roleOf(current.client_party_id)!.label === 'לקוח' ? 'clients' : 'contacts'}/${current.client_party_id}`} aria-label="פתיחת הכרטיס בדף חדש">
                           <IconExternalLink size={16} /></ActionIcon></Tooltip>}</Group>
                     <Text size="xs" c={WA.muted} dir="ltr" ta="right">{current.wa_phone}{current.assigned_to ? ` · ${staffNames.get(current.assigned_to) ?? ''}` : ''}</Text>
+                    {/* The client's project and manager, when known (decision 211). */}
+                    {(facetOf(current, 'project').length > 0 || facetOf(current, 'manager').length > 0) && (
+                      <Text size="xs" c={WA.muted} lineClamp={1}>
+                        {facetOf(current, 'project').length > 0 && <>פרויקט: <b>{facetOf(current, 'project').join(', ')}</b></>}
+                        {facetOf(current, 'project').length > 0 && facetOf(current, 'manager').length > 0 && ' · '}
+                        {facetOf(current, 'manager').length > 0 && <>מנהל: <b>{facetOf(current, 'manager').join(', ')}</b></>}
+                      </Text>
+                    )}
                   </Box>
                 </Group>
                 <Group gap={4} wrap="nowrap">
